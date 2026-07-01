@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"embed"
 	"net/http"
 
 	"mthan/vps/routes/api"
@@ -11,6 +12,7 @@ import (
 
 type Dependencies struct {
 	Auth     *services.AuthService
+	ClientFS embed.FS
 	Health   *services.HealthService
 	Sessions *services.SessionService
 	Startup  services.StartupConfig
@@ -31,5 +33,5 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 		Update:   deps.Update,
 	})
 
-	router.Register(mux, deps.Startup)
+	router.Register(mux, deps.Startup, deps.ClientFS)
 }

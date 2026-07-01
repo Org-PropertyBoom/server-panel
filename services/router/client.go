@@ -2,7 +2,9 @@ package router
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -21,14 +23,31 @@ type ClientRuntime struct {
 	Username string `json:"username"`
 }
 
-func Register(mux *http.ServeMux, startup services.StartupConfig) {
+func Register(mux *http.ServeMux, startup services.StartupConfig, clientFS embed.FS) {
 	runtime := newClientRuntime(startup)
+	subFS, err := fs.Sub(clientFS, "client/build")
+	if err != nil {
+		subFS = nil
+		println("fs.Sub error:", err.Error())
+	} else if subFS == nil {
+		println("fs.Sub returned nil")
+	} else {
+		if entries, err := fs.ReadDir(subFS, "."); err == nil {
+			println("Successfully resolved subFS. Embedded files:")
+			for _, entry := range entries {
+				println("  -", entry.Name())
+			}
+		} else {
+			println("Failed to read subFS dir:", err.Error())
+		}
+	}
+
 	if startup.IsRoot {
-		registerRootRoutes(mux, runtime)
+		registerRootRoutes(mux, runtime, subFS)
 		return
 	}
 
-	registerUserRoutes(mux, runtime)
+	registerUserRoutes(mux, runtime, subFS)
 }
 
 func PostBaseURL(startup services.StartupConfig) string {
@@ -49,22 +68,47 @@ func newClientRuntime(startup services.StartupConfig) ClientRuntime {
 	}
 }
 
-func clientHandler(runtime ClientRuntime, clientDirs ...string) http.Handler {
+func clientHandler(runtime ClientRuntime, embeddedFS fs.FS, clientDirs ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Try local filesystem directories first (development)
 		for _, clientDir := range clientDirs {
-			fileServer := http.FileServer(http.Dir(clientDir))
-			requestedPath, ok := clientPath(clientDir, r.URL.Path)
-			if ok && fileExists(requestedPath) {
-				if isIndexFile(requestedPath) {
-					serveClientIndex(w, requestedPath, runtime)
+			if _, err := os.Stat(clientDir); err == nil {
+				fileServer := http.FileServer(http.Dir(clientDir))
+				requestedPath, ok := clientPath(clientDir, r.URL.Path)
+				if ok && fileExists(requestedPath) {
+					if isIndexFile(requestedPath) {
+						serveClientIndex(w, requestedPath, runtime)
+						return
+					}
+
+					fileServer.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+
+		// 2. Fallback to embedded filesystem if available (production / single-binary)
+		if embeddedFS != nil {
+			cleanPath := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+
+			if fileExistsInFS(embeddedFS, cleanPath) {
+				if cleanPath == "" || cleanPath == "index.html" {
+					serveEmbeddedIndex(w, embeddedFS, runtime)
 					return
 				}
 
-				fileServer.ServeHTTP(w, r)
+				http.FileServer(http.FS(embeddedFS)).ServeHTTP(w, r)
+				return
+			}
+
+			// Fallback to index.html for SPA routing
+			if fileExistsInFS(embeddedFS, "index.html") {
+				serveEmbeddedIndex(w, embeddedFS, runtime)
 				return
 			}
 		}
 
+		// 3. Fallback to index.html from local filesystem directories if files exist
 		for _, clientDir := range clientDirs {
 			indexPath := filepath.Join(clientDir, "index.html")
 			if fileExists(indexPath) {
@@ -75,6 +119,34 @@ func clientHandler(runtime ClientRuntime, clientDirs ...string) http.Handler {
 
 		http.Error(w, "react client has not been built", http.StatusServiceUnavailable)
 	})
+}
+
+func fileExistsInFS(f fs.FS, name string) bool {
+	if name == "" || name == "." {
+		return true
+	}
+	file, err := f.Open(name)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return !stat.IsDir()
+}
+
+func serveEmbeddedIndex(w http.ResponseWriter, f fs.FS, runtime ClientRuntime) {
+	indexHTML, err := fs.ReadFile(f, "index.html")
+	if err != nil {
+		http.Error(w, "react client index could not be loaded", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(injectClientRuntime(indexHTML, runtime))
 }
 
 func serveClientIndex(w http.ResponseWriter, indexPath string, runtime ClientRuntime) {

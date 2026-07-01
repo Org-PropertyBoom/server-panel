@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 	"mthan/vps/routes"
 	"mthan/vps/services"
 )
+
+//go:embed all:client/build
+var clientFS embed.FS
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -34,6 +38,7 @@ func main() {
 
 	routes.Register(mux, routes.Dependencies{
 		Auth:     auth,
+		ClientFS: clientFS,
 		Health:   services.NewHealthService(startup.Env),
 		Sessions: sessions,
 		Startup:  startup,

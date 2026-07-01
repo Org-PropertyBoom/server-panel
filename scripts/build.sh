@@ -99,9 +99,6 @@ build_client() {
 
     npm run build
   )
-
-  rm -rf "${BIN_DIR}/client"
-  cp -R "${ROOT_DIR}/client/build" "${BIN_DIR}/client"
 }
 
 build_binaries() {
@@ -183,14 +180,14 @@ push_dist() {
   install -m 0755 "${BINARY_PATH}" "${bin_target_dir}/${APP_NAME}"
   install -m 0755 "${CTL_BINARY_PATH}" "${bin_target_dir}/${CTL_NAME}"
 
-  if [[ -d "${BIN_DIR}/client" ]]; then
+  if [[ -d "${ROOT_DIR}/client/build" ]]; then
     rm -rf "${client_target_dir}"
     mkdir -p "$(dirname "${client_target_dir}")"
-    cp -R "${BIN_DIR}/client" "${client_target_dir}"
+    cp -R "${ROOT_DIR}/client/build" "${client_target_dir}"
   fi
 
   git -C "${repo_dir}" add "${DIST_REPO_BIN_TARGET}"
-  if [[ -d "${BIN_DIR}/client" ]]; then
+  if [[ -d "${ROOT_DIR}/client/build" ]]; then
     git -C "${repo_dir}" add "${DIST_REPO_CLIENT_TARGET}"
   fi
 
