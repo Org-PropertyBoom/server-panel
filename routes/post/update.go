@@ -10,6 +10,16 @@ import (
 )
 
 func registerUpdate(mux *http.ServeMux, deps Dependencies) {
+	mux.Handle("GET /post/update", postOnly(deps.Startup, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, err := deps.Update.CheckUpdate(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, result)
+	})))
+
 	mux.Handle("POST /post/update", postOnly(deps.Startup, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result, err := deps.Update.SelfUpdate(r.Context())
 		if err != nil {

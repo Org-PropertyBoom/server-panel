@@ -179,6 +179,9 @@ push_dist() {
   mkdir -p "${bin_target_dir}"
   install -m 0755 "${BINARY_PATH}" "${bin_target_dir}/${APP_NAME}"
   install -m 0755 "${CTL_BINARY_PATH}" "${bin_target_dir}/${CTL_NAME}"
+  if [[ -f "${BIN_DIR}/version.json" ]]; then
+    install -m 0644 "${BIN_DIR}/version.json" "${bin_target_dir}/version.json"
+  fi
 
   if [[ -d "${ROOT_DIR}/client/build" ]]; then
     rm -rf "${client_target_dir}"
@@ -204,6 +207,17 @@ main() {
   trap cleanup EXIT
 
   parse_args "$@"
+
+  # Generate version.json with UTC build time
+  local build_time
+  build_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  mkdir -p "${BIN_DIR}"
+  echo "{\"buildTime\":\"${build_time}\"}" > "${BIN_DIR}/version.json"
+  echo "{\"buildTime\":\"${build_time}\"}" > "${ROOT_DIR}/client/public/version.json"
+  if [[ -d "${ROOT_DIR}/client/build" ]]; then
+    echo "{\"buildTime\":\"${build_time}\"}" > "${ROOT_DIR}/client/build/version.json"
+  fi
+
   build_client
   build_binaries
 

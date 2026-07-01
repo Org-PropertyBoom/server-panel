@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,17 @@ func main() {
 	mux := http.NewServeMux()
 	auth := services.NewAuthService()
 	sessions := services.NewSessionService()
-	updater := services.NewUpdateService()
+
+	var buildTime string
+	if data, err := clientFS.ReadFile("client/build/version.json"); err == nil {
+		var v struct {
+			BuildTime string `json:"buildTime"`
+		}
+		if err := json.Unmarshal(data, &v); err == nil {
+			buildTime = v.BuildTime
+		}
+	}
+	updater := services.NewUpdateService(buildTime)
 
 	routes.Register(mux, routes.Dependencies{
 		Auth:     auth,

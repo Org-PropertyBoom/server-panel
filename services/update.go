@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,7 +11,8 @@ import (
 	"time"
 )
 
-const defaultBinaryURL = "https://dist.mthan.net/vps/bin/vps"
+const defaultBinaryURL = "https://github.com/antoine-mai/mthan-tools-vps/raw/main/bin/mthan-vps"
+const defaultVersionURL = "https://github.com/antoine-mai/mthan-tools-vps/raw/main/bin/version.json"
 
 var ErrUpdateRequiresRoot = errors.New("self update requires root")
 
@@ -21,18 +23,72 @@ type UpdateResult struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-type UpdateService struct {
-	binaryURL   string
-	httpClient  *http.Client
-	installPath string
+type UpdateCheckResult struct {
+	UpdateAvailable bool   `json:"updateAvailable"`
+	LocalBuildTime  string `json:"localBuildTime"`
+	RemoteBuildTime string `json:"remoteBuildTime"`
 }
 
-func NewUpdateService() *UpdateService {
+type UpdateService struct {
+	binaryURL      string
+	versionURL     string
+	httpClient     *http.Client
+	installPath    string
+	localBuildTime string
+}
+
+func NewUpdateService(localBuildTime string) *UpdateService {
 	return &UpdateService{
-		binaryURL:   getEnv("BINARY_URL", defaultBinaryURL),
-		httpClient:  &http.Client{Timeout: 60 * time.Second},
-		installPath: updateInstallPath(),
+		binaryURL:      getEnv("BINARY_URL", defaultBinaryURL),
+		versionURL:     getEnv("VERSION_URL", defaultVersionURL),
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		installPath:    updateInstallPath(),
+		localBuildTime: localBuildTime,
 	}
+}
+
+func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.versionURL, nil)
+	if err != nil {
+		return UpdateCheckResult{}, err
+	}
+
+	response, err := s.httpClient.Do(request)
+	if err != nil {
+		return UpdateCheckResult{}, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return UpdateCheckResult{}, errors.New("failed to fetch remote version info")
+	}
+
+	var remote struct {
+		BuildTime string `json:"buildTime"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&remote); err != nil {
+		return UpdateCheckResult{}, err
+	}
+
+	updateAvailable := false
+	if remote.BuildTime != "" && s.localBuildTime != "" {
+		tRemote, err1 := time.Parse(time.RFC3339, remote.BuildTime)
+		tLocal, err2 := time.Parse(time.RFC3339, s.localBuildTime)
+		if err1 == nil && err2 == nil {
+			updateAvailable = tRemote.After(tLocal)
+		} else {
+			updateAvailable = remote.BuildTime != s.localBuildTime
+		}
+	} else if remote.BuildTime != "" {
+		// If we don't have a local build time (e.g. dev build), assume update is available if remote exists
+		updateAvailable = true
+	}
+
+	return UpdateCheckResult{
+		UpdateAvailable: updateAvailable,
+		LocalBuildTime:  s.localBuildTime,
+		RemoteBuildTime: remote.BuildTime,
+	}, nil
 }
 
 func (s *UpdateService) SelfUpdate(ctx context.Context) (UpdateResult, error) {
@@ -105,5 +161,5 @@ func updateInstallPath() string {
 		return executable
 	}
 
-	return "/usr/local/bin/vps"
+	return "/usr/local/bin/mthan-vps"
 }
