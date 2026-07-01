@@ -48,7 +48,8 @@ export default function LoginRoute() {
             });
 
             if (!response.ok) {
-                throw new Error("Login failed");
+                const errorMsg = await response.text();
+                throw new Error(errorMsg.trim() || "Login failed");
             }
 
             setStatus("success");
@@ -57,9 +58,9 @@ export default function LoginRoute() {
             setTimeout(() => {
                 window.location.href = "/";
             }, 800);
-        } catch {
+        } catch (error: any) {
             setStatus("error");
-            setMessage("Unable to login.");
+            setMessage(error.message || "Unable to login.");
         }
     }
 
