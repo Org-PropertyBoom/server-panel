@@ -1,13 +1,17 @@
 package post
 
 import (
-	"encoding/json"
-	"errors"
-	"net"
 	"net/http"
 	"net/url"
+	"net"
 	"strings"
 
+	postlogin "mthan/vps/routes/post/login"
+	"mthan/vps/routes/post/ping"
+	"mthan/vps/routes/post/session"
+	"mthan/vps/routes/post/terminal"
+	"mthan/vps/routes/post/update"
+	"mthan/vps/routes/post/users"
 	userlogin "mthan/vps/routes/post/user/login"
 	"mthan/vps/services"
 )
@@ -21,69 +25,14 @@ type Dependencies struct {
 
 func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("OPTIONS /post/", postOnly(deps.Startup, http.HandlerFunc(noContent)))
-	registerLogin(mux, deps)
+	mux.Handle("POST /post/login", postOnly(deps.Startup, postlogin.Handler(deps.Auth, deps.Sessions)))
 	mux.Handle("POST /post/user/login", postOnly(deps.Startup, userlogin.Handler(deps.Auth)))
-	mux.Handle("GET /post/session", postOnly(deps.Startup, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, ok := requestSession(r, deps.Sessions)
-		if !ok {
-			http.Error(w, "session invalid", http.StatusUnauthorized)
-			return
-		}
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"session": session,
-			"status":  "ok",
-		})
-	})))
-	registerUpdate(mux, deps)
-	mux.Handle("POST /post/ping", postOnly(deps.Startup, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "ok",
-		})
-	})))
-	mux.Handle("GET /post/terminal", postOnly(deps.Startup, TerminalHandler(deps.Sessions)))
-}
-
-func requestSession(r *http.Request, sessions *services.SessionService) (services.Session, bool) {
-	cookie, err := r.Cookie(services.SessionCookieName)
-	if err != nil {
-		return services.Session{}, false
-	}
-
-	return sessions.Get(cookie.Value)
-}
-
-type loginResponse struct {
-	Session *services.Session          `json:"session,omitempty"`
-	Status  string                     `json:"status"`
-	User    services.AuthenticatedUser `json:"user"`
-}
-
-func authenticate(w http.ResponseWriter, r *http.Request, auth *services.AuthService) (services.AuthenticatedUser, bool) {
-	var credentials services.LoginCredentials
-	if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return services.AuthenticatedUser{}, false
-	}
-
-	user, err := auth.AuthenticateLinuxUser(credentials)
-	if err != nil {
-		writeAuthError(w, err)
-		return services.AuthenticatedUser{}, false
-	}
-
-	return user, true
-}
-
-func writeAuthError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, services.ErrInvalidCredentials):
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-	case errors.Is(err, services.ErrAuthUnavailable):
-		http.Error(w, "auth unavailable", http.StatusServiceUnavailable)
-	default:
-		http.Error(w, "auth failed", http.StatusInternalServerError)
-	}
+	mux.Handle("GET /post/session", postOnly(deps.Startup, session.Handler(deps.Sessions)))
+	mux.Handle("GET /post/update", postOnly(deps.Startup, update.CheckHandler(deps.Update)))
+	mux.Handle("POST /post/update", postOnly(deps.Startup, update.SelfUpdateHandler(deps.Update)))
+	mux.Handle("POST /post/ping", postOnly(deps.Startup, ping.Handler()))
+	mux.Handle("GET /post/users", postOnly(deps.Startup, users.Handler()))
+	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))
 }
 
 func postOnly(startup services.StartupConfig, next http.Handler) http.Handler {
@@ -98,18 +47,6 @@ func rootOnly(startup services.StartupConfig, next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(w, r)
-	})
-}
-
-func setSessionCookie(w http.ResponseWriter, r *http.Request, sessions *services.SessionService, session services.Session) {
-	http.SetCookie(w, &http.Cookie{
-		HttpOnly: true,
-		MaxAge:   sessions.MaxAge(),
-		Name:     services.SessionCookieName,
-		Path:     "/",
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
-		Value:    session.Token,
 	})
 }
 
@@ -190,13 +127,4 @@ func isLocalhost(host string) bool {
 
 func noContent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-	}
 }

@@ -1,7 +1,7 @@
 import { runtime } from "../runtime";
 import LoginRoute from "./login";
 import RootRoutes from "./root";
-import UsersRoute from "./users";
+import UsersRoute from "./root/users";
 import UserRoutes from "./user";
 
 export default function Routes() {
