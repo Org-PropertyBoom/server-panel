@@ -30,6 +30,14 @@ function DashboardLayoutContent({
     }, [isLoggedIn]);
 
     useEffect(() => {
+        if (title) {
+            document.title = `${title} | MThan VPS`;
+        } else {
+            document.title = "MThan VPS";
+        }
+    }, [title]);
+
+    useEffect(() => {
         if (!runtime.isRoot) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key === "`") {

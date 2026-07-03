@@ -3,10 +3,15 @@ import LoginRoute from "./login";
 import RootRoutes from "./root";
 import UsersRoute from "./root/users";
 import UserRoutes from "./user";
+import FilesRoute from "./files";
 
 export default function Routes() {
     if (isRoute("/login")) {
         return <LoginRoute />;
+    }
+
+    if (isRoute("/files")) {
+        return <FilesRoute />;
     }
 
     if (runtime.isRoot) {

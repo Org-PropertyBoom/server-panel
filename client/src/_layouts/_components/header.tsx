@@ -54,6 +54,19 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         }
     }, [checkUpdate, isRoot]);
 
+    useEffect(() => {
+        if (!updating) return;
+
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = "Hệ thống đang cập nhật. Vui lòng không đóng trình duyệt hoặc tải lại trang.";
+            return e.returnValue;
+        };
+
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    }, [updating]);
+
     const handleUpdate = async () => {
         setUpdateError("");
         setUpdateSuccess(false);
@@ -220,6 +233,16 @@ function UpdateModal({
                     <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                         The server will download the new binary, replace the current executable, and restart.
                     </div>
+
+                    {updating && (
+                        <div className="flex gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300 animate-pulse">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                            <div className="space-y-1">
+                                <p className="font-semibold text-amber-800 dark:text-amber-200">Đang tiến hành cập nhật hệ thống...</p>
+                                <p className="leading-relaxed">Vui lòng không đóng trình duyệt, tắt tab hoặc tải lại trang này cho đến khi quá trình hoàn tất.</p>
+                            </div>
+                        </div>
+                    )}
 
                     {error && (
                         <div className="flex gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">

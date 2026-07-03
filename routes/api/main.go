@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	apifiles "mthan/vps/routes/api/files"
 	"mthan/vps/services"
 )
 
@@ -74,6 +75,8 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 			User:    user,
 		})
 	})))
+
+	mux.Handle("GET /api/files", public(apifiles.Handler(deps.Sessions)))
 
 	mux.Handle("GET /healthz", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Health.Status())
