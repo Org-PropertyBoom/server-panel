@@ -60,7 +60,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
 
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
             e.preventDefault();
-            e.returnValue = "Hệ thống đang cập nhật hoặc khởi động lại. Vui lòng không đóng trình duyệt hoặc tải lại trang.";
+            e.returnValue = "The system is updating or restarting. Please do not close the browser or reload the page.";
             return e.returnValue;
         };
 
@@ -245,12 +245,12 @@ function UpdateModal({
                             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                             <div className="space-y-1">
                                 <p className="font-semibold text-amber-800 dark:text-amber-200">
-                                    {restarting ? "Đang khởi động lại hệ thống..." : "Đang tiến hành cập nhật hệ thống..."}
+                                    {restarting ? "System is restarting..." : "System is updating..."}
                                 </p>
                                 <p className="leading-relaxed">
                                     {restarting
-                                        ? "Hệ thống đang được khởi động lại để áp dụng bản cập nhật mới. Vui lòng không đóng trình duyệt, tắt tab hoặc tải lại trang này."
-                                        : "Vui lòng không đóng trình duyệt, tắt tab hoặc tải lại trang này cho đến khi quá trình hoàn tất."}
+                                        ? "The system is restarting to apply the update. Please do not close the browser, close the tab, or reload this page."
+                                        : "Please do not close the browser, close the tab, or reload this page until the process is complete."}
                                 </p>
                             </div>
                         </div>
