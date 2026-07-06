@@ -19,6 +19,7 @@ import {
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
+import FileEditor from "../../_components/file-editor";
 import { runtime } from "../../runtime";
 
 interface FileItem {
@@ -198,87 +199,16 @@ export default function FilesRoute() {
                 </aside>
 
                 {/* 2. Right Editor Pane (VSCode Tab/Editor Style) */}
-                <main className="bg-slate-950 flex flex-col h-full overflow-hidden text-slate-200">
-                    {selectedFile ? (
-                        <>
-                            {/* Editor Tab Bar */}
-                            <div className="flex h-10 items-center border-b border-slate-800 bg-slate-900/60 select-none">
-                                <div className="flex h-full items-center gap-2 px-3 bg-slate-950 border-r border-slate-800 text-xs font-medium text-slate-200 relative">
-                                    <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                                    <span>{selectedFile.name}</span>
-                                    <button
-                                        onClick={() => setSelectedFile(null)}
-                                        className="ml-2 p-0.5 rounded text-slate-500 hover:bg-slate-800 hover:text-slate-200 transition-colors"
-                                    >
-                                        <X className="h-3 w-3" />
-                                    </button>
-                                </div>
-                                <div className="flex-1" />
-                                <div className="px-4 text-[10px] text-slate-500 font-mono">
-                                    {formatBytes(fileSize)}
-                                </div>
-                            </div>
-
-                            {/* Editor Content Area */}
-                            <div className="flex-1 overflow-hidden relative">
-                                {isContentLoading ? (
-                                    <div className="flex h-full items-center justify-center">
-                                        <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
-                                    </div>
-                                ) : contentError ? (
-                                    <div className="flex flex-col items-center justify-center h-full gap-2 text-red-400 p-6 text-center select-none">
-                                        <AlertCircle className="h-8 w-8 shrink-0" />
-                                        <p className="text-sm font-semibold">{contentError}</p>
-                                    </div>
-                                ) : isBinary ? (
-                                    <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 select-none">
-                                        <AlertCircle className="h-10 w-10 mb-3 text-amber-600 animate-pulse" />
-                                        <p className="text-sm font-semibold text-slate-300">Binary file not displayed</p>
-                                        <p className="text-xs mt-1 max-w-sm text-center leading-relaxed">
-                                            This file is not displayed in the text editor because it is either binary, has an unsupported text encoding, or is too large.
-                                        </p>
-                                    </div>
-                                ) : (
-                                    <div className="flex font-mono text-xs md:text-sm leading-6 overflow-auto h-full bg-slate-950 text-slate-300">
-                                        {/* Line numbers */}
-                                        <div className="text-right pr-4 pl-3 select-none text-slate-600 border-r border-slate-800 bg-slate-900/20 sticky left-0 min-w-[3.5rem] py-4">
-                                            {fileContent.split("\n").map((_, idx) => (
-                                                <div key={idx} className="h-6">{idx + 1}</div>
-                                            ))}
-                                        </div>
-                                        {/* File body content */}
-                                        <pre className="pl-4 pr-6 py-4 m-0 select-text whitespace-pre overflow-visible flex-1 leading-6">
-                                            {fileContent}
-                                        </pre>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Editor Status Bar */}
-                            <div className="border-t border-slate-900 bg-slate-900 px-4 py-1.5 flex items-center justify-between text-[10px] text-slate-500 font-mono select-none">
-                                <span className="truncate max-w-md" title={selectedFile.path}>
-                                    Path: {selectedFile.path}
-                                </span>
-                                <span>UTF-8</span>
-                            </div>
-                        </>
-                    ) : (
-                        /* VSCode Empty Welcome Screen */
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 select-none bg-slate-950 text-slate-500">
-                            <div className="flex flex-col items-center max-w-md text-center gap-6">
-                                <div className="h-16 w-16 items-center justify-center rounded-xl bg-slate-900 border border-slate-800 flex text-slate-400">
-                                    <FolderOpen className="h-8 w-8" />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <h3 className="text-slate-300 font-semibold text-sm">MThan VPS Editor</h3>
-                                    <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
-                                        Select a configuration file or script from the directory tree sidebar to view or edit its contents.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </main>
+                <FileEditor
+                    fileName={selectedFile?.name || ""}
+                    filePath={selectedFile?.path || ""}
+                    fileSize={fileSize}
+                    content={fileContent}
+                    isBinary={isBinary}
+                    isLoading={isContentLoading}
+                    error={contentError}
+                    onClose={() => setSelectedFile(null)}
+                />
             </div>
         </DashboardLayout>
     );

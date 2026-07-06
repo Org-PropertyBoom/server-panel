@@ -12,6 +12,7 @@ import {
     User,
     Terminal,
     Home,
+    Trash2,
 } from "lucide-react";
 
 import DashboardLayout from "_layouts/dashboard";
@@ -30,6 +31,7 @@ export default function UsersRoute() {
     const [selectedUser, setSelectedUser] = useState<LinuxUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     // Modal state
@@ -162,6 +164,39 @@ export default function UsersRoute() {
         setModalError(null);
     };
 
+    const handleDeleteUser = async (username: string) => {
+        if (!window.confirm(`Are you sure you want to delete user "${username}"? All files in their home folder will be permanently deleted.`)) {
+            return;
+        }
+
+        setIsDeleting(true);
+        try {
+            const response = await fetch("/post/user/delete", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ username }),
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || "Failed to delete user");
+            }
+
+            const data = await response.json();
+            if (data.status === "ok") {
+                fetchUsers();
+            } else {
+                throw new Error(data.message || "Failed to delete user");
+            }
+        } catch (err: any) {
+            alert(err.message || "Could not delete user.");
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
     return (
         <DashboardLayout
             title="Linux users"
@@ -235,7 +270,7 @@ export default function UsersRoute() {
                     {selectedUser ? (
                         <div className="flex-1 overflow-y-auto p-6 space-y-6">
                             {/* Profile Header */}
-                            <div className="flex items-start justify-between border-b border-border pb-5">
+                            <div className="flex items-center justify-between border-b border-border pb-5">
                                 <div className="space-y-1.5">
                                     <div className="flex items-center gap-3">
                                         <h2 className="text-2xl font-bold tracking-tight text-foreground">
@@ -249,6 +284,23 @@ export default function UsersRoute() {
                                         System account profile details and environmental parameters.
                                     </p>
                                 </div>
+
+                                {selectedUser.uid !== 0 && (
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="text-destructive border-destructive/20 hover:bg-destructive/10 gap-1.5 shrink-0"
+                                        onClick={() => handleDeleteUser(selectedUser.username)}
+                                        disabled={isDeleting}
+                                    >
+                                        {isDeleting ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        )}
+                                        Delete User
+                                    </Button>
+                                )}
                             </div>
 
                             {/* Details Grid */}
@@ -284,26 +336,6 @@ export default function UsersRoute() {
                                         <p className="font-mono text-xs text-foreground truncate select-all" title={selectedUser.shell || "/bin/bash"}>
                                             {selectedUser.shell || "/bin/bash"}
                                         </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Configurations Section */}
-                            <div className="border border-border rounded-lg bg-card p-5 space-y-4">
-                                <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">
-                                    Account Configurations & Commands
-                                </h3>
-                                <p className="text-xs text-muted-foreground leading-relaxed">
-                                    To manage this account's passwords, permissions, or system boundaries, you can access the server terminal. Common administrative actions include:
-                                </p>
-                                <div className="space-y-3 font-mono text-xs bg-muted/30 border border-border rounded p-4 text-foreground/90">
-                                    <div>
-                                        <span className="text-muted-foreground"># Set or change account password:</span>
-                                        <p className="mt-1 text-primary">passwd {selectedUser.username}</p>
-                                    </div>
-                                    <div className="pt-2 border-t border-border/50">
-                                        <span className="text-muted-foreground"># Delete Linux user account (along with home directory):</span>
-                                        <p className="mt-1 text-destructive">userdel -r {selectedUser.username}</p>
                                     </div>
                                 </div>
                             </div>

@@ -8,6 +8,7 @@ import {
     User,
     Users,
     Globe,
+    Boxes,
 } from "lucide-react";
 import { useUser } from "../../_contexts/user";
 import { runtime } from "../../runtime";
@@ -27,6 +28,7 @@ export default function Sidebar({ className = "", isTerminalOpen, onTerminalTogg
         { icon: Users, label: "Users", href: "/users" },
         { icon: Globe, label: "VHosts", href: "/vhosts" },
         { icon: Folder, label: "Files", href: "/files" },
+        { icon: Boxes, label: "Modules", href: "/modules" },
     ];
 
     const handleLogoutClick = (e: React.MouseEvent<HTMLButtonElement>) => {

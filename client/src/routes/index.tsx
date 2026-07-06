@@ -5,6 +5,7 @@ import UsersRoute from "./root/users";
 import UserRoutes from "./user";
 import FilesRoute from "./files";
 import VHostsRoute from "./vhosts";
+import ModulesRoute from "./modules";
 
 export default function Routes() {
     if (isRoute("/login")) {
@@ -17,6 +18,10 @@ export default function Routes() {
 
     if (isRoute("/vhosts")) {
         return <VHostsRoute />;
+    }
+
+    if (isRoute("/modules")) {
+        return <ModulesRoute />;
     }
 
     if (runtime.isRoot) {
