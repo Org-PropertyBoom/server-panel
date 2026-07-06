@@ -1,5 +1,18 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Plus, RefreshCw, Shield, UserCog, Loader2, X, Key, CheckCircle, Eye, EyeOff } from "lucide-react";
+import {
+    Plus,
+    RefreshCw,
+    Shield,
+    Loader2,
+    X,
+    Key,
+    CheckCircle,
+    Eye,
+    EyeOff,
+    User,
+    Terminal,
+    Home,
+} from "lucide-react";
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
@@ -14,6 +27,7 @@ interface LinuxUser {
 
 export default function UsersRoute() {
     const [users, setUsers] = useState<LinuxUser[]>([]);
+    const [selectedUser, setSelectedUser] = useState<LinuxUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -64,7 +78,18 @@ export default function UsersRoute() {
             }
             const data = await response.json();
             if (data.status === "ok") {
-                setUsers(data.users || []);
+                const list = data.users || [];
+                setUsers(list);
+                
+                // Set default selected user
+                if (list.length > 0) {
+                    setSelectedUser((prev) => {
+                        const exists = list.find((u: LinuxUser) => u.username === prev?.username);
+                        return exists || list[0];
+                    });
+                } else {
+                    setSelectedUser(null);
+                }
             } else {
                 throw new Error(data.message || "Failed to load users");
             }
@@ -140,85 +165,158 @@ export default function UsersRoute() {
     return (
         <DashboardLayout
             title="Linux users"
-            description="Manage local system accounts, shells, groups, and access."
-            actions={
-                <>
-                    <Button
-                        variant="outline"
-                        className="gap-2"
-                        onClick={() => fetchUsers(true)}
-                        disabled={isLoading || isRefreshing}
-                    >
-                        <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-                        Refresh
-                    </Button>
-                    <Button className="gap-2" onClick={() => setIsModalOpen(true)}>
-                        <Plus className="h-4 w-4" />
-                        Add user
-                    </Button>
-                </>
-            }
+            description="Manage local system accounts, home folders, shells, and system access."
+            fullWidth={true}
         >
-            {isLoading ? (
-                <div className="flex h-48 items-center justify-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
-            ) : error ? (
-                <div className="rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
-                    {error}
-                </div>
-            ) : (
-                <section className="overflow-hidden rounded-md border border-border bg-card">
-                    <div className="grid grid-cols-[1.3fr_0.7fr_0.8fr_1.5fr_80px] border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground">
-                        <span>User</span>
-                        <span>UID</span>
-                        <span>Shell</span>
-                        <span>Home Directory</span>
-                        <span className="text-right">Actions</span>
+            <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] border border-border rounded-lg bg-card overflow-hidden h-[calc(100vh-220px)] shadow-lg">
+                {/* Left Sidebar - Users List */}
+                <aside className="border-r border-border bg-card/60 flex flex-col h-full overflow-hidden select-none">
+                    <div className="flex h-10 items-center justify-between px-3 border-b border-border bg-muted/20">
+                        <span className="text-xs font-semibold text-muted-foreground">
+                            Users List
+                        </span>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => fetchUsers(true)}
+                                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                title="Refresh Users"
+                                disabled={isLoading || isRefreshing}
+                            >
+                                <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                            </button>
+                            <button
+                                onClick={() => setIsModalOpen(true)}
+                                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                title="Create User"
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
                     </div>
 
-                    {users.length === 0 ? (
-                        <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-                            No users found.
-                        </div>
-                    ) : (
-                        users.map((user) => (
-                            <div
-                                key={user.username}
-                                className="grid grid-cols-[1.3fr_0.7fr_0.8fr_1.5fr_80px] items-center border-b border-border px-4 py-3 text-sm last:border-b-0"
-                            >
-                                <div className="flex min-w-0 items-center gap-3">
-                                    <div className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-background">
-                                        <Shield className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
+                        {isLoading && users.length === 0 ? (
+                            <div className="flex items-center justify-center py-12">
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        ) : error ? (
+                            <div className="text-xs text-destructive p-3 text-center">
+                                <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
+                                <span>{error}</span>
+                            </div>
+                        ) : users.length === 0 ? (
+                            <div className="text-xs text-muted-foreground p-4 text-center">
+                                No home users found.
+                            </div>
+                        ) : (
+                            users.map((u) => {
+                                const isSelected = selectedUser?.username === u.username;
+                                return (
+                                    <div
+                                        key={u.username}
+                                        className={`flex items-center gap-2 py-1.5 px-2.5 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
+                                            isSelected
+                                                ? "bg-primary/10 text-primary font-semibold"
+                                                : "text-foreground/90"
+                                        }`}
+                                        onClick={() => setSelectedUser(u)}
+                                    >
+                                        <User className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                                        <span className="truncate flex-1 min-w-0">{u.username}</span>
                                     </div>
-                                    <div className="min-w-0">
-                                        <p className="truncate font-medium">{user.username}</p>
-                                        <p className="truncate text-xs text-muted-foreground">
-                                            {user.uid === 0 ? "Superuser" : "Standard User"}
+                                );
+                            })
+                        )}
+                    </div>
+                </aside>
+
+                {/* Right Panel - User Details Dashboard */}
+                <main className="bg-background flex flex-col h-full overflow-hidden">
+                    {selectedUser ? (
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                            {/* Profile Header */}
+                            <div className="flex items-start justify-between border-b border-border pb-5">
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center gap-3">
+                                        <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                                            {selectedUser.username}
+                                        </h2>
+                                        <span className="inline-flex items-center text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 uppercase tracking-wide">
+                                            {selectedUser.uid === 0 ? "Superuser" : "Standard User"}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        System account profile details and environmental parameters.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Details Grid */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="p-4 rounded-lg bg-card border border-border shadow-sm flex items-start gap-3">
+                                    <Shield className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                            User ID (UID)
+                                        </span>
+                                        <p className="font-semibold text-sm text-foreground">{selectedUser.uid}</p>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 rounded-lg bg-card border border-border shadow-sm flex items-start gap-3">
+                                    <Home className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                                    <div className="space-y-1 min-w-0">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                            Home Folder
+                                        </span>
+                                        <p className="font-mono text-xs text-foreground truncate select-all" title={selectedUser.home}>
+                                            {selectedUser.home}
                                         </p>
                                     </div>
                                 </div>
-                                <span className="text-muted-foreground">{user.uid}</span>
-                                <span className="truncate text-muted-foreground">
-                                    {user.shell || "/bin/bash"}
-                                </span>
-                                <span className="truncate text-muted-foreground">
-                                    {user.home}
-                                </span>
-                                <div className="flex justify-end">
-                                    <button
-                                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                        title="Manage user"
-                                        type="button"
-                                    >
-                                        <UserCog className="h-4 w-4" />
-                                    </button>
+
+                                <div className="p-4 rounded-lg bg-card border border-border shadow-sm flex items-start gap-3">
+                                    <Terminal className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                                    <div className="space-y-1 min-w-0">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                            Login Shell
+                                        </span>
+                                        <p className="font-mono text-xs text-foreground truncate select-all" title={selectedUser.shell || "/bin/bash"}>
+                                            {selectedUser.shell || "/bin/bash"}
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
-                        ))
+
+                            {/* Configurations Section */}
+                            <div className="border border-border rounded-lg bg-card p-5 space-y-4">
+                                <h3 className="text-sm font-semibold text-foreground border-b border-border pb-2">
+                                    Account Configurations & Commands
+                                </h3>
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                    To manage this account's passwords, permissions, or system boundaries, you can access the server terminal. Common administrative actions include:
+                                </p>
+                                <div className="space-y-3 font-mono text-xs bg-muted/30 border border-border rounded p-4 text-foreground/90">
+                                    <div>
+                                        <span className="text-muted-foreground"># Set or change account password:</span>
+                                        <p className="mt-1 text-primary">passwd {selectedUser.username}</p>
+                                    </div>
+                                    <div className="pt-2 border-t border-border/50">
+                                        <span className="text-muted-foreground"># Delete Linux user account (along with home directory):</span>
+                                        <p className="mt-1 text-destructive">userdel -r {selectedUser.username}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        /* Empty state */
+                        <div className="flex-grow flex flex-col items-center justify-center p-8 text-muted-foreground">
+                            <User className="h-12 w-12 text-muted-foreground/30 mb-2 shrink-0" />
+                            <p className="text-sm font-medium">Select a user from the list to view profile details.</p>
+                        </div>
                     )}
-                </section>
-            )}
+                </main>
+            </div>
 
             {/* Modal */}
             {isModalOpen && (
@@ -353,5 +451,12 @@ export default function UsersRoute() {
                 </div>
             )}
         </DashboardLayout>
+    );
+}
+
+// Simple AlertCircle fallback since we need it in root.tsx & user.tsx
+function AlertCircle({ className }: { className?: string }) {
+    return (
+        <span className={className}>⚠️</span>
     );
 }
