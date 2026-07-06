@@ -6,6 +6,7 @@ import UserRoutes from "./user";
 import FilesRoute from "./files";
 import VHostsRoute from "./vhosts";
 import ModulesRoute from "./modules";
+import AgentRoute from "./agent";
 
 export default function Routes() {
     if (isRoute("/login")) {
@@ -22,6 +23,10 @@ export default function Routes() {
 
     if (isRoute("/modules")) {
         return <ModulesRoute />;
+    }
+
+    if (isRoute("/agent")) {
+        return <AgentRoute />;
     }
 
     if (runtime.isRoot) {
