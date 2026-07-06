@@ -29,6 +29,13 @@ export default function LoginRoute() {
         }
     }, []);
 
+    const handleInputChange = () => {
+        if (status === "error") {
+            setStatus("idle");
+            setMessage("");
+        }
+    };
+
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
 
@@ -54,14 +61,13 @@ export default function LoginRoute() {
             }
 
             setStatus("success");
-            setMessage("Login successful. Redirecting...");
             localStorage.setItem("is_logged_in", "true");
             setTimeout(() => {
                 window.location.href = "/";
             }, 800);
         } catch (error: any) {
             setStatus("error");
-            setMessage(error.message || "Unable to login.");
+            setMessage(error.message || "Unable to login");
         }
     }
 
@@ -148,6 +154,7 @@ export default function LoginRoute() {
                                         autoComplete="username"
                                         placeholder="username"
                                         required
+                                        onChange={handleInputChange}
                                     />
                                 </span>
                             </label>
@@ -168,53 +175,41 @@ export default function LoginRoute() {
                                         autoComplete="current-password"
                                         placeholder="password"
                                         required
+                                        onChange={handleInputChange}
                                     />
                                 </span>
                             </label>
 
                             <Button
-                                className="h-11 w-full gap-2"
-                                disabled={isLoading}
+                                className={`h-11 w-full gap-2 transition-all duration-300 ${
+                                    status === "success"
+                                        ? "bg-emerald-600 hover:bg-emerald-600 text-white disabled:opacity-100"
+                                        : status === "error"
+                                        ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                                        : ""
+                                }`}
+                                disabled={isLoading || status === "success"}
                                 type="submit"
                             >
-                                {isLoading ? (
-                                    <Loader2
-                                        className="h-4 w-4 animate-spin"
-                                        aria-hidden="true"
-                                    />
-                                ) : (
-                                    <ArrowRight
-                                        className="h-4 w-4"
-                                        aria-hidden="true"
-                                    />
+                                {status === "loading" && (
+                                    <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden="true" />
                                 )}
-                                {isLoading ? "Signing in..." : "Sign in"}
+                                {status === "success" && (
+                                    <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                )}
+                                {(status === "idle" || status === "error") && (
+                                    <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                )}
+                                
+                                {status === "idle" && "Sign in"}
+                                {status === "loading" && "Signing in..."}
+                                {status === "success" && "Login successful. Redirecting..."}
+                                {status === "error" && `${message || "Login failed"} - Try again`}
                             </Button>
-
-                            {message !== "" ? (
-                                <p
-                                    className={statusMessageClassName(status)}
-                                    aria-live="polite"
-                                >
-                                    {message}
-                                </p>
-                            ) : null}
                         </form>
                     </div>
                 </section>
             </main>
         </DefaultLayout>
     );
-}
-
-function statusMessageClassName(status: LoginStatus) {
-    if (status === "success") {
-        return "rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground";
-    }
-
-    if (status === "error") {
-        return "rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive";
-    }
-
-    return "text-sm text-muted-foreground";
 }

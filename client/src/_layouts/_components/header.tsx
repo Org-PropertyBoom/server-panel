@@ -23,6 +23,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const [checking, setChecking] = useState(false);
     const [updating, setUpdating] = useState(false);
     const [restarting, setRestarting] = useState(false);
+    const [bypassBeforeUnload, setBypassBeforeUnload] = useState(false);
     const [updateModalOpen, setUpdateModalOpen] = useState(false);
     const [updateError, setUpdateError] = useState("");
     const [updateSuccess, setUpdateSuccess] = useState(false);
@@ -56,7 +57,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     }, [checkUpdate, isRoot]);
 
     useEffect(() => {
-        if (!updating && !restarting) return;
+        if ((!updating && !restarting) || bypassBeforeUnload) return;
 
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
             e.preventDefault();
@@ -66,7 +67,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
 
         window.addEventListener("beforeunload", handleBeforeUnload);
         return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-    }, [updating, restarting]);
+    }, [updating, restarting, bypassBeforeUnload]);
 
     const handleUpdate = async () => {
         setUpdateError("");
@@ -91,7 +92,10 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                 setUpdateSuccess(true);
                 setRestarting(true);
                 setTimeout(() => {
-                    window.location.reload();
+                    setBypassBeforeUnload(true);
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 50);
                 }, 3000);
             } else {
                 const msg = await response.text();
