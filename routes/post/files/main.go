@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os/user"
 
 	"mthan/vps/services"
 )
@@ -17,7 +16,7 @@ func Handler(sessions *services.SessionService) http.Handler {
 			return
 		}
 
-		session, ok := sessions.Get(cookie.Value)
+		_, ok := sessions.Get(cookie.Value)
 		if !ok {
 			http.Error(w, "session invalid", http.StatusUnauthorized)
 			return
@@ -26,11 +25,8 @@ func Handler(sessions *services.SessionService) http.Handler {
 		requestedPath := r.URL.Query().Get("path")
 		isContent := r.URL.Query().Get("content") == "true"
 
-		homeDir := "/root"
-		u, err := user.Lookup(session.Username)
-		if err == nil && u.HomeDir != "" {
-			homeDir = u.HomeDir
-		}
+		// Root mode exposes the full filesystem and starts the explorer at /.
+		homeDir := "/"
 
 		if isContent {
 			content, err := services.GetFileContent(requestedPath, homeDir, true)

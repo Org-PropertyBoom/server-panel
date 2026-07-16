@@ -185,7 +185,7 @@ export default function FilesRoute() {
                         ) : homePath ? (
                             <DirectoryTreeNode
                                 path={homePath}
-                                name={runtime.username}
+                                name={runtime.isRoot ? "/" : runtime.username}
                                 isDir={true}
                                 depth={0}
                                 selectedPath={selectedFile?.path || ""}

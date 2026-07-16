@@ -23,7 +23,6 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const [checking, setChecking] = useState(false);
     const [updating, setUpdating] = useState(false);
     const [restarting, setRestarting] = useState(false);
-    const [bypassBeforeUnload, setBypassBeforeUnload] = useState(false);
     const [updateModalOpen, setUpdateModalOpen] = useState(false);
     const [updateError, setUpdateError] = useState("");
     const [updateSuccess, setUpdateSuccess] = useState(false);
@@ -64,7 +63,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     }, [checkUpdate, isRoot]);
 
     useEffect(() => {
-        if ((!updating && !restarting) || bypassBeforeUnload) return;
+        if (!updating && !restarting) return;
 
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
             e.preventDefault();
@@ -76,7 +75,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         window.addEventListener("beforeunload", handleBeforeUnload);
         return () =>
             window.removeEventListener("beforeunload", handleBeforeUnload);
-    }, [updating, restarting, bypassBeforeUnload]);
+    }, [updating, restarting]);
 
     const handleUpdate = async () => {
         setUpdateError("");
@@ -98,14 +97,12 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         try {
             const response = await fetch("/post/update", { method: "POST" });
             if (response.ok) {
-                setUpdateSuccess(true);
                 setRestarting(true);
-                setTimeout(() => {
-                    setBypassBeforeUnload(true);
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 50);
-                }, 3000);
+                await waitForServer();
+                setRestarting(false);
+                setUpdateSuccess(true);
+                setUpdateAvailable(false);
+                await checkUpdate();
             } else {
                 const msg = await response.text();
                 setUpdateError(msg.trim() || "Update failed");
@@ -303,8 +300,8 @@ function UpdateModal({
 
                     {success && (
                         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-                            Update installed. The server is restarting; the page
-                            will reload shortly.
+                            Update installed. The server is online and the
+                            connection has been restored.
                         </div>
                     )}
                 </div>
@@ -384,4 +381,29 @@ function formatBuildTime(buildTime?: string) {
     }
 
     return date.toLocaleString();
+}
+
+async function waitForServer() {
+    // Give the old process enough time to exit before checking the replacement.
+    await delay(1500);
+
+    let consecutiveSuccesses = 0;
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+        try {
+            const response = await fetch(`/healthz?reconnect=${Date.now()}`, {
+                cache: "no-store",
+            });
+            consecutiveSuccesses = response.ok ? consecutiveSuccesses + 1 : 0;
+            if (consecutiveSuccesses >= 2) return;
+        } catch {
+            consecutiveSuccesses = 0;
+        }
+        await delay(1000);
+    }
+
+    throw new Error("The update was installed, but the server did not reconnect in time.");
+}
+
+function delay(milliseconds: number) {
+    return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
