@@ -63,6 +63,14 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 		writeJSON(w, http.StatusOK, status)
 	})))
 
+	mux.Handle("GET /api/apps", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requestSession(r, deps.Sessions); !ok {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"apps": services.DetectApps()})
+	})))
+
 	mux.Handle("POST /api/login", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var credentials services.LoginCredentials
 		if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {

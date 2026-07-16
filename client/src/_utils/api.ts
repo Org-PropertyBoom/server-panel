@@ -1,16 +1,18 @@
 import { runtime } from "../runtime";
 
-export type ApiRoute = "login" | "session" | "system";
+export type ApiRoute = "apps" | "login" | "session" | "system";
 
 export type ApiRouteMap = Record<ApiRoute, string>;
 
 const rootApi: ApiRouteMap = {
+  apps: "/post/apps",
   login: "/post/login",
   session: "/post/session",
   system: "/post/system",
 };
 
 const userApi: ApiRouteMap = {
+  apps: "/api/apps",
   login: "/api/login",
   session: "/api/session",
   system: "/api/system",

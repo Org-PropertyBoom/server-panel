@@ -30,7 +30,7 @@ export default function Sidebar({ className = "", isTerminalOpen, onTerminalTogg
         { icon: Users, label: "Users", href: "/users" },
         { icon: Globe, label: "VHosts", href: "/vhosts" },
         { icon: Folder, label: "Files", href: "/files" },
-        { icon: Boxes, label: "Modules", href: "/modules" },
+        { icon: Boxes, label: "Apps", href: "/apps" },
     ];
 
     const handleLogoutClick = (e: React.MouseEvent<HTMLButtonElement>) => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Boxes,
     Cpu,
@@ -14,6 +14,7 @@ import {
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
+import Api from "_utils/api";
 
 interface ServerApp {
     id: string;
@@ -25,6 +26,7 @@ interface ServerApp {
     description: string;
     running: boolean;
     uptime: string;
+    installed: boolean;
 }
 
 export default function AppsRoute() {
@@ -39,6 +41,7 @@ export default function AppsRoute() {
             description: "High-performance HTTP server, reverse proxy, and load balancer.",
             running: true,
             uptime: "2 days, 14 hours",
+            installed: false,
         },
         {
             id: "2",
@@ -50,6 +53,7 @@ export default function AppsRoute() {
             description: "Robust, open-source relational database management system.",
             running: true,
             uptime: "2 days, 14 hours",
+            installed: false,
         },
         {
             id: "3",
@@ -61,6 +65,7 @@ export default function AppsRoute() {
             description: "PHP FastCGI Process Manager for processing dynamic web scripts.",
             running: true,
             uptime: "5 hours, 12 minutes",
+            installed: false,
         },
         {
             id: "4",
@@ -72,11 +77,42 @@ export default function AppsRoute() {
             description: "In-memory data structure store used as a database, cache, and message broker.",
             running: false,
             uptime: "Stopped",
+            installed: false,
         },
     ]);
 
     const [selectedApp, setSelectedApp] = useState<ServerApp | null>(apps[0]);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const [statusLoading, setStatusLoading] = useState(true);
+    const [statusError, setStatusError] = useState("");
+
+    useEffect(() => {
+        const loadStatuses = async () => {
+            try {
+                const response = await fetch(Api.current.apps, { cache: "no-store" });
+                if (!response.ok) throw new Error("Failed to load app status");
+                const data: { apps: Array<Pick<ServerApp, "name" | "installed" | "running">> } = await response.json();
+                setApps((current) =>
+                    current.map((app) => ({
+                        ...app,
+                        ...(data.apps.find((status) => status.name === app.name) ?? {}),
+                    })),
+                );
+                setSelectedApp((current) => {
+                    if (!current) return current;
+                    const status = data.apps.find((item) => item.name === current.name);
+                    return status ? { ...current, ...status } : current;
+                });
+                setStatusError("");
+            } catch (error) {
+                setStatusError(error instanceof Error ? error.message : "Failed to load app status");
+            } finally {
+                setStatusLoading(false);
+            }
+        };
+
+        loadStatuses();
+    }, []);
 
     const handleServiceAction = (id: string, action: "start" | "stop" | "restart") => {
         setActionLoading(action);
@@ -116,7 +152,7 @@ export default function AppsRoute() {
             description="Monitor, configure, and control core system software services and runtimes."
             fullWidth={true}
         >
-            <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] h-[calc(100vh-56px)] overflow-hidden">
+            <div className="grid h-full grid-cols-1 overflow-hidden md:grid-cols-[280px_1fr]">
                 {/* Left Sidebar - Apps List */}
                 <aside className="border-r border-border bg-card/60 flex flex-col h-full overflow-hidden select-none">
                     <div className="flex h-10 items-center justify-between px-3 border-b border-border bg-muted/20">
@@ -127,6 +163,9 @@ export default function AppsRoute() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
+                        {statusError ? (
+                            <p className="px-2 py-2 text-xs text-destructive">{statusError}</p>
+                        ) : null}
                         {apps.map((app) => {
                             const isSelected = selectedApp?.id === app.id;
                             return (
@@ -141,14 +180,16 @@ export default function AppsRoute() {
                                 >
                                     <Cpu className={`h-4 w-4 shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                                     <span className="truncate flex-1 min-w-0">{app.displayName}</span>
-                                    <span className="flex h-2 w-2 relative shrink-0">
-                                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                                            app.running ? "bg-emerald-400" : "bg-slate-400"
-                                        }`}></span>
-                                        <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                                            app.running ? "bg-emerald-500" : "bg-slate-400"
-                                        }`}></span>
-                                    </span>
+                                    <span
+                                        className={`h-2.5 w-2.5 shrink-0 rounded-full border ${
+                                            statusLoading
+                                                ? "animate-pulse border-muted-foreground/30 bg-muted"
+                                                : app.installed
+                                                  ? "border-emerald-500/30 bg-emerald-500"
+                                                  : "border-muted-foreground/30 bg-transparent"
+                                        }`}
+                                        title={statusLoading ? "Checking installation" : app.installed ? "Installed" : "Not installed"}
+                                    />
                                 </div>
                             );
                         })}
@@ -166,7 +207,12 @@ export default function AppsRoute() {
                                         <h2 className="text-2xl font-bold tracking-tight text-foreground">
                                             {selectedApp.displayName}
                                         </h2>
-                                        {selectedApp.running ? (
+                                        {!selectedApp.installed ? (
+                                            <span className="inline-flex items-center gap-1 rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                <XCircle className="h-3 w-3 shrink-0" />
+                                                Not installed
+                                            </span>
+                                        ) : selectedApp.running ? (
                                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-wide">
                                                 <CheckCircle2 className="h-3 w-3 shrink-0" />
                                                 Running
@@ -237,7 +283,11 @@ export default function AppsRoute() {
                                     Control status of {selectedApp.displayName} service block. Restart is recommended only during server configuration updates.
                                 </p>
                                 <div className="flex flex-wrap gap-2 pt-2">
-                                    {selectedApp.running ? (
+                                    {!selectedApp.installed ? (
+                                        <p className="text-xs text-muted-foreground">
+                                            Install {selectedApp.displayName} to enable service controls.
+                                        </p>
+                                    ) : selectedApp.running ? (
                                         <>
                                             <Button
                                                 size="sm"
