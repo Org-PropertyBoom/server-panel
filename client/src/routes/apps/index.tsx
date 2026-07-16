@@ -25,6 +25,7 @@ interface ServerApp {
     running: boolean;
     uptime: string;
     installed: boolean;
+    manageable: boolean;
 }
 
 export default function AppsRoute() {
@@ -40,6 +41,7 @@ export default function AppsRoute() {
             running: true,
             uptime: "2 days, 14 hours",
             installed: false,
+            manageable: true,
         },
         {
             id: "2",
@@ -52,11 +54,12 @@ export default function AppsRoute() {
             running: true,
             uptime: "2 days, 14 hours",
             installed: false,
+            manageable: true,
         },
         {
             id: "3",
-            name: "php",
-            displayName: "PHP-FPM Runtime",
+            name: "php8.2",
+            displayName: "PHP 8.2",
             serviceName: "php8.2-fpm.service",
             version: "8.2.18",
             port: "Unix Socket",
@@ -64,6 +67,7 @@ export default function AppsRoute() {
             running: true,
             uptime: "5 hours, 12 minutes",
             installed: false,
+            manageable: true,
         },
         {
             id: "4",
@@ -76,6 +80,85 @@ export default function AppsRoute() {
             running: false,
             uptime: "Stopped",
             installed: false,
+            manageable: true,
+        },
+        {
+            id: "5",
+            name: "docker",
+            displayName: "Docker",
+            serviceName: "docker.service",
+            version: "System",
+            port: "—",
+            description: "Container engine and runtime.",
+            running: false,
+            uptime: "Stopped",
+            installed: false,
+            manageable: true,
+        },
+        {
+            id: "6",
+            name: "podman",
+            displayName: "Podman",
+            serviceName: "podman.service",
+            version: "System",
+            port: "—",
+            description: "Daemonless container engine.",
+            running: false,
+            uptime: "Stopped",
+            installed: false,
+            manageable: true,
+        },
+        {
+            id: "7",
+            name: "node",
+            displayName: "Node.js",
+            serviceName: "—",
+            version: "System",
+            port: "—",
+            description: "JavaScript runtime.",
+            running: false,
+            uptime: "—",
+            installed: false,
+            manageable: false,
+        },
+        {
+            id: "8",
+            name: "php8.1",
+            displayName: "PHP 8.1",
+            serviceName: "php8.1-fpm.service",
+            version: "8.1",
+            port: "Unix socket",
+            description: "PHP FastCGI Process Manager.",
+            running: false,
+            uptime: "Stopped",
+            installed: false,
+            manageable: true,
+        },
+        {
+            id: "9",
+            name: "php8.3",
+            displayName: "PHP 8.3",
+            serviceName: "php8.3-fpm.service",
+            version: "8.3",
+            port: "Unix socket",
+            description: "PHP FastCGI Process Manager.",
+            running: false,
+            uptime: "Stopped",
+            installed: false,
+            manageable: true,
+        },
+        {
+            id: "10",
+            name: "php8.4",
+            displayName: "PHP 8.4",
+            serviceName: "php8.4-fpm.service",
+            version: "8.4",
+            port: "Unix socket",
+            description: "PHP FastCGI Process Manager.",
+            running: false,
+            uptime: "Stopped",
+            installed: false,
+            manageable: true,
         },
     ]);
 
@@ -89,7 +172,9 @@ export default function AppsRoute() {
             try {
                 const response = await fetch(Api.current.apps, { cache: "no-store" });
                 if (!response.ok) throw new Error("Failed to load app status");
-                const data: { apps: Array<Pick<ServerApp, "name" | "installed" | "running">> } = await response.json();
+                const data: {
+                    apps: Array<Pick<ServerApp, "name" | "installed" | "manageable" | "running" | "serviceName">>;
+                } = await response.json();
                 setApps((current) =>
                     current.map((app) => ({
                         ...app,
@@ -199,11 +284,12 @@ export default function AppsRoute() {
                     {selectedApp ? (
                         <div className="flex-1 space-y-4 overflow-y-auto p-4">
                             {/* Compact app header */}
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-                                <div className="flex items-center gap-2">
-                                    <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                                        {selectedApp.displayName}
-                                    </h2>
+                            <div className="flex flex-wrap items-center gap-3 border-b border-border pb-4">
+                                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                                            {selectedApp.displayName}
+                                        </h2>
                                         {!selectedApp.installed ? (
                                             <span className="inline-flex items-center gap-1 rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                                                 <XCircle className="h-3 w-3 shrink-0" />
@@ -220,38 +306,23 @@ export default function AppsRoute() {
                                                 Stopped
                                             </span>
                                         )}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                    <span>
-                                        Version <strong className="font-medium text-foreground">{selectedApp.version}</strong>
-                                    </span>
-                                    <span>
-                                        Service <code className="text-foreground">{selectedApp.serviceName}</code>
-                                    </span>
-                                    <span>
-                                        Port <code className="text-foreground">{selectedApp.port}</code>
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Service Control Panel */}
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between border-b border-border pb-2">
-                                    <h3 className="text-sm font-semibold text-foreground">
-                                        Service Management Console
-                                    </h3>
-                                    {selectedApp.running && (
-                                        <span className="text-xs text-muted-foreground font-mono">
-                                            Uptime: {selectedApp.uptime}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                        <span>
+                                            Version <strong className="font-medium text-foreground">{selectedApp.version}</strong>
                                         </span>
-                                    )}
+                                        <span>
+                                            Service <code className="text-foreground">{selectedApp.serviceName}</code>
+                                        </span>
+                                        <span>
+                                            Port <code className="text-foreground">{selectedApp.port}</code>
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="flex flex-wrap gap-2 pt-2">
-                                    {!selectedApp.installed ? (
-                                        <p className="text-xs text-muted-foreground">
-                                            Install {selectedApp.displayName} to enable service controls.
-                                        </p>
-                                    ) : selectedApp.running ? (
+
+                                {selectedApp.installed && selectedApp.manageable ? (
+                                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                                        {selectedApp.running ? (
                                         <>
                                             <Button
                                                 size="sm"
@@ -278,22 +349,23 @@ export default function AppsRoute() {
                                                 Stop Service
                                             </Button>
                                         </>
-                                    ) : (
-                                        <Button
-                                            size="sm"
-                                            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                            disabled={actionLoading !== null}
-                                            onClick={() => handleServiceAction(selectedApp.id, "start")}
-                                        >
-                                            {actionLoading === "start" ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <Play className="h-4 w-4 fill-current" />
-                                            )}
-                                            Start Service
-                                        </Button>
-                                    )}
-                                </div>
+                                        ) : (
+                                            <Button
+                                                size="sm"
+                                                className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                disabled={actionLoading !== null}
+                                                onClick={() => handleServiceAction(selectedApp.id, "start")}
+                                            >
+                                                {actionLoading === "start" ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Play className="h-4 w-4 fill-current" />
+                                                )}
+                                                Start Service
+                                            </Button>
+                                        )}
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     ) : (

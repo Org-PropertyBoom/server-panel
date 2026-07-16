@@ -23,6 +23,21 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-16 - Cross-distribution app detection
+
+- Goal: Add Docker, Podman, Node.js, and parallel PHP versions to the Apps panel.
+- Files changed:
+  - `services/apps.go`
+  - `services/apps_test.go`
+  - `client/src/routes/apps/index.tsx`
+- Important decisions:
+  - Added PHP 8.1–8.4 as separate apps.
+  - Detection supports Debian/Ubuntu versioned PHP-FPM names, RHEL/Remi paths and units, and Arch/RHEL generic PHP-FPM units.
+  - Node.js is installation-only and does not expose system service controls.
+  - Docker and Podman detect their native systemd service/socket states.
+- Validation: targeted Go tests and `git diff --check` passed; frontend production build was intentionally not run for this incremental UI change.
+- Known follow-up: service action buttons still use the existing client-side placeholder behavior and need a backend action endpoint before they control real services.
+
 ### 2026-07-08 - Debian RPM Arch installer support
 
 - Goal: Update app/install docs so the service can install runtime dependencies on Debian, RPM-based systems, and Arch.
