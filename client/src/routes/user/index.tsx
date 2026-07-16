@@ -6,7 +6,7 @@ export default function UserRoutes() {
     return (
         <DashboardLayout
             title="System overview"
-            description={`${runtime.osName} · Tổng quan tài nguyên máy chủ theo thời gian thực.`}
+            description={`${runtime.osName} · Real-time server resource overview.`}
         >
             <SystemDashboard />
         </DashboardLayout>

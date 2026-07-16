@@ -78,7 +78,7 @@ export default function SystemDashboard() {
                 {Array.from({ length: 4 }).map((_, index) => (
                     <div key={index} className="h-44 animate-pulse rounded-xl border border-border bg-muted/50" />
                 ))}
-                {error ? <p className="col-span-full text-sm text-destructive">Không thể tải thông tin hệ thống.</p> : null}
+                {error ? <p className="col-span-full text-sm text-destructive">Unable to load system information.</p> : null}
             </section>
         );
     }
@@ -97,20 +97,20 @@ export default function SystemDashboard() {
                 title="RAM"
                 value={`${formatBytes(status.memory.used)} / ${formatBytes(status.memory.total)}`}
                 progress={status.memory.usage}
-                description={`${status.memory.usage.toFixed(1)}% đang sử dụng`}
+                description={`${status.memory.usage.toFixed(1)}% in use`}
             />
             <MetricCard
                 icon={HardDrive}
                 title="Storage"
                 value={`${formatBytes(status.storage.used)} / ${formatBytes(status.storage.total)}`}
                 progress={status.storage.usage}
-                description={`${status.storage.usage.toFixed(1)}% đã sử dụng trên /`}
+                description={`${status.storage.usage.toFixed(1)}% used on /`}
             />
             <MetricCard
                 icon={Network}
                 title="Network"
                 value={`↓ ${formatBytes(status.network.received)}`}
-                description={`Đã gửi ↑ ${formatBytes(status.network.sent)}`}
+                description={`Sent ↑ ${formatBytes(status.network.sent)}`}
             />
         </section>
     );
