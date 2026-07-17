@@ -26,6 +26,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const [updateModalOpen, setUpdateModalOpen] = useState(false);
     const [updateError, setUpdateError] = useState("");
     const [updateSuccess, setUpdateSuccess] = useState(false);
+    const [reloadCountdown, setReloadCountdown] = useState(0);
     const allowReload = useRef(false);
 
     const checkUpdate = useCallback(async () => {
@@ -81,6 +82,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const handleUpdate = async () => {
         setUpdateError("");
         setUpdateSuccess(false);
+        setReloadCountdown(0);
 
         if (!updateAvailable) {
             await checkUpdate();
@@ -111,6 +113,11 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                 }
                 setUpdateSuccess(true);
                 setUpdateAvailable(false);
+                for (let seconds = 10; seconds > 0; seconds -= 1) {
+                    setReloadCountdown(seconds);
+                    await delay(1000);
+                }
+                setReloadCountdown(0);
                 allowReload.current = true;
                 window.location.reload();
             } else {
@@ -192,6 +199,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                     success={updateSuccess}
                     updating={updating}
                     restarting={restarting}
+                    reloadCountdown={reloadCountdown}
                     onCheck={checkUpdate}
                     onClose={() => {
                         if (!updating && !restarting) {
@@ -212,6 +220,7 @@ function UpdateModal({
     success,
     updating,
     restarting,
+    reloadCountdown,
     onCheck,
     onClose,
     onConfirm,
@@ -222,6 +231,7 @@ function UpdateModal({
     success: boolean;
     updating: boolean;
     restarting: boolean;
+    reloadCountdown: number;
     onCheck: () => Promise<UpdateInfo | null>;
     onClose: () => void;
     onConfirm: () => void;
@@ -282,7 +292,7 @@ function UpdateModal({
                         current executable, and restart.
                     </div>
 
-                    {(updating || restarting) && (
+                    {(updating || restarting) && reloadCountdown === 0 && (
                         <div className="flex gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300 animate-pulse">
                             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                             <div className="space-y-1">
@@ -311,6 +321,9 @@ function UpdateModal({
                         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
                             Update installed. The server is online and the
                             connection has been restored.
+                            {reloadCountdown > 0
+                                ? ` Reloading in ${reloadCountdown} seconds...`
+                                : null}
                         </div>
                     )}
                 </div>
@@ -343,11 +356,13 @@ function UpdateModal({
                         onClick={onConfirm}
                         type="button"
                     >
-                        {restarting
-                            ? "Restarting..."
-                            : updating
-                              ? "Updating..."
-                              : "Update and restart"}
+                        {reloadCountdown > 0
+                            ? `Reloading in ${reloadCountdown}s`
+                            : restarting
+                              ? "Restarting..."
+                              : updating
+                                ? "Updating..."
+                                : "Update and restart"}
                     </button>
                 </div>
             </div>

@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - Post-update reload countdown
+
+- Goal: Avoid reloading while the reverse proxy may still return a transient 502 after API restart.
+- Files changed: `client/src/_layouts/_components/header.tsx`, `.agents/works.md`.
+- Important decisions: wait 10 seconds after successful reconnect and update confirmation, show the countdown in the modal, then reload the window.
+- Validation: `git diff --check`; no frontend production build.
+- Known follow-up: none.
+
 ### 2026-07-16 - Update reload and consolidated PHP app
 
 - Goal: Reload safely after update reconnect and represent PHP versions as configuration of one app.
