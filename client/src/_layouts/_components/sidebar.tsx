@@ -9,7 +9,6 @@ import {
     Users,
     Globe,
     Boxes,
-    Bot,
     Settings,
 } from "lucide-react";
 import { useUser } from "../../_contexts/user";
@@ -27,7 +26,6 @@ export default function Sidebar({ className = "", isTerminalOpen, onTerminalTogg
 
     const topMenuItems = [
         { icon: LayoutDashboard, label: "Dashboard", href: "/" },
-        { icon: Bot, label: "Agent", href: "/agent" },
         { icon: Users, label: "Users", href: "/users" },
         { icon: Globe, label: "VHosts", href: "/vhosts" },
         { icon: Folder, label: "Files", href: "/files" },

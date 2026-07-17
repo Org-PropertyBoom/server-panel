@@ -17,6 +17,7 @@ import {
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
+import { useApp } from "_contexts/app";
 
 interface LinuxUser {
     home: string;
@@ -27,6 +28,8 @@ interface LinuxUser {
 }
 
 export default function UsersRoute() {
+    const { settings } = useApp();
+    const autoUsername = (settings.users_auto_username ?? "false") === "true";
     const [users, setUsers] = useState<LinuxUser[]>([]);
     const [selectedUser, setSelectedUser] = useState<LinuxUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -41,6 +44,7 @@ export default function UsersRoute() {
     const [showPassword, setShowPassword] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [modalError, setModalError] = useState<string | null>(null);
+    const [username, setUsername] = useState("");
     const [createdUser, setCreatedUser] = useState<{ username: string; password: string } | null>(null);
 
     const generateRandomPassword = () => {
@@ -111,6 +115,11 @@ export default function UsersRoute() {
         e.preventDefault();
         setModalError(null);
 
+        if (!autoUsername && !username.trim()) {
+            setModalError("Username is required");
+            return;
+        }
+
         if (!password.trim()) {
             setModalError("Password is required");
             return;
@@ -128,7 +137,7 @@ export default function UsersRoute() {
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({ password }),
+                body: JSON.stringify({ password, username: autoUsername ? "" : username.trim() }),
             });
 
             if (!response.ok) {
@@ -144,6 +153,7 @@ export default function UsersRoute() {
                 });
                 setPassword("");
                 setConfirmPassword("");
+                setUsername("");
                 fetchUsers();
             } else {
                 throw new Error(data.message || "Failed to create user");
@@ -160,6 +170,7 @@ export default function UsersRoute() {
         setCreatedUser(null);
         setPassword("");
         setConfirmPassword("");
+        setUsername("");
         setShowPassword(false);
         setModalError(null);
     };
@@ -396,9 +407,23 @@ export default function UsersRoute() {
                                 </div>
                             ) : (
                                 <form onSubmit={handleCreateUser} className="space-y-4">
+                                    {autoUsername ? (
                                     <div className="rounded-none border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-blue-600 dark:text-blue-400 leading-normal">
                                         <strong>Username Notice:</strong> The username will be generated automatically using the prefix <code className="font-mono bg-blue-500/10 px-1 rounded-none">user-</code> followed by 8 random characters (e.g. <code className="font-mono bg-blue-500/10 px-1 rounded-none">user-ax9h2b7m</code>).
                                     </div>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            <label htmlFor="username" className="text-sm font-medium">Username</label>
+                                            <input
+                                                id="username"
+                                                value={username}
+                                                onChange={(event) => setUsername(event.target.value)}
+                                                placeholder="Enter Linux username"
+                                                className="flex h-9 w-full rounded-none border border-input bg-transparent px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                required
+                                            />
+                                        </div>
+                                    )}
 
                                     {modalError && (
                                         <div className="rounded-none border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">

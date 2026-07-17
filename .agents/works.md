@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - Configurable automatic Linux usernames
+
+- Goal: Make automatic username generation optional for new Linux users.
+- Files changed: settings defaults/validation/UI, user creation UI/backend/tests, and work log.
+- Important decisions: `users_auto_username` defaults to false; manual usernames are required and validated when disabled; automatic names use `user-` plus eight lowercase alphanumeric characters.
+- Validation: targeted Go tests, TypeScript syntax parser, and `git diff --check`; no frontend production build.
+- Known follow-up: none.
+
 ### 2026-07-17 - Nested settings routes
 
 - Goal: Give each Settings section a dedicated URL.

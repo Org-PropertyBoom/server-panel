@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"mthan/vps/services"
@@ -14,7 +15,10 @@ import (
 
 type request struct {
 	Password string `json:"password"`
+	Username string `json:"username"`
 }
+
+var usernamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 type response struct {
 	Status   string `json:"status"`
@@ -35,9 +39,16 @@ func Handler(settings *services.SettingsService) http.Handler {
 			return
 		}
 
-		username, err := generateUsername()
-		if err != nil {
-			http.Error(w, "failed to generate username", http.StatusInternalServerError)
+		username := strings.TrimSpace(req.Username)
+		if settings.Get("users_auto_username", "false") == "true" {
+			generated, err := generateUsername()
+			if err != nil {
+				http.Error(w, "failed to generate username", http.StatusInternalServerError)
+				return
+			}
+			username = generated
+		} else if !usernamePattern.MatchString(username) {
+			http.Error(w, "username must use lowercase letters, numbers, underscores, or hyphens", http.StatusBadRequest)
 			return
 		}
 
@@ -72,7 +83,7 @@ func Handler(settings *services.SettingsService) http.Handler {
 }
 
 func generateUsername() (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyz"
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
 	for i := range b {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))

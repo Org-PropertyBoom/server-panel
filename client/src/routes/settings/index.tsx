@@ -167,6 +167,15 @@ export default function SettingsRoute() {
                                         className="h-4 w-4 rounded border-input"
                                     />
                                 </label>
+                                <label className="flex items-center justify-between gap-4 p-4">
+                                    <span className="text-sm font-medium">Auto Username</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={(settings.users_auto_username ?? "false") === "true"}
+                                        onChange={(event) => setSetting("users_auto_username", String(event.target.checked))}
+                                        className="h-4 w-4 rounded border-input"
+                                    />
+                                </label>
                             </div>
                         </div>
                     ) : (

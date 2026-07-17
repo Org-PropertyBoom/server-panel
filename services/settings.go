@@ -47,6 +47,7 @@ func NewSettingsService() (*SettingsService, error) {
 		"users_default_shell": "/bin/bash",
 		"users_home_base":     "/home",
 		"users_create_home":   "true",
+		"users_auto_username": "false",
 	} {
 		if _, err := db.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", key, value); err != nil {
 			_ = db.Close()

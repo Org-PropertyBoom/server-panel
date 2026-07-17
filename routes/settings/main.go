@@ -11,6 +11,7 @@ import (
 var allowedKeys = map[string]bool{
 	"general_app_name": true, "general_color_mode": true, "apps_header": true,
 	"users_default_shell": true, "users_home_base": true, "users_create_home": true,
+	"users_auto_username": true,
 }
 
 func Handler(sessions *services.SessionService, settings *services.SettingsService) http.Handler {
@@ -61,7 +62,7 @@ func validSetting(key, value string) bool {
 		return value == "system" || value == "light" || value == "dark"
 	case "users_default_shell", "users_home_base":
 		return strings.HasPrefix(value, "/") && !strings.Contains(value, "..") && len(value) <= 255
-	case "users_create_home":
+	case "users_create_home", "users_auto_username":
 		return value == "true" || value == "false"
 	case "apps_header":
 		var apps []string
