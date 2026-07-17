@@ -60,7 +60,8 @@ export default function FilesRoute() {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch(`${apiEndpoint}?path=`);
+            const initialPath = new URLSearchParams(window.location.search).get("path") ?? "";
+            const response = await fetch(`${apiEndpoint}?path=${encodeURIComponent(initialPath)}`);
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || "Failed to initialize root path");

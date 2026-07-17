@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - Nested user sections
+
+- Goal: Add Overview, Files, and Apps sub-items for every user.
+- Files changed: root route matcher, Users route, and work log.
+- Important decisions: user routes are `/users/{username}/overview`, `/files`, and `/apps`; direct URLs select the matching user and section; `/users` defaults to the first user's overview.
+- Validation: TypeScript syntax parser and `git diff --check`; no frontend production build.
+- Known follow-up: User Apps is an empty state until per-user app assignments are implemented.
+
 ### 2026-07-17 - List all home-directory users
 
 - Goal: Make `/users` list every directory directly under `/home`.

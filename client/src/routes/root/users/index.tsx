@@ -13,6 +13,9 @@ import {
     Terminal,
     Home,
     Trash2,
+    LayoutDashboard,
+    Folder,
+    Boxes,
 } from "lucide-react";
 
 import DashboardLayout from "_layouts/dashboard";
@@ -30,6 +33,9 @@ interface LinuxUser {
 export default function UsersRoute() {
     const { settings } = useApp();
     const autoUsername = (settings.users_auto_username ?? "false") === "true";
+    const routeParts = window.location.pathname.split("/").filter(Boolean);
+    const routeUsername = routeParts[0] === "users" ? decodeURIComponent(routeParts[1] || "") : "";
+    const activeSection = userSection(routeParts[2]);
     const [users, setUsers] = useState<LinuxUser[]>([]);
     const [selectedUser, setSelectedUser] = useState<LinuxUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -90,6 +96,8 @@ export default function UsersRoute() {
                 // Set default selected user
                 if (list.length > 0) {
                     setSelectedUser((prev) => {
+                        const routed = list.find((u: LinuxUser) => u.username === routeUsername);
+                        if (routed) return routed;
                         const exists = list.find((u: LinuxUser) => u.username === prev?.username);
                         return exists || list[0];
                     });
@@ -258,17 +266,25 @@ export default function UsersRoute() {
                             users.map((u) => {
                                 const isSelected = selectedUser?.username === u.username;
                                 return (
-                                    <div
-                                        key={u.username}
-                                        className={`flex items-center gap-2 py-1.5 px-2.5 rounded-none cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
+                                    <div key={u.username}>
+                                    <a
+                                        href={`/users/${encodeURIComponent(u.username)}/overview`}
+                                        className={`flex items-center gap-2 py-1.5 px-2.5 rounded-none hover:bg-muted/60 transition-colors text-xs ${
                                             isSelected
                                                 ? "bg-primary/10 text-primary font-semibold"
                                                 : "text-foreground/90"
                                         }`}
-                                        onClick={() => setSelectedUser(u)}
                                     >
                                         <User className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
                                         <span className="truncate flex-1 min-w-0">{u.username}</span>
+                                    </a>
+                                    {isSelected ? (
+                                        <nav className="ml-5 border-l border-border py-1 pl-2">
+                                            <UserSubItem username={u.username} section="overview" active={activeSection === "overview"} icon={LayoutDashboard} label="Overview" />
+                                            <UserSubItem username={u.username} section="files" active={activeSection === "files"} icon={Folder} label="Files" />
+                                            <UserSubItem username={u.username} section="apps" active={activeSection === "apps"} icon={Boxes} label="Apps" />
+                                        </nav>
+                                    ) : null}
                                     </div>
                                 );
                             })
@@ -314,7 +330,8 @@ export default function UsersRoute() {
                                 )}
                             </div>
 
-                            {/* Details Grid */}
+                            {activeSection === "overview" ? (
+                            /* Details Grid */
                             <div className="grid grid-cols-1 md:grid-cols-3 border-b border-border bg-card/20">
                                 <div className="p-5 border-b md:border-b-0 md:border-r border-border flex items-start gap-3">
                                     <Shield className="h-5 w-5 text-primary shrink-0 mt-0.5" />
@@ -350,6 +367,20 @@ export default function UsersRoute() {
                                     </div>
                                 </div>
                             </div>
+                            ) : activeSection === "files" ? (
+                                <div className="rounded-md border border-border bg-card p-5">
+                                    <h3 className="text-sm font-semibold">User Files</h3>
+                                    <p className="mt-2 font-mono text-xs text-muted-foreground">{selectedUser.home}</p>
+                                    <Button variant="outline" size="sm" asChild className="mt-4">
+                                        <a href={`/files?path=${encodeURIComponent(selectedUser.home)}`}>Open File Explorer</a>
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="rounded-md border border-border bg-card p-5">
+                                    <h3 className="text-sm font-semibold">User Apps</h3>
+                                    <p className="mt-2 text-xs text-muted-foreground">No user-specific apps are configured.</p>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         /* Empty state */
@@ -516,5 +547,31 @@ export default function UsersRoute() {
 function AlertCircle({ className }: { className?: string }) {
     return (
         <span className={className}>⚠️</span>
+    );
+}
+
+type UserSection = "overview" | "files" | "apps";
+
+function userSection(section?: string): UserSection {
+    return section === "files" || section === "apps" ? section : "overview";
+}
+
+function UserSubItem({ username, section, active, icon: Icon, label }: {
+    username: string;
+    section: UserSection;
+    active: boolean;
+    icon: typeof User;
+    label: string;
+}) {
+    return (
+        <a
+            href={`/users/${encodeURIComponent(username)}/${section}`}
+            className={`flex items-center gap-2 px-2 py-1.5 text-[11px] ${
+                active ? "font-semibold text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+        >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+        </a>
     );
 }

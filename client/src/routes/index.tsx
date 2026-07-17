@@ -35,7 +35,7 @@ export default function Routes() {
     }
 
     if (runtime.isRoot) {
-        if (isRoute("/users")) {
+        if (isRoute("/users") || isNestedRoute("/users")) {
             return <UsersRoute />;
         }
 
