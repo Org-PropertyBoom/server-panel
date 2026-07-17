@@ -6,7 +6,10 @@ import (
 	"math/big"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"mthan/vps/services"
 )
 
 type request struct {
@@ -18,7 +21,7 @@ type response struct {
 	Username string `json:"username"`
 }
 
-func Handler() http.Handler {
+func Handler(settings *services.SettingsService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -38,8 +41,14 @@ func Handler() http.Handler {
 			return
 		}
 
-		// Run useradd -m -s /bin/bash <username>
-		cmd := exec.Command("useradd", "-m", "-s", "/bin/bash", username)
+		shell := settings.Get("users_default_shell", "/bin/bash")
+		homeBase := settings.Get("users_home_base", "/home")
+		createHome := settings.Get("users_create_home", "true") == "true"
+		args := []string{"-M", "-d", filepath.Join(homeBase, username), "-s", shell, username}
+		if createHome {
+			args[0] = "-m"
+		}
+		cmd := exec.Command("useradd", args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			http.Error(w, "failed to create user: "+string(output), http.StatusInternalServerError)
 			return

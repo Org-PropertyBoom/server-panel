@@ -15,18 +15,18 @@ func TestSettingsServiceCreatesAndUpdatesSettings(t *testing.T) {
 	}
 	defer service.db.Close()
 
-	if err := service.Set("header_apps", `["nginx"]`); err != nil {
+	if err := service.Set("apps_header", `["nginx"]`); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Set("header_apps", `["nginx","docker"]`); err != nil {
+	if err := service.Set("apps_header", `["nginx","docker"]`); err != nil {
 		t.Fatal(err)
 	}
 	settings, err := service.All()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := settings["header_apps"]; got != `["nginx","docker"]` {
-		t.Fatalf("header_apps = %q", got)
+	if got := settings["apps_header"]; got != `["nginx","docker"]` {
+		t.Fatalf("apps_header = %q", got)
 	}
 }
 

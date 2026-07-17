@@ -9,7 +9,8 @@ import (
 )
 
 var allowedKeys = map[string]bool{
-	"app_name": true, "color_mode": true, "header_apps": true,
+	"general_app_name": true, "general_color_mode": true, "apps_header": true,
+	"users_default_shell": true, "users_home_base": true, "users_create_home": true,
 }
 
 func Handler(sessions *services.SessionService, settings *services.SettingsService) http.Handler {
@@ -54,11 +55,15 @@ func validSetting(key, value string) bool {
 		return false
 	}
 	switch key {
-	case "app_name":
+	case "general_app_name":
 		return strings.TrimSpace(value) != "" && len(value) <= 80
-	case "color_mode":
+	case "general_color_mode":
 		return value == "system" || value == "light" || value == "dark"
-	case "header_apps":
+	case "users_default_shell", "users_home_base":
+		return strings.HasPrefix(value, "/") && !strings.Contains(value, "..") && len(value) <= 255
+	case "users_create_home":
+		return value == "true" || value == "false"
+	case "apps_header":
 		var apps []string
 		if json.Unmarshal([]byte(value), &apps) != nil || len(apps) > 7 {
 			return false

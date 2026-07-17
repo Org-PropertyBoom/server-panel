@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - Prefixed settings and Linux user defaults
+
+- Goal: Rename User Settings to Users Settings and persist defaults used by Linux user creation.
+- Files changed: settings database/service/API, app context, Settings route, user-add route, tests, and work log.
+- Important decisions: sidebar order is General → Users → Apps; keys use `general_`, `users_`, and `apps_`; legacy keys migrate automatically; useradd uses configured shell, home base, and create-home preference.
+- Validation: targeted Go tests and `git diff --check`; no frontend production build.
+- Known follow-up: none.
+
 ### 2026-07-17 - User settings and sortable app shortcuts
 
 - Goal: Add User Settings and redesign Apps Settings for installed and pinned apps.

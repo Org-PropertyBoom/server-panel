@@ -5,7 +5,6 @@ import { useApp } from "_contexts/app";
 import DashboardLayout from "_layouts/dashboard";
 import { defaultAppName } from "_utils/app-settings";
 import Api from "_utils/api";
-import { runtime } from "../../runtime";
 import {
     getColorModePreference,
     type ColorModePreference,
@@ -21,16 +20,18 @@ const availableApps = [
     ["php", "PHP"],
 ] as const;
 
-type SettingsSection = "general" | "apps" | "user";
+type SettingsSection = "general" | "users" | "apps";
 
 export default function SettingsRoute() {
-    const { appName, setAppName, headerApps, setHeaderApps, setDefaultColorMode } = useApp();
+    const { appName, setAppName, headerApps, setHeaderApps, setDefaultColorMode, settings, setSetting } = useApp();
     const [section, setSection] = useState<SettingsSection>("general");
     const [appNameDraft, setAppNameDraft] = useState(appName);
     const [colorMode, setCurrentColorMode] = useState<ColorModePreference>(getColorModePreference);
     const [installedApps, setInstalledApps] = useState<string[]>([]);
     const [appsLoading, setAppsLoading] = useState(true);
     const [draggedApp, setDraggedApp] = useState<string | null>(null);
+    const [defaultShell, setDefaultShell] = useState("/bin/bash");
+    const [homeBase, setHomeBase] = useState("/home");
 
     useEffect(() => {
         const syncColorMode = () => setCurrentColorMode(getColorModePreference());
@@ -39,6 +40,11 @@ export default function SettingsRoute() {
     }, []);
 
     useEffect(() => setAppNameDraft(appName), [appName]);
+
+    useEffect(() => {
+        setDefaultShell(settings.users_default_shell || "/bin/bash");
+        setHomeBase(settings.users_home_base || "/home");
+    }, [settings.users_default_shell, settings.users_home_base]);
 
     useEffect(() => {
         void fetch(Api.current.apps, { cache: "no-store" })
@@ -86,8 +92,8 @@ export default function SettingsRoute() {
             <div className="grid h-full grid-cols-1 overflow-hidden md:grid-cols-[240px_1fr]">
                 <aside className="flex h-full flex-col gap-1 border-r border-border bg-card/60 p-2">
                     <SettingsNavItem active={section === "general"} icon={Settings} label="General Settings" onClick={() => setSection("general")} />
+                    <SettingsNavItem active={section === "users"} icon={User} label="Users Settings" onClick={() => setSection("users")} />
                     <SettingsNavItem active={section === "apps"} icon={Boxes} label="Apps Settings" onClick={() => setSection("apps")} />
-                    <SettingsNavItem active={section === "user"} icon={User} label="User Settings" onClick={() => setSection("user")} />
                 </aside>
 
                 <main className="overflow-y-auto p-6">
@@ -128,7 +134,42 @@ export default function SettingsRoute() {
                             </div>
                         </div>
                     </div>
-                    ) : section === "apps" ? (
+                    ) : section === "users" ? (
+                        <div className="mx-auto max-w-2xl space-y-6">
+                            <h2 className="text-lg font-semibold">Users Settings</h2>
+                            <div className="divide-y divide-border rounded-md border border-border bg-card">
+                                <div className="grid gap-3 p-4 sm:grid-cols-[180px_1fr] sm:items-center">
+                                    <label htmlFor="default-shell" className="text-sm font-medium">Default Shell</label>
+                                    <input
+                                        id="default-shell"
+                                        value={defaultShell}
+                                        onChange={(event) => setDefaultShell(event.target.value)}
+                                        onBlur={() => setSetting("users_default_shell", defaultShell.trim() || "/bin/bash")}
+                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
+                                    />
+                                </div>
+                                <div className="grid gap-3 p-4 sm:grid-cols-[180px_1fr] sm:items-center">
+                                    <label htmlFor="home-base" className="text-sm font-medium">Home Base</label>
+                                    <input
+                                        id="home-base"
+                                        value={homeBase}
+                                        onChange={(event) => setHomeBase(event.target.value)}
+                                        onBlur={() => setSetting("users_home_base", homeBase.trim() || "/home")}
+                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
+                                    />
+                                </div>
+                                <label className="flex items-center justify-between gap-4 p-4">
+                                    <span className="text-sm font-medium">Create Home Directory</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={(settings.users_create_home ?? "true") === "true"}
+                                        onChange={(event) => setSetting("users_create_home", String(event.target.checked))}
+                                        className="h-4 w-4 rounded border-input"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    ) : (
                         <div className="mx-auto max-w-2xl space-y-6">
                             <h2 className="text-lg font-semibold">Apps Settings</h2>
                             <div className="grid gap-4 md:grid-cols-2">
@@ -204,18 +245,6 @@ export default function SettingsRoute() {
                                 })}
                                     </div>
                                 </section>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="mx-auto max-w-2xl space-y-6">
-                            <h2 className="text-lg font-semibold">User Settings</h2>
-                            <div className="rounded-md border border-border bg-card p-4">
-                                <dl className="grid gap-3 text-sm sm:grid-cols-[140px_1fr]">
-                                    <dt className="text-muted-foreground">Username</dt>
-                                    <dd className="font-medium">{runtime.username || "System User"}</dd>
-                                    <dt className="text-muted-foreground">Session mode</dt>
-                                    <dd className="font-medium capitalize">{runtime.mode}</dd>
-                                </dl>
                             </div>
                         </div>
                     )}

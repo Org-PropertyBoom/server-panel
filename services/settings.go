@@ -31,8 +31,22 @@ func NewSettingsService() (*SettingsService, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	for oldKey, newKey := range map[string]string{
+		"app_name": "general_app_name", "color_mode": "general_color_mode", "header_apps": "apps_header",
+	} {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO settings (key, value)
+			SELECT ?, value FROM settings WHERE key = ?`, newKey, oldKey); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 	for key, value := range map[string]string{
-		"app_name": "MThan VPS Panel", "color_mode": "system", "header_apps": "[]",
+		"general_app_name":    "MThan VPS Panel",
+		"general_color_mode":  "system",
+		"apps_header":         "[]",
+		"users_default_shell": "/bin/bash",
+		"users_home_base":     "/home",
+		"users_create_home":   "true",
 	} {
 		if _, err := db.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", key, value); err != nil {
 			_ = db.Close()
@@ -63,6 +77,14 @@ func (s *SettingsService) Set(key, value string) error {
 	_, err := s.db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`, key, value)
 	return err
+}
+
+func (s *SettingsService) Get(key, fallback string) string {
+	var value string
+	if err := s.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&value); err != nil {
+		return fallback
+	}
+	return value
 }
 
 func settingsDBPath() string {
