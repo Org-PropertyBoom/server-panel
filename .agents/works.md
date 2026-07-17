@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - User home folder provisioning
+
+- Goal: Simplify the temporary User Overview and provision standard folders for every new Linux user.
+- Files changed: Users route, Linux user service and test, user creation route, and work log.
+- Important decisions: Overview shows an English Coming soon state; the user-type badge was replaced by compact UID, Home, and Shell boxes in the header; new homes always contain `backup`, `logs`, `data`, `htdocs`, and `config`; home and child ownership use the created user's UID/GID; failed provisioning rolls back the account.
+- Validation: Go formatting, targeted Go tests, TypeScript type-check, and `git diff --check`; no frontend production build.
+- Known follow-up: none.
+
 ### 2026-07-17 - Global multi-tab terminal
 
 - Goal: Use one persistent terminal panel for root and all user shells across the app.

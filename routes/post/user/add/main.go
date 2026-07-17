@@ -6,8 +6,10 @@ import (
 	"math/big"
 	"net/http"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mthan/vps/services"
@@ -54,14 +56,29 @@ func Handler(settings *services.SettingsService) http.Handler {
 
 		shell := settings.Get("users_default_shell", "/bin/bash")
 		homeBase := settings.Get("users_home_base", "/home")
+		home := filepath.Join(homeBase, username)
 		createHome := settings.Get("users_create_home", "true") == "true"
-		args := []string{"-M", "-d", filepath.Join(homeBase, username), "-s", shell, username}
+		args := []string{"-M", "-d", home, "-s", shell, username}
 		if createHome {
 			args[0] = "-m"
 		}
 		cmd := exec.Command("useradd", args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			http.Error(w, "failed to create user: "+string(output), http.StatusInternalServerError)
+			return
+		}
+
+		createdUser, err := user.Lookup(username)
+		if err != nil {
+			_ = exec.Command("userdel", "-r", username).Run()
+			http.Error(w, "failed to look up created user", http.StatusInternalServerError)
+			return
+		}
+		uid, uidErr := strconv.Atoi(createdUser.Uid)
+		gid, gidErr := strconv.Atoi(createdUser.Gid)
+		if uidErr != nil || gidErr != nil || services.ProvisionUserHome(home, uid, gid) != nil {
+			_ = exec.Command("userdel", "-r", username).Run()
+			http.Error(w, "failed to provision user home folders", http.StatusInternalServerError)
 			return
 		}
 

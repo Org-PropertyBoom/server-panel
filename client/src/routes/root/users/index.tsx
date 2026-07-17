@@ -315,18 +315,18 @@ export default function UsersRoute() {
                         <div className="flex-1 overflow-y-auto p-6 space-y-6">
                             {/* Profile Header */}
                             <div className="flex items-center justify-between border-b border-border pb-5">
-                                <div className="space-y-1.5">
+                                <div className="min-w-0 flex-1 space-y-3">
                                     <div className="flex items-center gap-3">
                                         <h2 className="text-2xl font-bold tracking-tight text-foreground">
                                             {selectedUser.username}
                                         </h2>
-                                        <span className="inline-flex items-center text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-none border border-primary/20 uppercase tracking-wide">
-                                            {selectedUser.uid === 0 ? "Superuser" : "Standard User"}
-                                        </span>
                                     </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        System account profile details and environmental parameters.
-                                    </p>
+
+                                    <div className="flex flex-wrap gap-2">
+                                        <UserInfoBox icon={Shield} label="UID" value={String(selectedUser.uid)} />
+                                        <UserInfoBox icon={Home} label="Home" value={selectedUser.home} />
+                                        <UserInfoBox icon={Terminal} label="Shell" value={selectedUser.shell || "/bin/bash"} />
+                                    </div>
                                 </div>
 
                                 {selectedUser.uid !== 0 && (
@@ -348,40 +348,10 @@ export default function UsersRoute() {
                             </div>
 
                             {activeSection === "overview" ? (
-                            /* Details Grid */
-                            <div className="grid grid-cols-1 md:grid-cols-3 border-b border-border bg-card/20">
-                                <div className="p-5 border-b md:border-b-0 md:border-r border-border flex items-start gap-3">
-                                    <Shield className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                                    <div className="space-y-1">
-                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                            User ID (UID)
-                                        </span>
-                                        <p className="font-semibold text-sm text-foreground">{selectedUser.uid}</p>
-                                    </div>
-                                </div>
-
-                                <div className="p-5 border-b md:border-b-0 md:border-r border-border flex items-start gap-3">
-                                    <Home className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                                    <div className="space-y-1 min-w-0">
-                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                            Home Folder
-                                        </span>
-                                        <p className="font-mono text-xs text-foreground truncate select-all" title={selectedUser.home}>
-                                            {selectedUser.home}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <div className="p-5 flex items-start gap-3">
-                                    <Terminal className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                                    <div className="space-y-1 min-w-0">
-                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                            Login Shell
-                                        </span>
-                                        <p className="font-mono text-xs text-foreground truncate select-all" title={selectedUser.shell || "/bin/bash"}>
-                                            {selectedUser.shell || "/bin/bash"}
-                                        </p>
-                                    </div>
+                            <div className="flex min-h-48 items-center justify-center border border-border bg-card/20 p-6 text-center">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-foreground">Coming soon</h3>
+                                    <p className="mt-1 text-xs text-muted-foreground">User overview is under development.</p>
                                 </div>
                             </div>
                             ) : activeSection === "files" ? (
@@ -590,5 +560,19 @@ function UserSubItem({ username, section, active, icon: Icon, label }: {
             <Icon className="h-3.5 w-3.5" />
             {label}
         </Link>
+    );
+}
+
+function UserInfoBox({ icon: Icon, label, value }: {
+    icon: typeof User;
+    label: string;
+    value: string;
+}) {
+    return (
+        <div className="flex min-w-0 max-w-full items-center gap-2 border border-border bg-card/40 px-2.5 py-1.5">
+            <Icon className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+            <span className="max-w-48 truncate font-mono text-[11px] text-foreground" title={value}>{value}</span>
+        </div>
     );
 }
