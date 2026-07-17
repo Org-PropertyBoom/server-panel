@@ -10,6 +10,7 @@ import (
 	"time"
 
 	apifiles "mthan/vps/routes/api/files"
+	settingsroute "mthan/vps/routes/settings"
 	"mthan/vps/services"
 )
 
@@ -18,6 +19,7 @@ type Dependencies struct {
 	PostBaseURL string
 	Sessions    *services.SessionService
 	System      *services.SystemService
+	Settings    *services.SettingsService
 }
 
 func Register(mux *http.ServeMux, deps Dependencies) {
@@ -70,6 +72,8 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"apps": services.DetectApps()})
 	})))
+	mux.Handle("GET /api/settings", public(settingsroute.Handler(deps.Sessions, deps.Settings)))
+	mux.Handle("PUT /api/settings", public(settingsroute.Handler(deps.Sessions, deps.Settings)))
 
 	mux.Handle("POST /api/login", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var credentials services.LoginCredentials

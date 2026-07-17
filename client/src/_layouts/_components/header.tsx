@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import ColorModeSwitch from "_components/color-mode-switch";
-import { AlertTriangle, User, Menu, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Boxes, User, Menu, RefreshCw, X } from "lucide-react";
 import { useApp } from "../../_contexts/app";
 
 type HeaderProps = {
@@ -17,7 +17,7 @@ type UpdateInfo = {
 };
 
 export default function Header({ title, onMenuClick }: HeaderProps) {
-    const { mode, isRoot } = useApp();
+    const { mode, isRoot, headerApps } = useApp();
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [checking, setChecking] = useState(false);
@@ -148,6 +148,17 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
             </div>
 
             <div className="flex items-center gap-4">
+                {headerApps.map((app) => (
+                    <a
+                        key={app}
+                        href={`/apps?app=${encodeURIComponent(app)}`}
+                        className="hidden h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium capitalize text-muted-foreground hover:bg-muted hover:text-foreground sm:flex"
+                        title={`Open ${app}`}
+                    >
+                        <Boxes className="h-3.5 w-3.5" />
+                        {app === "node" ? "Node.js" : app}
+                    </a>
+                ))}
                 {isRoot && (
                     <button
                         onClick={handleUpdate}

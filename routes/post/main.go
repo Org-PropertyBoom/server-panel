@@ -18,6 +18,7 @@ import (
 	userdelete "mthan/vps/routes/post/user/delete"
 	userlogin "mthan/vps/routes/post/user/login"
 	"mthan/vps/routes/post/users"
+	settingsroute "mthan/vps/routes/settings"
 	"mthan/vps/services"
 )
 
@@ -27,6 +28,7 @@ type Dependencies struct {
 	Startup  services.StartupConfig
 	Update   *services.UpdateService
 	System   *services.SystemService
+	Settings *services.SettingsService
 }
 
 func Register(mux *http.ServeMux, deps Dependencies) {
@@ -43,6 +45,8 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("GET /post/users", postOnly(deps.Startup, users.Handler()))
 	mux.Handle("GET /post/files", postOnly(deps.Startup, postfiles.Handler(deps.Sessions)))
 	mux.Handle("GET /post/apps", postOnly(deps.Startup, postapps.Handler(deps.Sessions)))
+	mux.Handle("GET /post/settings", postOnly(deps.Startup, settingsroute.Handler(deps.Sessions, deps.Settings)))
+	mux.Handle("PUT /post/settings", postOnly(deps.Startup, settingsroute.Handler(deps.Sessions, deps.Settings)))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))
 }
 

@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-17 - SQLite settings and app header shortcuts
+
+- Goal: Persist panel settings and configurable app shortcuts in SQLite.
+- Files changed: settings service/routes/tests, route dependencies, app context/API map, Header, Apps route, Settings route, and Go module files.
+- Important decisions: default database path is `~/.mthan-vps/data/db.sqlite`; `settings` uses key/value rows; Settings sidebar includes General Settings and Apps Settings; header shortcuts are configurable per app.
+- Validation: targeted Go tests and `git diff --check`; no frontend production build.
+- Known follow-up: none.
+
 ### 2026-07-17 - General settings sidebar
 
 - Goal: Add the first Settings section with persistent app identity and appearance preferences.

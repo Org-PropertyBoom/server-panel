@@ -130,6 +130,12 @@ export default function AppsRoute() {
     const [statusError, setStatusError] = useState("");
 
     useEffect(() => {
+        const requestedApp = new URLSearchParams(window.location.search).get("app");
+        if (requestedApp) {
+            const match = apps.find((app) => app.name === requestedApp);
+            if (match) setSelectedApp(match);
+        }
+
         const loadStatuses = async () => {
             try {
                 const response = await fetch(Api.current.apps, { cache: "no-store" });

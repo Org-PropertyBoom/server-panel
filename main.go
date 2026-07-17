@@ -49,6 +49,11 @@ func main() {
 		}
 	}
 	updater := services.NewUpdateService(version, buildTime)
+	settings, err := services.NewSettingsService()
+	if err != nil {
+		logger.Error("settings database could not be opened", "error", err)
+		os.Exit(1)
+	}
 
 	routes.Register(mux, routes.Dependencies{
 		Auth:     auth,
@@ -58,6 +63,7 @@ func main() {
 		Startup:  startup,
 		Update:   updater,
 		System:   services.NewSystemService(),
+		Settings: settings,
 	})
 
 	srv := &http.Server{
