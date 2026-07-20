@@ -89,7 +89,7 @@ build_client() {
 
   require_command npm
 
-  echo "Building React client"
+  echo "Building React client (Vite)"
   (
     cd "${ROOT_DIR}/client"
 
@@ -99,10 +99,7 @@ build_client() {
       npm install
     fi
 
-    # CI=false: CRA treats ESLint warnings as build errors when CI=true (which CI
-    # runners set automatically). Keep warnings non-fatal so pre-existing lint
-    # warnings don't break the release build; lint enforcement is a separate concern.
-    CI=false npm run build
+    npm run build
   )
 }
 

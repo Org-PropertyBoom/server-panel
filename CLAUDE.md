@@ -19,9 +19,9 @@ Backend (from repo root; the Makefile targets are the canonical entry points):
 - `make tidy` — `go mod tidy`.
 
 Frontend (from `client/`):
-- `npm run build` — production build into `client/build/` (Create React App / react-scripts).
+- `npm run build` — production build into `client/build/` (Vite; output dir kept as `build` for the Go embed).
 - `npm test` — Jest + React Testing Library.
-- `npm start` — CRA dev server on `:3000` (standalone; the Go server serves the built client, not this).
+- `npm run dev` — Vite dev server on `:3000` (standalone; the Go server serves the built client, not this).
 
 Full release build: `scripts/build.sh` generates `version.json`, builds the client, runs Go tests, builds both binaries (CGO, linux/amd64), and optionally commits/pushes to a separate dist repo. `scripts/deploy.sh` = build (`--no-push`) then `scripts/push.sh`.
 
@@ -50,7 +50,7 @@ At startup `services.NewStartupService()` checks `os.Geteuid()`. Euid 0 → **ro
 
 ### Client (`client/src/`)
 
-CRA + TypeScript (strict, `target: es5`) + Tailwind + shadcn/ui (new-york style, `components.json`) + Radix + `lucide-react` icons + `react-router-dom` v6. `baseUrl: src`, so imports are absolute from `src` (e.g. `import Api from "_utils/api"`, `_layouts/dashboard`). Underscore-prefixed folders (`_components`, `_contexts`, `_layouts`, `_styles`, `_utils`) are shared infrastructure; `routes/` holds pages.
+Vite + React + TypeScript (strict) + Tailwind + shadcn/ui (new-york style, `components.json`) + Radix + `lucide-react` icons + `react-router-dom` v6. `baseUrl: src` (honored in Vite via `vite-tsconfig-paths`), so imports are absolute from `src` (e.g. `import Api from "_utils/api"`, `_layouts/dashboard`). Underscore-prefixed folders (`_components`, `_contexts`, `_layouts`, `_styles`, `_utils`) are shared infrastructure; `routes/` holds pages. Build output dir is `build` (not Vite's default `dist`) because the Go server embeds `client/build`.
 
 **Server-injected runtime is the source of truth for mode.** `runtime.ts` reads `window.__VPS_RUNTIME__` (injected into `index.html` by the Go router). `runtime.isRoot` / `runtime.mode` drive nearly everything client-side — which routes register, which API base path is used, and feature gating. There is no client-side "am I root" guess; it comes from the server.
 

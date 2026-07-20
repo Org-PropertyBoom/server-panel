@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Migrate client from CRA to Vite
+
+- Goal: Replace Create React App (react-scripts, deprecated + the source of the CI warnings-as-errors breakage) with Vite.
+- Files changed: `client/package.json` (drop react-scripts; add vite + @vitejs/plugin-react + vite-tsconfig-paths + vitest + jsdom; scripts dev/build/preview/test), `client/vite.config.ts` (new; `build.outDir: "build"` for the Go embed, tsconfigPaths for `baseUrl` absolute imports, vitest jsdom config), `client/index.html` (new Vite root entry with the module script; removed the old CRA `public/index.html`), `client/src/vite-env.d.ts` (new), `tailwind.config.js` (content path public/index.html -> index.html), `scripts/build.sh` (drop the CRA `CI=false` workaround — Vite doesn't need it), `client/README.md` + `CLAUDE.md` + `public/manifest.json` (CRA -> Vite / brand). `package-lock.json` regenerated (1072 CRA packages removed).
+- Important decisions: kept build output dir as `client/build` (NOT Vite's default `dist`) so `main.go`'s `//go:embed all:client/build` is unchanged; used `vite-tsconfig-paths` to honor the existing `baseUrl: "src"` absolute imports (no source import changes needed); no `"type": "module"` in package.json so the CommonJS postcss/tailwind configs keep working; kept TypeScript 4.9. No source component changes — pure tooling swap. Vite's lint-agnostic build removes the CRA warnings-as-errors CI fragility (build.sh's earlier `CI=false` fix is now moot).
+- Validation: `npm run build` (Vite) produces `client/build/{index.html,assets,version.json,...}` with a module entry; `tsc --noEmit` exit 0; `GOOS=linux CGO_ENABLED=0 go build ./...` exit 0 (embed OK); `bash -n scripts/build.sh`.
+- Known follow-up: main JS chunk is ~630 kB (xterm etc.) — could code-split later. No frontend tests exist yet; Vitest is wired for when they're added.
+
 ### 2026-07-21 - Rename mthan-vps -> ppt-server-panel
 
 - Goal: Rebrand the internal `mthan-vps` naming to `ppt-server-panel` (product "Ppt Server Panel").
