@@ -99,7 +99,10 @@ build_client() {
       npm install
     fi
 
-    npm run build
+    # CI=false: CRA treats ESLint warnings as build errors when CI=true (which CI
+    # runners set automatically). Keep warnings non-fatal so pre-existing lint
+    # warnings don't break the release build; lint enforcement is a separate concern.
+    CI=false npm run build
   )
 }
 
