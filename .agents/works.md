@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-20 - Consistent user list route
+
+- Goal: Keep root Linux-user actions under one `/post/user/*` namespace.
+- Files changed: user list handler location, POST route registration, Users client, and work log.
+- Important decisions: `/post/users` is replaced by `/post/user/list` without a legacy alias.
+- Validation: Go formatting/tests, TypeScript type-check, and `git diff --check`.
+
 ### 2026-07-20 - Containers inventory page
 
 - Goal: Separate global container-engine configuration from the operational list of containers.

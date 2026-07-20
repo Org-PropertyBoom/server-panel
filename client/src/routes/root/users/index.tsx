@@ -122,7 +122,7 @@ export default function UsersRoute() {
         else setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch("/post/users");
+            const response = await fetch("/post/user/list");
             if (!response.ok) {
                 throw new Error("Failed to fetch users");
             }
