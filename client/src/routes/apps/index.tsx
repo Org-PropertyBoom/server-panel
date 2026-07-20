@@ -53,12 +53,24 @@ export default function AppsRoute() {
     const { app: requestedApp } = useParams<{ app?: string }>();
     const [apps, setApps] = useState<ServerApp[]>([
         {
+            id: "0",
+            name: "caddy",
+            displayName: "Caddy",
+            serviceName: "caddy.service",
+            version: "System",
+            port: "80, 443",
+            description: "Primary public web server and automatic HTTPS reverse proxy.",
+            running: true,
+            uptime: "—",
+            installed: false,
+            manageable: true,
+        },
+        {
             id: "1",
             name: "nginx",
             displayName: "Nginx",
             serviceName: "nginx.service",
             version: "1.24.0",
-            port: "80, 443",
             description: "High-performance HTTP server, reverse proxy, and load balancer.",
             running: true,
             uptime: "2 days, 14 hours",
@@ -387,6 +399,31 @@ export default function AppsRoute() {
                                     canEdit={isRoot}
                                     onEdit={setConfigEditor}
                                 />
+                            ) : null}
+
+                            {selectedApp.name === "caddy" ? (
+                                <section className="space-y-3">
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-foreground">Caddy configuration</h3>
+                                        <p className="mt-1 text-xs text-muted-foreground">Caddy is the primary public server for ports 80 and 443.</p>
+                                    </div>
+                                    <div className="relative rounded-md border border-border bg-card p-4">
+                                        {isRoot ? (
+                                            <Button size="sm" variant="outline" className="absolute right-3 top-3 h-7 gap-1.5 px-2 text-xs" onClick={() => setConfigEditor({ app: "caddy", label: "Caddyfile", path: "/etc/caddy/Caddyfile" })}>
+                                                <Pencil className="h-3 w-3" />
+                                                Edit
+                                            </Button>
+                                        ) : null}
+                                        <div className="flex items-start gap-3 pr-16">
+                                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><FileCode2 className="h-4 w-4" /></span>
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-semibold text-foreground">Caddyfile</p>
+                                                <code className="mt-1 block break-all text-xs text-primary">/etc/caddy/Caddyfile</code>
+                                                <p className="mt-2 text-xs leading-5 text-muted-foreground">Global public host, TLS, reverse proxy, and route configuration.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
                             ) : null}
                         </div>
                     ) : (

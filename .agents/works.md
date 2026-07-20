@@ -23,6 +23,20 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-20 - Caddy-only VHosts inventory
+
+- Goal: Make the VHosts sidebar destination list the public hosts configured in Caddy.
+- Files changed: Caddy-only discovery, root POST vhost endpoints, live VHosts page, removed placeholder root/user tables, and work log.
+- Important decisions: Nginx and Apache parser helpers remain tested but are no longer discovery sources; root uses `/post/vhost/*`, users use `/api/vhost/*`; the page is read-only and reflects the adapted Caddyfile.
+- Validation: Go formatting/tests, TypeScript type-check, production client build, and `git diff --check`.
+
+### 2026-07-20 - Caddy as required public server
+
+- Goal: Make Caddy the standard public web server for ports 80 and 443 and install it with the panel.
+- Files changed: installer package setup/service enablement, system app detection/install plans/tests, settings catalog/header validation, Caddy global config editor, port ownership display, and work log.
+- Important decisions: the installer uses Caddy's official Debian/COPR packages or the Arch package and fails if Caddy cannot be installed/started; Nginx no longer claims the public ports in Apps; Caddyfile is an allowlisted editable global config.
+- Validation: shell syntax, Go formatting/tests, TypeScript type-check, production client build, and `git diff --check`.
+
 ### 2026-07-20 - Route groups limited to API and POST
 
 - Goal: Keep every HTTP handler under the actual `/api` or `/post` route group.

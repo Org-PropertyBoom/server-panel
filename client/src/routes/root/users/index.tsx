@@ -47,6 +47,7 @@ interface SystemAppStatus {
 }
 
 const systemAppNames: Record<string, string> = {
+    caddy: "Caddy",
     nginx: "Nginx",
     mariadb: "MariaDB",
     php: "PHP",

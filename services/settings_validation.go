@@ -26,10 +26,10 @@ func ValidSetting(key, value string) bool {
 		return value == "true" || value == "false"
 	case "apps_header":
 		var apps []string
-		if json.Unmarshal([]byte(value), &apps) != nil || len(apps) > 7 {
+		if json.Unmarshal([]byte(value), &apps) != nil || len(apps) > 8 {
 			return false
 		}
-		allowed := map[string]bool{"nginx": true, "mariadb": true, "redis": true, "docker": true, "podman": true, "node": true, "php": true}
+		allowed := map[string]bool{"caddy": true, "nginx": true, "mariadb": true, "redis": true, "docker": true, "podman": true, "node": true, "php": true}
 		seen := make(map[string]bool)
 		for _, app := range apps {
 			if !allowed[app] || seen[app] {

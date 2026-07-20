@@ -111,6 +111,48 @@ install_libcrypt() {
   fi
 }
 
+install_caddy() {
+  if command -v caddy >/dev/null 2>&1; then
+    echo "Caddy is already installed"
+  elif command -v apt-get >/dev/null 2>&1; then
+    echo "Installing Caddy from the official Debian repository"
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+    local key_file
+    key_file="$(mktemp)"
+    curl -1fsSL "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" -o "${key_file}"
+    gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg "${key_file}"
+    rm -f "${key_file}"
+    curl -1fsSL "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" -o /etc/apt/sources.list.d/caddy-stable.list
+    chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "Installing Caddy from the official COPR repository"
+    dnf install -y dnf-plugins-core
+    dnf -y copr enable @caddy/caddy
+    dnf install -y caddy
+  elif command -v yum >/dev/null 2>&1; then
+    echo "Installing Caddy from the official COPR repository"
+    yum install -y yum-plugin-copr
+    yum -y copr enable @caddy/caddy
+    yum install -y caddy
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "Installing Caddy from the Arch repository"
+    pacman -Sy --noconfirm --needed caddy
+  else
+    echo "unable to install required Caddy public server on this distribution" >&2
+    exit 1
+  fi
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    echo "Caddy installation did not provide a caddy binary" >&2
+    exit 1
+  fi
+
+  systemctl enable --now caddy
+}
+
 download_binary() {
   local name="$1"
   local url="$2"
@@ -250,6 +292,7 @@ main() {
   require_command systemctl
 
   install_libcrypt
+  install_caddy
 
   if [[ "${REINSTALL}" == "1" ]]; then
     cleanup_old_install

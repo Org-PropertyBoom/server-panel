@@ -6,7 +6,7 @@ import (
 )
 
 func TestKnownAppsIncludeContainersNodeAndPHP(t *testing.T) {
-	want := []string{"docker", "podman", "node", "php"}
+	want := []string{"caddy", "docker", "podman", "node", "php"}
 	found := make(map[string]appDefinition, len(knownApps))
 	for _, app := range knownApps {
 		found[app.name] = app

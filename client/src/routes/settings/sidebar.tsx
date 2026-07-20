@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Boxes, Cpu, Settings, User } from "lucide-react";
 
 export const availableApps = [
+    ["caddy", "Caddy"],
     ["nginx", "Nginx"],
     ["mariadb", "MariaDB"],
     ["redis", "Redis"],

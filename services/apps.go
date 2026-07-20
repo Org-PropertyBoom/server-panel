@@ -26,6 +26,7 @@ type appDefinition struct {
 }
 
 var knownApps = []appDefinition{
+	{name: "caddy", binaries: []string{"caddy", "/usr/bin/caddy", "/usr/local/bin/caddy"}, services: []string{"caddy.service"}, versionArgs: []string{"version"}},
 	{name: "nginx", binaries: []string{"nginx"}, services: []string{"nginx.service"}, versionArgs: []string{"-v"}},
 	{name: "mariadb", binaries: []string{"mariadbd", "mysqld", "mariadb"}, services: []string{"mariadb.service", "mysql.service"}, versionArgs: []string{"--version"}},
 	{name: "redis", binaries: []string{"redis-server"}, services: []string{"redis-server.service", "redis.service"}, versionArgs: []string{"--version"}},

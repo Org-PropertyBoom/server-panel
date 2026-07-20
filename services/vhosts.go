@@ -69,32 +69,14 @@ func NewVHostService() *VHostService {
 func (s *VHostService) Status() VHostStatus {
 	vhosts := s.List()
 	ports := s.publicPorts()
-	proxy := "unknown"
-	for _, port := range ports {
-		if port.Listening && port.Server != "unknown" {
-			proxy = port.Server
-			break
-		}
-	}
-	if proxy == "unknown" && len(vhosts) > 0 {
-		proxy = vhosts[0].Server
-	}
+	proxy := "caddy"
 	return VHostStatus{Proxy: proxy, PublicPorts: ports, VHosts: len(vhosts)}
 }
 
 func (s *VHostService) List() []VHost {
 	var all []VHost
-	if output, err := s.runner.Run("nginx", "-T"); err == nil {
-		all = append(all, parseNginxVHosts(string(output))...)
-	}
 	if output, err := s.runner.Run("caddy", "adapt", "--config", "/etc/caddy/Caddyfile"); err == nil {
 		all = append(all, parseCaddyVHosts(output, "/etc/caddy/Caddyfile")...)
-	}
-	for _, binary := range []string{"apachectl", "apache2ctl"} {
-		if output, err := s.runner.Run(binary, "-S"); err == nil {
-			all = append(all, parseApacheVHosts(string(output))...)
-			break
-		}
 	}
 	all = mergeVHosts(all)
 	sort.Slice(all, func(i, j int) bool {

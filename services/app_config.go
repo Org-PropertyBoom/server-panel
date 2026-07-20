@@ -29,6 +29,9 @@ type AppConfigService struct {
 
 func NewAppConfigService() *AppConfigService {
 	return &AppConfigService{allowed: map[string]map[string]bool{
+		"caddy": {
+			"/etc/caddy/Caddyfile": true,
+		},
 		"docker": {
 			"/etc/docker/daemon.json": true,
 		},

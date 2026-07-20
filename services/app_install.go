@@ -13,19 +13,19 @@ import (
 
 var appPackages = map[string]map[string][][]string{
 	"apt-get": {
-		"nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis-server"}},
+		"caddy": {{"caddy"}}, "nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis-server"}},
 		"docker": {{"docker.io"}, {"docker-ce"}}, "podman": {{"podman"}}, "node": {{"nodejs"}},
 	},
 	"dnf": {
-		"nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis"}},
+		"caddy": {{"caddy"}}, "nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis"}},
 		"docker": {{"docker"}, {"moby-engine"}, {"docker-ce"}}, "podman": {{"podman"}}, "node": {{"nodejs"}},
 	},
 	"yum": {
-		"nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis"}},
+		"caddy": {{"caddy"}}, "nginx": {{"nginx"}}, "mariadb": {{"mariadb-server"}}, "php": {{"php-fpm", "php-cli"}}, "redis": {{"redis"}},
 		"docker": {{"docker"}, {"moby-engine"}, {"docker-ce"}}, "podman": {{"podman"}}, "node": {{"nodejs"}},
 	},
 	"pacman": {
-		"nginx": {{"nginx"}}, "mariadb": {{"mariadb"}}, "php": {{"php", "php-fpm"}}, "redis": {{"redis"}},
+		"caddy": {{"caddy"}}, "nginx": {{"nginx"}}, "mariadb": {{"mariadb"}}, "php": {{"php", "php-fpm"}}, "redis": {{"redis"}},
 		"docker": {{"docker"}}, "podman": {{"podman"}}, "node": {{"nodejs-lts-jod", "npm"}},
 	},
 }
