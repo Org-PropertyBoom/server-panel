@@ -730,10 +730,10 @@ function UserInfoBox({ icon: Icon, label, value }: {
     value: string;
 }) {
     return (
-        <div className="flex min-w-0 max-w-full items-center gap-2 border border-border bg-card/40 px-2.5 py-1.5">
-            <Icon className="h-3.5 w-3.5 shrink-0 text-primary" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-            <span className="max-w-48 truncate font-mono text-[11px] text-foreground" title={value}>{value}</span>
+        <div className="flex h-6 min-w-0 max-w-full items-center gap-1.5 border border-border bg-card/40 px-2">
+            <Icon className="h-3 w-3 shrink-0 text-primary" />
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+            <span className="max-w-48 truncate font-mono text-[10px] text-foreground" title={value}>{value}</span>
         </div>
     );
 }
