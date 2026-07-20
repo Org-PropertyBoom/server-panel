@@ -60,7 +60,7 @@ func NewSettingsService() (*SettingsService, error) {
 		}
 	}
 	for key, value := range map[string]string{
-		"general_app_name":    "MThan VPS Panel",
+		"general_app_name":    "Ppt Server Panel",
 		"general_color_mode":  "system",
 		"apps_header":         "[]",
 		"users_default_shell": "/bin/bash",
@@ -113,7 +113,7 @@ func settingsDBPath() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(os.TempDir(), ".mthan-vps", "data", "db.sqlite")
+		return filepath.Join(os.TempDir(), ".ppt-server-panel", "data", "db.sqlite")
 	}
-	return filepath.Join(home, ".mthan-vps", "data", "db.sqlite")
+	return filepath.Join(home, ".ppt-server-panel", "data", "db.sqlite")
 }

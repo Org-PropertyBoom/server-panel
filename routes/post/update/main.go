@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"mthan/vps/services"
+	"ppt/server-panel/services"
 )
 
 func CheckHandler(updateService *services.UpdateService) http.Handler {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="mthan-vps"
-CTL_NAME="mthanctl"
+APP_NAME="ppt-server-panel"
+CTL_NAME="pptctl"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/public/dist}"
 BINARY_PATH="${DIST_DIR}/${APP_NAME}"

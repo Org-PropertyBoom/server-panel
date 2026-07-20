@@ -124,7 +124,7 @@ never applied to system/admin hosts, which need different framing/CSP.)
 ## 6. Engine architecture (six packages, pure/IO split)
 
 Ported near-verbatim from `CaddyDash/internal/*` (rewrite import paths
-`github.com/Org-PropertyBoom/caddydash/internal/*` → `mthan/vps/services/caddy/*`). The
+`github.com/Org-PropertyBoom/caddydash/internal/*` → `ppt/server-panel/services/caddy/*`). The
 `_test.go` files port too — the pure planning tests are the safety proof.
 
 | Package | From | Responsibility | Deps |
@@ -166,7 +166,7 @@ Settings section. An adapter registry (`services/datasources_adapters.go`) maps 
 engine to a `database/sql` driver + DSN + `SELECT 1` probe — MySQL and SQLite compiled
 in, PostgreSQL registered but its driver not yet imported (adding it later = one import).
 
-- Store: `/etc/mthan-vps/datasources.json` (root 0640, atomic writes). Passwords live only
+- Store: `/etc/ppt-server-panel/datasources.json` (root 0640, atomic writes). Passwords live only
   server-side; the client sees `passwordSet`, and a blank password on save keeps the
   stored one.
 - Routes (root-only via `postOnly`): `GET/PUT/DELETE /post/datasources`,

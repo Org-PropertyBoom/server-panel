@@ -1,4 +1,4 @@
-export const defaultAppName = "MThan VPS Panel";
+export const defaultAppName = "Ppt Server Panel";
 
 const appNameStorageKey = "vps-app-name";
 

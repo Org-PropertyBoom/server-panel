@@ -22,7 +22,7 @@ export default function LoginRoute() {
     const isLoading = status === "loading";
 
     useEffect(() => {
-        document.title = "Login | MThan VPS";
+        document.title = "Login | Ppt Server Panel";
         const isLoggedIn = localStorage.getItem("is_logged_in") === "true";
         if (isLoggedIn) {
             window.location.href = "/";
@@ -101,7 +101,7 @@ export default function LoginRoute() {
                                 </div>
                                 <div>
                                     <p className="text-sm font-semibold">
-                                        MThan VPS
+                                        Ppt Server Panel
                                     </p>
                                     <p className="text-xs text-muted-foreground">
                                         {runtime.mode} access

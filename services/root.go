@@ -68,7 +68,7 @@ func loadOrInitializePort() int {
 		return defaultPortFromEnv()
 	}
 
-	configDir := filepath.Join(home, ".mthan-vps")
+	configDir := filepath.Join(home, ".ppt-server-panel")
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {

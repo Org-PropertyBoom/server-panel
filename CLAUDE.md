@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-MThan VPS ("mthan-vps") is a Linux VPS management panel: a single Go binary that embeds a React/TypeScript client. It authenticates Linux users against `/etc/shadow`, manages Linux users/apps/containers/vhosts, and serves an operational dashboard. Deployed via systemd (`mthan-vps@root.service`), typically on `:2205`.
+Ppt Server Panel ("ppt-server-panel") is a Linux VPS management panel: a single Go binary that embeds a React/TypeScript client. It authenticates Linux users against `/etc/shadow`, manages Linux users/apps/containers/vhosts, and serves an operational dashboard. Deployed via systemd (`ppt-server-panel@root.service`), typically on `:2205`.
 
-Note: source refers to itself as module `mthan/vps`; the repo path here is `server-panel` but backend rules/logs reference `/home/server/htdocs/mthan/vps` (the deploy checkout).
+Note: source refers to itself as module `ppt/server-panel`; the repo path here is `server-panel` but backend rules/logs reference `/home/server/htdocs/ppt/server-panel` (the deploy checkout).
 
 ## Commands
 
 Backend (from repo root; the Makefile targets are the canonical entry points):
-- `make run` — run the server (`go run .`). Port comes from `~/.mthan-vps/config.yaml`, else `APP_ADDR`, else `:2205`. Override with `APP_ADDR=:8000`.
+- `make run` — run the server (`go run .`). Port comes from `~/.ppt-server-panel/config.yaml`, else `APP_ADDR`, else `:2205`. Override with `APP_ADDR=:8000`.
 - `make dev` — `scripts/dev.sh`, a poll-based watcher that rebuilds/restarts on `.go`/`go.mod`/`go.sum` changes (defaults to `:8000`).
 - `make test` — `go test . ./routes/... ./services/...`. Run a single test: `go test ./services/ -run TestName -v`.
 - `make fmt` — `go fmt ./...`. Use before committing Go changes.
@@ -28,7 +28,7 @@ Full release build: `scripts/build.sh` generates `version.json`, builds the clie
 ## Architecture
 
 ### One module, two binaries (build tags)
-`main.go` (`//go:build !ctl`) is the server. `main-ctl.go` (`//go:build ctl`) is the `mthanctl` CLI, built with `-tags ctl`. Both are `package main` in the same module; the tag selects which `main()` compiles.
+`main.go` (`//go:build !ctl`) is the server. `main-ctl.go` (`//go:build ctl`) is the `pptctl` CLI, built with `-tags ctl`. Both are `package main` in the same module; the tag selects which `main()` compiles.
 
 ### Root vs user runtime mode
 At startup `services.NewStartupService()` checks `os.Geteuid()`. Euid 0 → **root mode** (full panel: Linux user management, all `/post/*` routes, container/system control). Non-root → **user mode** (scoped to that user). `StartupConfig.IsRoot` gates behavior throughout, and the mode selects which embedded client subtree is served (`client/build/root` vs `client/build/user`, falling back to `client/build`).
@@ -46,7 +46,7 @@ At startup `services.NewStartupService()` checks `os.Geteuid()`. Euid 0 → **ro
 `services/auth_linux_cgo.go` (`//go:build linux && cgo`) calls C `crypt(3)` (`-lcrypt`) to verify shadow hashes. The non-cgo stub (`auth_nocgo.go`) always returns `ErrAuthUnavailable`. Builds must keep `CGO_ENABLED=1`, and the deployed binary needs `libcrypt.so.1` at runtime (installer handles the distro package). Do not "simplify" auth into pure Go — shadow verification depends on the system crypt.
 
 ### Services layer
-`services/` holds all business logic; `routes/` should stay thin (registration + request/response wiring). Notable services: `SettingsService` (SQLite at `~/.mthan-vps/data/db.sqlite`, key/value `settings` table + `apis` table), `SessionService`, `SystemService`, container/vhost/app/linux-user services. Distro-specific logic branches on `StartupConfig.OSBranch` (`debian`/`rhel`/`arch`/`alpine`) detected from `/etc/os-release`.
+`services/` holds all business logic; `routes/` should stay thin (registration + request/response wiring). Notable services: `SettingsService` (SQLite at `~/.ppt-server-panel/data/db.sqlite`, key/value `settings` table + `apis` table), `SessionService`, `SystemService`, container/vhost/app/linux-user services. Distro-specific logic branches on `StartupConfig.OSBranch` (`debian`/`rhel`/`arch`/`alpine`) detected from `/etc/os-release`.
 
 ### Client (`client/src/`)
 

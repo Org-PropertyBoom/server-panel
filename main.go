@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"mthan/vps/routes"
-	"mthan/vps/services"
+	"ppt/server-panel/routes"
+	"ppt/server-panel/services"
 )
 
 //go:embed all:client/build

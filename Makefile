@@ -1,5 +1,5 @@
-APP_NAME := mthan-vps
-CTL_NAME := mthanctl
+APP_NAME := ppt-server-panel
+CTL_NAME := pptctl
 GO_BUILD_FLAGS := -buildvcs=false
 GO_PACKAGES := . ./routes/... ./services/...
 

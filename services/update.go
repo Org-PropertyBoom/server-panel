@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const defaultBinaryURL = "https://github.com/Org-PropertyBoom/server-panel-dist/raw/main/public/dist/mthan-vps"
+const defaultBinaryURL = "https://github.com/Org-PropertyBoom/server-panel-dist/raw/main/public/dist/ppt-server-panel"
 const defaultVersionURL = "https://github.com/Org-PropertyBoom/server-panel-dist/raw/main/public/dist/version.json"
 
 var ErrUpdateRequiresRoot = errors.New("self update requires root")
@@ -183,7 +183,7 @@ func updateInstallPath() string {
 		return executable
 	}
 
-	return "/usr/local/bin/mthan-vps"
+	return "/usr/local/bin/ppt-server-panel"
 }
 
 func replaceFile(srcPath, dstPath string) error {

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	containersroute "mthan/vps/routes/api/containers"
-	apifiles "mthan/vps/routes/api/files"
-	settingsroute "mthan/vps/routes/api/settings"
-	vhostroute "mthan/vps/routes/api/vhost"
-	"mthan/vps/services"
+	containersroute "ppt/server-panel/routes/api/containers"
+	apifiles "ppt/server-panel/routes/api/files"
+	settingsroute "ppt/server-panel/routes/api/settings"
+	vhostroute "ppt/server-panel/routes/api/vhost"
+	"ppt/server-panel/services"
 )
 
 type Dependencies struct {

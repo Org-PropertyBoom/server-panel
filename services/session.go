@@ -97,10 +97,10 @@ func sessionStorePath() string {
 
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(os.TempDir(), "mthan-vps-session")
+		return filepath.Join(os.TempDir(), "ppt-server-panel-session")
 	}
 
-	return filepath.Join(home, ".mthan-vps", "data", "session")
+	return filepath.Join(home, ".ppt-server-panel", "data", "session")
 }
 
 func (s *SessionService) load() {

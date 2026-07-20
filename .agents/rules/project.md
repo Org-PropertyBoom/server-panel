@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Work in `/home/server/htdocs/mthan/vps`.
+- Work in `/home/server/htdocs/ppt/server-panel`.
 - Respect existing user changes. Check `git status --short` before editing and do not revert unrelated modified files.
 - Keep edits focused on the requested task. Avoid broad refactors unless they are required for correctness.
 

@@ -24,7 +24,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("Usage: mthanctl <command>")
+	fmt.Println("Usage: pptctl <command>")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  help    Show this help message")

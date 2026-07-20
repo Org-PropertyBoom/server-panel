@@ -4,10 +4,10 @@ import (
 	"embed"
 	"net/http"
 
-	"mthan/vps/routes/api"
-	"mthan/vps/routes/post"
-	"mthan/vps/services"
-	"mthan/vps/services/router"
+	"ppt/server-panel/routes/api"
+	"ppt/server-panel/routes/post"
+	"ppt/server-panel/services"
+	"ppt/server-panel/services/router"
 )
 
 type Dependencies struct {

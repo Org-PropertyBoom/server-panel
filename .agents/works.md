@@ -4,8 +4,8 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Current Project Context
 
-- Repository: `/home/server/htdocs/mthan/vps`
-- Product: MThan VPS, a Go API with a React/TypeScript client.
+- Repository: `/home/server/htdocs/ppt/server-panel`
+- Product: Ppt Server Panel, a Go API with a React/TypeScript client.
 - Backend areas:
   - `main.go`: Go service entrypoint.
   - `routes/`: HTTP route registration.
@@ -23,11 +23,19 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Rename mthan-vps -> ppt-server-panel
+
+- Goal: Rebrand the internal `mthan-vps` naming to `ppt-server-panel` (product "Ppt Server Panel").
+- Files changed: repo-wide token rename — Go module `mthan/vps` -> `ppt/server-panel` (go.mod + all imports); binary `mthan-vps` -> `ppt-server-panel`, control `mthanctl` -> `pptctl`, service `mthan-vps@` -> `ppt-server-panel@`, config dirs `/etc/mthan-vps` + `~/.mthan-vps` -> `/etc/ppt-server-panel` + `~/.ppt-server-panel`, env prefix `MTHAN_` -> `PPT_`; brand `MThan VPS` -> `Ppt Server Panel` (README, settings default, service Description, client login/editor/agent). install.sh cleanup now also retires the legacy `mthan-vps`/`vps` services + binaries.
+- Important decisions: full rename incl. Go module path (Owner-approved). Config dirs renamed too, which requires a one-time server migration to carry over `/etc/mthan-vps/datasources.json` (the Data Sources config) + `/root/.mthan-vps` (SQLite settings DB) to the new paths, else they'd be orphaned. ⚠ This rename is a BREAKING transition for the in-panel auto-updater: the published binary filename changes (`mthan-vps` -> `ppt-server-panel`), so the running old binary's Update button (which fetches `.../public/dist/mthan-vps`) will 404 — the old->new hop must be done via `install.sh --reinstall`, not the Update button. After migration, future updates work normally.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./...` (app + `-tags ctl`) exit 0; `go vet ./services/ ./routes/...` exit 0; client `tsc --noEmit` exit 0; `bash -n` on install.sh/build.sh/build-ctl.sh. Full client build + Go tests run in CI.
+- Known follow-up: run the one-time VPS migration after CI publishes the renamed artifacts (stop old service, copy config dirs to the new names, `install.sh --reinstall`, remove old).
+
 ### 2026-07-20 - Data Sources (generalized from Shared Database)
 
 - Goal: Replace the single "Shared Database" feature with a generic, engine-agnostic **Data Sources** concept — a named list of DB connections that features (the coming Caddy vhost engine, and anything later) consume by name.
 - Files changed: removed `services/shared_db.go`(+test), `routes/post/shareddb/`, `client/.../settings/shared-db.tsx`. Added `services/datasources.go` (DataSource model + JSON store + CRUD + per-source Test) + `services/datasources_adapters.go` (`DBAdapter` iface + mysql/postgres/sqlite registry + `friendlyDBError`) + `datasources_test.go`; `routes/post/datasources/main.go` (GET/PUT/DELETE + POST /test) registered in `routes/post/main.go`; client `settings/data-sources.tsx` (list + add/edit/remove/Test each) + `settings/index.tsx` + `settings/sidebar.tsx` (section renamed database→data-sources, root-only); `docs/specs/caddy-vhost-management.md` §7a.
-- Important decisions: adapter pattern over `database/sql` so a new engine = one adapter (mysql+sqlite drivers compiled in; postgres registered but lib/pq not imported yet → Test says "not built into this build"); list stored in `/etc/mthan-vps/datasources.json` (root 0640, atomic write, `MTHAN_DATASOURCES_PATH` override for tests); passwords server-side only (view exposes `passwordSet`; blank password on save keeps existing); unique source Name (features consume by name). Generic Test = ping + `SELECT 1`; the vhost-specific 3-host-table count moves to the vhost feature's own verify. Defaults new source to mysql/127.0.0.1/3306/propertyteam/root (DB is plain MySQL root, same as pc/la/go — no dedicated user).
+- Important decisions: adapter pattern over `database/sql` so a new engine = one adapter (mysql+sqlite drivers compiled in; postgres registered but lib/pq not imported yet → Test says "not built into this build"); list stored in `/etc/ppt-server-panel/datasources.json` (root 0640, atomic write, `PPT_DATASOURCES_PATH` override for tests); passwords server-side only (view exposes `passwordSet`; blank password on save keeps existing); unique source Name (features consume by name). Generic Test = ping + `SELECT 1`; the vhost-specific 3-host-table count moves to the vhost feature's own verify. Defaults new source to mysql/127.0.0.1/3306/propertyteam/root (DB is plain MySQL root, same as pc/la/go — no dedicated user).
 - Validation: `gofmt` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` (app + `-tags ctl`) exit 0; `go vet ./services/ ./routes/...` exit 0; client `tsc --noEmit` exit 0. Go unit tests + live DB connection run on the Linux host/CI (`make test`) — Windows dev box has no gcc/Linux syscalls.
 - Known follow-up: vhost engine consumes a chosen Data Source by name (still design-only). Postgres driver import when a Postgres source is actually needed.
 
@@ -35,7 +43,7 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 - Goal: Manage the shared `propertyteam` MySQL connection secret (the desired-state source for the coming Caddy vhost engine) via a masked settings UI + a Test Connection that proves the panel can read.
 - Files changed: `services/shared_db.go` (+`_test.go`) — read/parse/build `SHARED_DB_DSN`, atomic env-file upsert (0640, preserves other lines), Test (ping + `COUNT(*)` on website_hosts/platform_hosts/platform_redirect_hosts, tolerating MySQL 1146); `routes/post/shareddb/main.go` + registration in `routes/post/main.go` (root-only via `postOnly`: `GET`/`PUT /post/shared-db`, `POST /post/shared-db/test`); client `routes/settings/shared-db.tsx` + `settings/index.tsx` + `settings/sidebar.tsx` (new root-only "Shared Database" section); `go.mod`/`go.sum` add `go-sql-driver/mysql`.
-- Important decisions: secret lives ONLY in `/etc/mthan-vps/root.env` (never SQLite, never echoed — GET returns `password_set` bool, blank password on save keeps existing); DSN read ON DEMAND from the file so Save/Test work with no restart; env path overridable via `MTHAN_ROOT_ENV_PATH` for tests; section is root-only (endpoint under `/post/*`, sidebar item gated on `runtime.isRoot`). This is the entry point to the vhost engine (see `docs/specs/caddy-vhost-management.md`).
+- Important decisions: secret lives ONLY in `/etc/ppt-server-panel/root.env` (never SQLite, never echoed — GET returns `password_set` bool, blank password on save keeps existing); DSN read ON DEMAND from the file so Save/Test work with no restart; env path overridable via `PPT_ROOT_ENV_PATH` for tests; section is root-only (endpoint under `/post/*`, sidebar item gated on `runtime.isRoot`). This is the entry point to the vhost engine (see `docs/specs/caddy-vhost-management.md`).
 - Validation: `gofmt` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` (app + `-tags ctl`) exit 0; `go vet ./services/ ./routes/...` exit 0 (type-checks the new test too); client `tsc --noEmit` exit 0; `npm run build` succeeds. Go unit tests + a live MySQL connection were NOT run here (Windows dev box has no gcc/Linux syscalls) — run `make test` on the Linux host/CI.
 - Known follow-up: the full vhost reconcile engine reads through this connection once Test Connection is green (owner creates the DB user + grants). Engine port itself is not started (design only).
 
@@ -303,7 +311,7 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 - Goal: Persist panel settings and configurable app shortcuts in SQLite.
 - Files changed: settings service/routes/tests, route dependencies, app context/API map, Header, Apps route, Settings route, and Go module files.
-- Important decisions: default database path is `~/.mthan-vps/data/db.sqlite`; `settings` uses key/value rows; Settings sidebar includes General Settings and Apps Settings; header shortcuts are configurable per app.
+- Important decisions: default database path is `~/.ppt-server-panel/data/db.sqlite`; `settings` uses key/value rows; Settings sidebar includes General Settings and Apps Settings; header shortcuts are configurable per app.
 - Validation: targeted Go tests and `git diff --check`; no frontend production build.
 - Known follow-up: none.
 
@@ -369,7 +377,7 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ### 2026-07-08 - libcrypt runtime dependency
 
-- Goal: Fix VPS runtime error `/usr/local/bin/mthan-vps: error while loading shared libraries: libcrypt.so.1`.
+- Goal: Fix VPS runtime error `/usr/local/bin/ppt-server-panel: error while loading shared libraries: libcrypt.so.1`.
 - Files changed:
   - `README.md`
   - `scripts/install.sh`
@@ -391,14 +399,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
   - `.agents/works.md`
 - Important decisions:
   - Confirmed `github.com/.../raw/...` redirects to `raw.githubusercontent.com`, which returned `HTTP/2 429` from GitHub/Fastly.
-  - Confirmed jsDelivr URLs returned `HTTP/2 200` for `scripts/install.sh`, `bin/mthan-vps`, and `bin/mthanctl`.
+  - Confirmed jsDelivr URLs returned `HTTP/2 200` for `scripts/install.sh`, `bin/ppt-server-panel`, and `bin/pptctl`.
   - Updated installer default `BIN_URL` and README install commands to use jsDelivr.
 - Validation:
   - `curl -I -L https://github.com/antoine-mai/mthan-tools-vps/raw/main/scripts/install.sh`
   - `curl -fsSL https://raw.githubusercontent.com/antoine-mai/mthan-tools-vps/main/scripts/install.sh | head -5`
   - `curl -I -L https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/scripts/install.sh`
-  - `curl -I -L https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/bin/mthan-vps`
-  - `curl -I -L https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/bin/mthanctl`
+  - `curl -I -L https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/bin/ppt-server-panel`
+  - `curl -I -L https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/bin/pptctl`
 - Known follow-up: Push changes to GitHub so the public install command uses the updated script.
 
 ### 2026-07-08 - README and installer help

@@ -28,7 +28,7 @@ export default function FileEditor({
     isLoading,
     error,
     onClose,
-    placeholderTitle = "MThan VPS Editor",
+    placeholderTitle = "Ppt Server Panel Editor",
     placeholderDescription = "Select a configuration file or script from the directory tree sidebar to view or edit its contents.",
 }: FileEditorProps) {
     const formatBytes = (bytes: number) => {

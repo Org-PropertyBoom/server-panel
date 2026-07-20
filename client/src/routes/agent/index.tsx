@@ -37,7 +37,7 @@ export default function AgentRoute() {
                 {
                     id: "m1",
                     sender: "agent",
-                    text: "Hello! I am your MThan VPS AI Assistant. I can help you monitor server metrics, draft Nginx virtual host configs, check active apps, or manage system users. What would you like to do today?",
+                    text: "Hello! I am your Ppt Server Panel AI Assistant. I can help you monitor server metrics, draft Nginx virtual host configs, check active apps, or manage system users. What would you like to do today?",
                     timestamp: new Date(),
                 },
             ],

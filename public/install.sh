@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="mthan-vps"
-CTL_NAME="mthanctl"
-SERVICE_NAME="mthan-vps"
+APP_NAME="ppt-server-panel"
+CTL_NAME="pptctl"
+SERVICE_NAME="ppt-server-panel"
 DIST_URL="${DIST_URL:-https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/dist}"
 BINARY_URL="${BINARY_URL:-${DIST_URL}/${APP_NAME}}"
 CTL_BINARY_URL="${CTL_BINARY_URL:-${DIST_URL}/${CTL_NAME}}"
@@ -184,7 +184,7 @@ download_binaries() {
 create_service() {
   cat >"${SERVICE_FILE}" <<EOF
 [Unit]
-Description=MThan VPS service for %I
+Description=Ppt Server Panel service for %I
 After=network-online.target
 Wants=network-online.target
 
@@ -254,13 +254,14 @@ resolve_root_url() {
 cleanup_old_install() {
   echo "Cleaning up old installation..."
 
-  # Stop and disable active/loaded service instances of mthan-vps or old vps service
+  # Stop and disable active/loaded service instances of ppt-server-panel or the
+  # legacy mthan-vps / vps services (so a rename/reinstall retires the old ones).
   local units
   units=$(
     {
-      systemctl list-units --type=service --all --plain --no-legend --no-pager "${SERVICE_NAME}@*.service" "vps@*.service" 2>/dev/null | awk '{print $1}'
+      systemctl list-units --type=service --all --plain --no-legend --no-pager "${SERVICE_NAME}@*.service" "mthan-vps@*.service" "vps@*.service" 2>/dev/null | awk '{print $1}'
       systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null | awk '{print $1}'
-    } | grep -E "^(${SERVICE_NAME}|vps)@[^.]+\\.service$" | sort -u
+    } | grep -E "^(${SERVICE_NAME}|mthan-vps|vps)@[^.]+\\.service$" | sort -u
   ) || true
   for unit in ${units}; do
     if [[ -n "${unit}" ]]; then
@@ -271,12 +272,15 @@ cleanup_old_install() {
     fi
   done
 
-  # Clean up service files
+  # Clean up service files (current + legacy names)
   rm -f "/etc/systemd/system/${SERVICE_NAME}@.service"
+  rm -f "/etc/systemd/system/mthan-vps@.service"
   rm -f "/etc/systemd/system/vps@.service"
 
-  # Clean up binaries
+  # Clean up binaries (current + legacy names)
   rm -f "/usr/local/bin/vps"
+  rm -f "/usr/local/bin/mthan-vps"
+  rm -f "/usr/local/bin/mthanctl"
   rm -f "${INSTALL_PATH}"
   rm -f "${CTL_INSTALL_PATH}"
 

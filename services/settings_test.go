@@ -6,7 +6,7 @@ import (
 )
 
 func TestSettingsServiceCreatesAndUpdatesSettings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".mthan-vps", "data", "db.sqlite")
+	path := filepath.Join(t.TempDir(), ".ppt-server-panel", "data", "db.sqlite")
 	t.Setenv(settingsDBEnv, path)
 
 	service, err := NewSettingsService()
@@ -34,7 +34,7 @@ func TestSettingsDBPathUsesUserHome(t *testing.T) {
 	t.Setenv(settingsDBEnv, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	want := filepath.Join(home, ".mthan-vps", "data", "db.sqlite")
+	want := filepath.Join(home, ".ppt-server-panel", "data", "db.sqlite")
 	if got := settingsDBPath(); got != want {
 		t.Fatalf("settingsDBPath() = %q, want %q", got, want)
 	}

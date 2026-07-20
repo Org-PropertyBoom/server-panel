@@ -21,8 +21,8 @@ import (
 // persisted server-side in a root-owned JSON file (0640); passwords live only in
 // that file and are NEVER returned to the client (the client sees passwordSet).
 const (
-	datasourcesPathVar  = "MTHAN_DATASOURCES_PATH"
-	defaultDatasources  = "/etc/mthan-vps/datasources.json"
+	datasourcesPathVar  = "PPT_DATASOURCES_PATH"
+	defaultDatasources  = "/etc/ppt-server-panel/datasources.json"
 	datasourceIDByteLen = 8
 )
 
@@ -82,7 +82,7 @@ type DataSourceService struct {
 }
 
 // NewDataSourceService points at the root-owned JSON store (overridable via
-// MTHAN_DATASOURCES_PATH for tests/dev).
+// PPT_DATASOURCES_PATH for tests/dev).
 func NewDataSourceService() *DataSourceService {
 	path := os.Getenv(datasourcesPathVar)
 	if path == "" {
