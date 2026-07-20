@@ -19,7 +19,7 @@ Simple Go API with a React client.
 ## Install service
 
 ```sh
-curl -fsSL https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/public/install.sh | sudo bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/install.sh | sudo bash
 ```
 
 The installer must be run as `root`. It downloads `mthan-vps` and `mthanctl`, installs them to `/usr/local/bin`, creates the systemd service template, writes the root service environment file, and starts the root service.
@@ -36,7 +36,7 @@ Alpine: libxcrypt-compat
 Default download source:
 
 ```text
-https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/public/dist
+https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/dist
 ```
 
 Installed files:
@@ -67,7 +67,7 @@ User activation is managed from the root panel after install. Root-only `/post/*
 Use `--reinstall` to stop old `mthan-vps@*.service` and legacy `vps@*.service` instances, remove old service files and binaries, install fresh binaries, and restart the root service:
 
 ```sh
-curl -fsSL https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/public/install.sh | sudo bash -s -- --reinstall
+curl -fsSL https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/install.sh | sudo bash -s -- --reinstall
 ```
 
 ### Installer options
@@ -83,7 +83,7 @@ Environment overrides:
 
 ```sh
 ROOT_ADDR=":2205" \
-DIST_URL="https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/public/dist" \
+DIST_URL="https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/dist" \
 INSTALL_PATH="/usr/local/bin/mthan-vps" \
 CTL_INSTALL_PATH="/usr/local/bin/mthanctl" \
 sudo -E bash public/install.sh

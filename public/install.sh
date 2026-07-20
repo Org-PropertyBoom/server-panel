@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="mthan-vps"
 CTL_NAME="mthanctl"
 SERVICE_NAME="mthan-vps"
-DIST_URL="${DIST_URL:-https://cdn.jsdelivr.net/gh/antoine-mai/mthan-tools-vps@main/public/dist}"
+DIST_URL="${DIST_URL:-https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/dist}"
 BINARY_URL="${BINARY_URL:-${DIST_URL}/${APP_NAME}}"
 CTL_BINARY_URL="${CTL_BINARY_URL:-${DIST_URL}/${CTL_NAME}}"
 INSTALL_PATH="${INSTALL_PATH:-/usr/local/bin/${APP_NAME}}"
