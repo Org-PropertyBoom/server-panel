@@ -73,6 +73,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("PUT /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
 	mux.Handle("DELETE /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
 	mux.Handle("POST /post/datasources/test", postOnly(deps.Startup, datasources.TestHandler(deps.Sessions, services.NewDataSourceService())))
+	mux.Handle("GET /post/vhost/state", postOnly(deps.Startup, postvhost.StateHandler(deps.Sessions, deps.Settings)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))

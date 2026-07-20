@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Caddy vhost engine — Phase 1 (inert, read-only drift)
+
+- Goal: Port CaddyDash's reconcile engine into server-panel, INERT: read-only drift only, NO live Caddy reload (that stays a separately-gated Phase 2 needing the Owner's per-activation go-ahead).
+- Files changed: new `services/caddy/{render,vhostfs,config,db,reconcile}` packages (+ ported tests). render/vhostfs verbatim; config slimmed for server-panel (stack-port map, protected domains incl. `cp.propertyweb.co`, vhosts dir, main Caddyfile, encode/security — DSN comes from a Data Source, not config); db = read-only snapshot of the 3 host tables; reconcile = pure `plan.go` (the safety heart) + `engine.go` DryRun only (Reconcile/adapt/reload deferred to Phase 2, so no `caddy/v2` dep yet). `services/caddy_engine.go` (VhostEngineService) resolves the chosen host-source Data Source by name → opens MySQL via the adapter → ReadSnapshot → DryRun. Root-only `GET /post/vhost/state` (`routes/post/vhost` StateHandler, registered in `routes/post/main.go`).
+- Important decisions: Phase 1 writes nothing and never touches Caddy — DryRun computes drift (would_write/would_remove/orphans/skips/in_sync) from DB snapshot vs folder. The full plan safety proof is ported + PASSES natively (unknown-stack skipped/never-guessed, dashboard+panel domains never rendered/removed, orphans never auto-pruned, removes only known-disabled-with-file, wildcard protection, tenant-only security headers). Host-source is the settings key `vhost_data_source` (no UI to set it yet — that's the cockpit).
+- Validation: `go test ./services/caddy/...` all PASS natively (pure Go — render/vhostfs/config/db/reconcile); `GOOS=linux CGO_ENABLED=0 go build ./...` exit 0; `go vet ./services/... ./routes/...` exit 0; gofmt clean.
+- Known follow-up: Phase 2 (live reconcile+reload) — port caddyctl (in-process adapt vs shell — still an open decision), first-pass suppression, dashboard-present assert, backup-prior, and the management CRUD; gated on the Owner's explicit activation. The VHosts cockpit UI (mockup ready) also follows. A `vhost_data_source` picker is needed to select the host-source.
+
 ### 2026-07-21 - Toast notifications (Sonner) repo-wide
 
 - Goal: Replace ad-hoc/silent action feedback with a consistent toast system (user asked for shadcn; shadcn's toast is deprecated in favor of Sonner).
