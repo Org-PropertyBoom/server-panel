@@ -1,0 +1,62 @@
+name: Publish dist
+
+# Build the React client + Go binaries from this PRIVATE source repo and push the
+# compiled artifacts to the PUBLIC dist repo (Org-PropertyBoom/server-panel-dist),
+# which the deployed panel self-updates from. Runs on every push to main; also
+# runnable on demand from the Actions tab (Run workflow).
+#
+# Requires one repository secret: DIST_REPO_TOKEN — a GitHub token with write
+# access to server-panel-dist (classic `repo`, or fine-grained Contents: read/write
+# scoped to that repo).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - ".agents/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+# Don't let two publishes race; cancel an in-progress one if a newer push lands.
+concurrency:
+  group: publish-dist
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install CGO deps (libcrypt for password auth)
+        run: sudo apt-get update && sudo apt-get install -y libcrypt-dev
+
+      - name: Configure git identity for the dist commit
+        run: |
+          git config --global user.name "server-panel-ci"
+          git config --global user.email "server-panel-ci@users.noreply.github.com"
+
+      - name: Build client + binaries and publish to the dist repo
+        env:
+          DIST_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+        run: |
+          if [ -z "${DIST_TOKEN}" ]; then
+            echo "::error::Missing repository secret DIST_REPO_TOKEN (a token with write access to server-panel-dist)."
+            exit 1
+          fi
+          DIST_REPO_URL="https://x-access-token:${DIST_TOKEN}@github.com/Org-PropertyBoom/server-panel-dist.git" \
+            ./scripts/build.sh --push
