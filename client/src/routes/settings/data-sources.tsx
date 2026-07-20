@@ -29,15 +29,27 @@ type Draft = {
 };
 
 const ENGINES: Array<[string, string]> = [
-    ["mysql", "MySQL"],
+    ["mysql", "MySQL / MariaDB"],
     ["postgres", "PostgreSQL"],
     ["sqlite", "SQLite"],
 ];
 
 const DEFAULT_PORTS: Record<string, string> = { mysql: "3306", postgres: "5432", sqlite: "" };
 
-function engineLabel(engine: string): string {
-    return ENGINES.find(([value]) => value === engine)?.[1] ?? engine;
+// Engine badge: short mono tag tinted per engine (matches the approved design).
+const ENGINE_BADGE: Record<string, { text: string; className: string }> = {
+    mysql: { text: "SQL", className: "text-sky-500 border-sky-500/30 bg-sky-500/10" },
+    postgres: { text: "PG", className: "text-indigo-400 border-indigo-400/30 bg-indigo-400/10" },
+    sqlite: { text: "LIT", className: "text-purple-400 border-purple-400/30 bg-purple-400/10" },
+};
+
+function engineBadge(engine: string) {
+    return ENGINE_BADGE[engine] ?? { text: "DB", className: "text-muted-foreground border-border bg-muted" };
+}
+
+function connectionString(s: DataSource): string {
+    if (s.engine === "sqlite") return s.database || "(no path)";
+    return `${s.user ? `${s.user}@` : ""}${s.host}:${s.port} / ${s.database}`;
 }
 
 function blankDraft(): Draft {
@@ -50,6 +62,9 @@ export default function DataSourcesSection() {
     const [draft, setDraft] = useState<Draft | null>(null);
     const [saving, setSaving] = useState(false);
     const [testingId, setTestingId] = useState<string | null>(null);
+    const [results, setResults] = useState<Record<string, TestResult>>({});
+    const [formTesting, setFormTesting] = useState(false);
+    const [formResult, setFormResult] = useState<TestResult | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -69,10 +84,12 @@ export default function DataSourcesSection() {
     }, [load]);
 
     const startAdd = () => {
+        setFormResult(null);
         setDraft(blankDraft());
     };
 
     const startEdit = (s: DataSource) => {
+        setFormResult(null);
         setDraft({ id: s.id, name: s.name, engine: s.engine, host: s.host, port: s.port, database: s.database, user: s.user, password: "" });
     };
 
@@ -112,25 +129,32 @@ export default function DataSourcesSection() {
         } catch (err) {
             toast.error(`Failed to remove "${s.name}": ${String(err)}`);
         }
+        if (draft?.id === s.id) setDraft(null);
         await load();
     };
 
-    const test = async (s: DataSource) => {
-        setTestingId(s.id);
-        const toastId = toast.loading(`Testing "${s.name}"…`);
+    const runTest = async (id: string, into: "row" | "form") => {
+        if (into === "row") setTestingId(id);
+        else {
+            setFormTesting(true);
+            setFormResult(null);
+        }
+        let result: TestResult;
         try {
             const res = await fetch("/post/datasources/test", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: s.id }),
+                body: JSON.stringify({ id }),
             });
-            const result = (await res.json()) as TestResult;
-            if (result.ok) toast.success(`"${s.name}" — connected`, { id: toastId });
-            else toast.error(`"${s.name}" — ${result.error || "connection failed"}`, { id: toastId });
+            result = (await res.json()) as TestResult;
         } catch (err) {
-            toast.error(`"${s.name}" — ${String(err)}`, { id: toastId });
-        } finally {
-            setTestingId(null);
+            result = { ok: false, error: String(err) };
+        }
+        setResults((r) => ({ ...r, [id]: result }));
+        if (into === "row") setTestingId(null);
+        else {
+            setFormResult(result);
+            setFormTesting(false);
         }
     };
 
@@ -142,13 +166,13 @@ export default function DataSourcesSection() {
                 <div>
                     <h2 className="text-lg font-semibold">Data Sources</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                        Named database connections that panel features (such as Caddy vhost management) consume by
-                        name. Passwords are stored server-side and never shown here.
+                        Database connections the panel and its features connect to, referenced by name. Passwords are
+                        stored server-side and never shown here.
                     </p>
                 </div>
                 {draft ? null : (
                     <Button onClick={startAdd} size="sm">
-                        <Plus className="mr-2 h-4 w-4" /> Add
+                        <Plus className="mr-2 h-4 w-4" /> Add data source
                     </Button>
                 )}
             </div>
@@ -160,46 +184,44 @@ export default function DataSourcesSection() {
                     No data sources yet. Add one to connect a database.
                 </p>
             ) : (
-                <div className="space-y-3">
-                    {sources.map((s) => {
+                <div className="overflow-hidden rounded-md border border-border bg-card">
+                    {sources.map((s, i) => {
+                        const badge = engineBadge(s.engine);
                         return (
-                            <div key={s.id} className="rounded-md border border-border bg-card p-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium">{s.name}</span>
-                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                                                {engineLabel(s.engine)}
-                                            </span>
-                                        </div>
-                                        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                                            {s.engine === "sqlite"
-                                                ? s.database
-                                                : `${s.user ? `${s.user}@` : ""}${s.host}:${s.port}/${s.database}`}
-                                            {s.passwordSet ? " · password set" : " · no password"}
-                                        </p>
-                                    </div>
-                                    <div className="flex shrink-0 items-center gap-1">
-                                        <Button variant="outline" size="sm" onClick={() => test(s)} disabled={testingId === s.id}>
-                                            {testingId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-                                        </Button>
-                                        <button
-                                            type="button"
-                                            onClick={() => startEdit(s)}
-                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"
-                                            aria-label={`Edit ${s.name}`}
-                                        >
-                                            <Pencil className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => remove(s)}
-                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"
-                                            aria-label={`Remove ${s.name}`}
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
+                            <div
+                                key={s.id}
+                                className={`flex items-center gap-3.5 p-4 ${i > 0 ? "border-t border-border" : ""}`}
+                            >
+                                <span
+                                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border font-mono text-[11px] font-bold ${badge.className}`}
+                                    title={engineLabel(s.engine)}
+                                >
+                                    {badge.text}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-semibold">{s.name}</p>
+                                    <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                                        {connectionString(s)}
+                                        {s.passwordSet ? "" : " · no password"}
+                                    </p>
+                                </div>
+                                <StatusPill result={results[s.id]} testing={testingId === s.id} />
+                                <div className="flex shrink-0 items-center gap-1">
+                                    <Button variant="ghost" size="sm" onClick={() => runTest(s.id, "row")} disabled={testingId === s.id}>
+                                        {testingId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+                                    </Button>
+                                    <Button variant="ghost" size="sm" onClick={() => startEdit(s)}>
+                                        <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
+                                    </Button>
+                                    <button
+                                        type="button"
+                                        onClick={() => remove(s)}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                        aria-label={`Remove ${s.name}`}
+                                        title={`Remove ${s.name}`}
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
                                 </div>
                             </div>
                         );
@@ -208,102 +230,131 @@ export default function DataSourcesSection() {
             )}
 
             {draft ? (
-                <div className="space-y-4 rounded-md border border-border bg-card p-4">
-                    <h3 className="text-sm font-semibold">{draft.id ? "Edit data source" : "New data source"}</h3>
-                    <div className="divide-y divide-border rounded-md border border-border">
-                        <Field id="ds-name" label="Name">
-                            <input
-                                id="ds-name"
-                                value={draft.name}
-                                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                                placeholder="propertyteam"
-                                className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
-                            />
-                        </Field>
-                        <Field id="ds-engine" label="Engine">
-                            <select
-                                id="ds-engine"
-                                value={draft.engine}
-                                onChange={(e) => changeEngine(e.target.value)}
-                                className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
-                            >
-                                {ENGINES.map(([value, label]) => (
-                                    <option key={value} value={value}>
-                                        {label}
-                                    </option>
-                                ))}
-                            </select>
-                        </Field>
-                        {isSqlite ? (
-                            <Field id="ds-database" label="Database file">
+                <div className="overflow-hidden rounded-md border border-border bg-card">
+                    <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+                        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            {draft.id ? "Edit data source" : "New data source"}
+                        </span>
+                        {draft.id ? <span className="font-mono text-xs text-muted-foreground">{draft.name}</span> : null}
+                    </div>
+                    <div className="space-y-4 bg-muted/30 p-4">
+                        <div className="grid gap-3.5 sm:grid-cols-2">
+                            <Field id="ds-name" label="Name" span2={isSqlite}>
                                 <input
-                                    id="ds-database"
-                                    value={draft.database}
-                                    onChange={(e) => setDraft({ ...draft, database: e.target.value })}
-                                    placeholder="/var/lib/app/data.db"
-                                    className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
+                                    id="ds-name"
+                                    value={draft.name}
+                                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                                    placeholder="propertyteam"
+                                    className={inputClass}
                                 />
                             </Field>
-                        ) : (
-                            <>
-                                <Field id="ds-host" label="Host">
+                            <Field id="ds-engine" label="Engine" span2={isSqlite}>
+                                <select
+                                    id="ds-engine"
+                                    value={draft.engine}
+                                    onChange={(e) => changeEngine(e.target.value)}
+                                    className={inputClass}
+                                >
+                                    {ENGINES.map(([value, label]) => (
+                                        <option key={value} value={value}>
+                                            {label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </Field>
+                            {isSqlite ? (
+                                <Field id="ds-database" label="Database file" span2>
                                     <input
-                                        id="ds-host"
-                                        value={draft.host}
-                                        onChange={(e) => setDraft({ ...draft, host: e.target.value })}
-                                        placeholder="127.0.0.1"
-                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
-                                    />
-                                </Field>
-                                <Field id="ds-port" label="Port">
-                                    <input
-                                        id="ds-port"
-                                        value={draft.port}
-                                        onChange={(e) => setDraft({ ...draft, port: e.target.value })}
-                                        inputMode="numeric"
-                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
-                                    />
-                                </Field>
-                                <Field id="ds-database2" label="Database">
-                                    <input
-                                        id="ds-database2"
+                                        id="ds-database"
                                         value={draft.database}
                                         onChange={(e) => setDraft({ ...draft, database: e.target.value })}
-                                        placeholder="propertyteam"
-                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
+                                        placeholder="/var/lib/app/data.db"
+                                        className={`${inputClass} font-mono`}
                                     />
                                 </Field>
-                                <Field id="ds-user" label="Username">
-                                    <input
-                                        id="ds-user"
-                                        value={draft.user}
-                                        onChange={(e) => setDraft({ ...draft, user: e.target.value })}
-                                        autoComplete="off"
-                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
-                                    />
-                                </Field>
-                                <Field id="ds-password" label="Password">
-                                    <input
-                                        id="ds-password"
-                                        type="password"
-                                        value={draft.password}
-                                        onChange={(e) => setDraft({ ...draft, password: e.target.value })}
-                                        autoComplete="new-password"
-                                        placeholder={draft.id ? "•••••••• (unchanged)" : "enter password"}
-                                        className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
-                                    />
-                                </Field>
-                            </>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Button onClick={save} disabled={saving}>
-                            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                            Save
-                        </Button>
-                        <Button variant="ghost" onClick={() => setDraft(null)} disabled={saving}>
-                            Cancel
-                        </Button>
+                            ) : (
+                                <>
+                                    <Field id="ds-host" label="Host">
+                                        <input
+                                            id="ds-host"
+                                            value={draft.host}
+                                            onChange={(e) => setDraft({ ...draft, host: e.target.value })}
+                                            placeholder="127.0.0.1"
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </Field>
+                                    <Field id="ds-port" label="Port">
+                                        <input
+                                            id="ds-port"
+                                            value={draft.port}
+                                            onChange={(e) => setDraft({ ...draft, port: e.target.value })}
+                                            inputMode="numeric"
+                                            className={`${inputClass} font-mono tabular-nums`}
+                                        />
+                                    </Field>
+                                    <Field id="ds-database2" label="Database">
+                                        <input
+                                            id="ds-database2"
+                                            value={draft.database}
+                                            onChange={(e) => setDraft({ ...draft, database: e.target.value })}
+                                            placeholder="propertyteam"
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </Field>
+                                    <Field id="ds-user" label="User">
+                                        <input
+                                            id="ds-user"
+                                            value={draft.user}
+                                            onChange={(e) => setDraft({ ...draft, user: e.target.value })}
+                                            autoComplete="off"
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </Field>
+                                    <Field id="ds-password" label="Password" span2>
+                                        <input
+                                            id="ds-password"
+                                            type="password"
+                                            value={draft.password}
+                                            onChange={(e) => setDraft({ ...draft, password: e.target.value })}
+                                            autoComplete="new-password"
+                                            placeholder={draft.id ? "•••• (set — leave blank to keep)" : "enter password"}
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </Field>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                            <Button
+                                variant="outline"
+                                onClick={() => draft.id && runTest(draft.id, "form")}
+                                disabled={!draft.id || formTesting}
+                                title={draft.id ? "Test the saved connection" : "Save first to test"}
+                            >
+                                {formTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                Test Connection
+                            </Button>
+                            {formResult ? (
+                                formResult.ok ? (
+                                    <span className="text-sm text-emerald-600 dark:text-emerald-400">✓ Connected</span>
+                                ) : (
+                                    <span className="text-sm text-destructive">{formResult.error || "Connection failed"}</span>
+                                )
+                            ) : !draft.id ? (
+                                <span className="text-xs text-muted-foreground">Save the source to test it.</span>
+                            ) : null}
+
+                            <div className="ml-auto flex items-center gap-2">
+                                <Button variant="ghost" onClick={() => setDraft(null)} disabled={saving}>
+                                    Cancel
+                                </Button>
+                                <Button onClick={save} disabled={saving}>
+                                    {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                    Save
+                                </Button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             ) : null}
@@ -311,13 +362,53 @@ export default function DataSourcesSection() {
     );
 }
 
-function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+const inputClass =
+    "h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring";
+
+function engineLabel(engine: string): string {
+    return ENGINES.find(([value]) => value === engine)?.[1] ?? engine;
+}
+
+function StatusPill({ result, testing }: { result?: TestResult; testing: boolean }) {
+    let tone: "ok" | "err" | "neutral" = "neutral";
+    let text = "Not tested";
+    if (testing) {
+        text = "Testing…";
+    } else if (result?.ok) {
+        tone = "ok";
+        text = "Connected";
+    } else if (result) {
+        tone = "err";
+        text = truncate(result.error || "Failed", 26);
+    }
+    const cls =
+        tone === "ok"
+            ? "text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-500/10"
+            : tone === "err"
+              ? "text-destructive border-destructive/20 bg-destructive/10"
+              : "text-muted-foreground border-border bg-muted";
     return (
-        <div className="grid gap-3 p-4 sm:grid-cols-[180px_1fr] sm:items-center">
-            <label htmlFor={id} className="text-sm font-medium">
+        <span
+            className={`hidden shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${cls}`}
+            title={result && !result.ok ? result.error : undefined}
+        >
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+            {text}
+        </span>
+    );
+}
+
+function Field({ id, label, span2, children }: { id: string; label: string; span2?: boolean; children: ReactNode }) {
+    return (
+        <div className={`flex flex-col gap-1.5 ${span2 ? "sm:col-span-2" : ""}`}>
+            <label htmlFor={id} className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {label}
             </label>
             {children}
         </div>
     );
+}
+
+function truncate(value: string, max: number): string {
+    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
