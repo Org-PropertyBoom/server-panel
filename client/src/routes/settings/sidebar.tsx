@@ -22,9 +22,6 @@ export default function SettingsSidebar({ section, app }: { section: SettingsSec
             <SettingsNavItem active={section === "general"} href="/settings/general" icon={Settings} label="General Settings" />
             <SettingsNavItem active={section === "users"} href="/settings/users" icon={User} label="Users Settings" />
             <SettingsNavItem active={section === "apps" && !app} href="/settings/apps" icon={Boxes} label="Apps Settings" />
-            {runtime.isRoot ? (
-                <SettingsNavItem active={section === "data-sources"} href="/settings/data-sources" icon={Database} label="Data Sources" />
-            ) : null}
             {section === "apps" ? (
                 <nav className="ml-5 border-l border-border py-1 pl-2">
                     {availableApps.map(([name, label]) => (
@@ -38,6 +35,9 @@ export default function SettingsSidebar({ section, app }: { section: SettingsSec
                         </Link>
                     ))}
                 </nav>
+            ) : null}
+            {runtime.isRoot ? (
+                <SettingsNavItem active={section === "data-sources"} href="/settings/data-sources" icon={Database} label="Data Sources" />
             ) : null}
         </aside>
     );
