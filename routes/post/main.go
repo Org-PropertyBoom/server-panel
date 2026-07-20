@@ -11,6 +11,7 @@ import (
 	postapps "mthan/vps/routes/post/apps"
 	appconfig "mthan/vps/routes/post/apps/config"
 	postcontainers "mthan/vps/routes/post/containers"
+	"mthan/vps/routes/post/datasources"
 	postfiles "mthan/vps/routes/post/files"
 	postlogin "mthan/vps/routes/post/login"
 	"mthan/vps/routes/post/ping"
@@ -68,6 +69,10 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("DELETE /post/apis", postOnly(deps.Startup, postapis.Handler(deps.Sessions, deps.Settings)))
 	mux.Handle("GET /post/settings", postOnly(deps.Startup, settingsroute.Handler(deps.Sessions, deps.Settings)))
 	mux.Handle("PUT /post/settings", postOnly(deps.Startup, settingsroute.Handler(deps.Sessions, deps.Settings)))
+	mux.Handle("GET /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
+	mux.Handle("PUT /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
+	mux.Handle("DELETE /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
+	mux.Handle("POST /post/datasources/test", postOnly(deps.Startup, datasources.TestHandler(deps.Sessions, services.NewDataSourceService())))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))

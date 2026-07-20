@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
-import { Boxes, Cpu, Settings, User } from "lucide-react";
+import { Boxes, Cpu, Database, Settings, User } from "lucide-react";
+
+import { runtime } from "../../runtime";
 
 export const availableApps = [
     ["caddy", "Caddy"],
@@ -12,7 +14,7 @@ export const availableApps = [
     ["php", "PHP"],
 ] as const;
 
-type SettingsSection = "general" | "users" | "apps";
+type SettingsSection = "general" | "users" | "apps" | "data-sources";
 
 export default function SettingsSidebar({ section, app }: { section: SettingsSection; app?: string }) {
     return (
@@ -20,6 +22,9 @@ export default function SettingsSidebar({ section, app }: { section: SettingsSec
             <SettingsNavItem active={section === "general"} href="/settings/general" icon={Settings} label="General Settings" />
             <SettingsNavItem active={section === "users"} href="/settings/users" icon={User} label="Users Settings" />
             <SettingsNavItem active={section === "apps" && !app} href="/settings/apps" icon={Boxes} label="Apps Settings" />
+            {runtime.isRoot ? (
+                <SettingsNavItem active={section === "data-sources"} href="/settings/data-sources" icon={Database} label="Data Sources" />
+            ) : null}
             {section === "apps" ? (
                 <nav className="ml-5 border-l border-border py-1 pl-2">
                     {availableApps.map(([name, label]) => (

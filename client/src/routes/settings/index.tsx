@@ -7,12 +7,14 @@ import DashboardLayout from "_layouts/dashboard";
 import { defaultAppName } from "_utils/app-settings";
 import Api from "_utils/api";
 import SettingsSidebar, { availableApps } from "./sidebar";
+import DataSourcesSection from "./data-sources";
+import { runtime } from "../../runtime";
 import {
     getColorModePreference,
     type ColorModePreference,
 } from "_utils/color-mode";
 
-type SettingsSection = "general" | "users" | "apps";
+type SettingsSection = "general" | "users" | "apps" | "data-sources";
 
 export default function SettingsRoute() {
     const { appName, setAppName, headerApps, setHeaderApps, setDefaultColorMode, settings, setSetting } = useApp();
@@ -167,6 +169,14 @@ export default function SettingsRoute() {
                                 </label>
                             </div>
                         </div>
+                    ) : section === "data-sources" ? (
+                        runtime.isRoot ? (
+                            <DataSourcesSection />
+                        ) : (
+                            <div className="mx-auto max-w-2xl">
+                                <p className="text-sm text-muted-foreground">Data Sources require root access.</p>
+                            </div>
+                        )
                     ) : (
                         <div className="mx-auto max-w-2xl space-y-6">
                             <h2 className="text-lg font-semibold">Apps Settings</h2>
@@ -253,5 +263,5 @@ export default function SettingsRoute() {
 }
 
 function settingsSection(section?: string): SettingsSection {
-    return section === "users" || section === "apps" ? section : "general";
+    return section === "users" || section === "apps" || section === "data-sources" ? section : "general";
 }

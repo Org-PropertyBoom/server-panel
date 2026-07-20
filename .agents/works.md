@@ -23,6 +23,22 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-20 - Data Sources (generalized from Shared Database)
+
+- Goal: Replace the single "Shared Database" feature with a generic, engine-agnostic **Data Sources** concept — a named list of DB connections that features (the coming Caddy vhost engine, and anything later) consume by name.
+- Files changed: removed `services/shared_db.go`(+test), `routes/post/shareddb/`, `client/.../settings/shared-db.tsx`. Added `services/datasources.go` (DataSource model + JSON store + CRUD + per-source Test) + `services/datasources_adapters.go` (`DBAdapter` iface + mysql/postgres/sqlite registry + `friendlyDBError`) + `datasources_test.go`; `routes/post/datasources/main.go` (GET/PUT/DELETE + POST /test) registered in `routes/post/main.go`; client `settings/data-sources.tsx` (list + add/edit/remove/Test each) + `settings/index.tsx` + `settings/sidebar.tsx` (section renamed database→data-sources, root-only); `docs/specs/caddy-vhost-management.md` §7a.
+- Important decisions: adapter pattern over `database/sql` so a new engine = one adapter (mysql+sqlite drivers compiled in; postgres registered but lib/pq not imported yet → Test says "not built into this build"); list stored in `/etc/mthan-vps/datasources.json` (root 0640, atomic write, `MTHAN_DATASOURCES_PATH` override for tests); passwords server-side only (view exposes `passwordSet`; blank password on save keeps existing); unique source Name (features consume by name). Generic Test = ping + `SELECT 1`; the vhost-specific 3-host-table count moves to the vhost feature's own verify. Defaults new source to mysql/127.0.0.1/3306/propertyteam/root (DB is plain MySQL root, same as pc/la/go — no dedicated user).
+- Validation: `gofmt` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` (app + `-tags ctl`) exit 0; `go vet ./services/ ./routes/...` exit 0; client `tsc --noEmit` exit 0. Go unit tests + live DB connection run on the Linux host/CI (`make test`) — Windows dev box has no gcc/Linux syscalls.
+- Known follow-up: vhost engine consumes a chosen Data Source by name (still design-only). Postgres driver import when a Postgres source is actually needed.
+
+### 2026-07-20 - Shared Database settings + Test Connection
+
+- Goal: Manage the shared `propertyteam` MySQL connection secret (the desired-state source for the coming Caddy vhost engine) via a masked settings UI + a Test Connection that proves the panel can read.
+- Files changed: `services/shared_db.go` (+`_test.go`) — read/parse/build `SHARED_DB_DSN`, atomic env-file upsert (0640, preserves other lines), Test (ping + `COUNT(*)` on website_hosts/platform_hosts/platform_redirect_hosts, tolerating MySQL 1146); `routes/post/shareddb/main.go` + registration in `routes/post/main.go` (root-only via `postOnly`: `GET`/`PUT /post/shared-db`, `POST /post/shared-db/test`); client `routes/settings/shared-db.tsx` + `settings/index.tsx` + `settings/sidebar.tsx` (new root-only "Shared Database" section); `go.mod`/`go.sum` add `go-sql-driver/mysql`.
+- Important decisions: secret lives ONLY in `/etc/mthan-vps/root.env` (never SQLite, never echoed — GET returns `password_set` bool, blank password on save keeps existing); DSN read ON DEMAND from the file so Save/Test work with no restart; env path overridable via `MTHAN_ROOT_ENV_PATH` for tests; section is root-only (endpoint under `/post/*`, sidebar item gated on `runtime.isRoot`). This is the entry point to the vhost engine (see `docs/specs/caddy-vhost-management.md`).
+- Validation: `gofmt` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` (app + `-tags ctl`) exit 0; `go vet ./services/ ./routes/...` exit 0 (type-checks the new test too); client `tsc --noEmit` exit 0; `npm run build` succeeds. Go unit tests + a live MySQL connection were NOT run here (Windows dev box has no gcc/Linux syscalls) — run `make test` on the Linux host/CI.
+- Known follow-up: the full vhost reconcile engine reads through this connection once Test Connection is green (owner creates the DB user + grants). Engine port itself is not started (design only).
+
 ### 2026-07-20 - Caddy-only VHosts inventory
 
 - Goal: Make the VHosts sidebar destination list the public hosts configured in Caddy.
