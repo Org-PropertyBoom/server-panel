@@ -28,7 +28,7 @@ interface ServerApp {
     id: string;
     name: string;
     displayName: string;
-    serviceName: string;
+    serviceName?: string;
     version: string;
     port?: string | number;
     description: string;
@@ -74,7 +74,6 @@ export default function AppsRoute() {
             id: "7",
             name: "node",
             displayName: "Node.js",
-            serviceName: "—",
             version: "22",
             description: "System-wide Node.js 22 runtime.",
             running: false,
@@ -123,13 +122,12 @@ export default function AppsRoute() {
             id: "6",
             name: "podman",
             displayName: "Podman",
-            serviceName: "podman.service",
             version: "System",
             description: "Daemonless container engine.",
             running: false,
             uptime: "Stopped",
             installed: false,
-            manageable: true,
+            manageable: false,
         },
     ]);
 
@@ -312,9 +310,11 @@ export default function AppsRoute() {
                                         <span>
                                             Version <strong className="font-medium text-foreground">{selectedApp.version}</strong>
                                         </span>
-                                        <span>
-                                            Service <code className="text-foreground">{selectedApp.serviceName}</code>
-                                        </span>
+                                        {selectedApp.serviceName ? (
+                                            <span>
+                                                Service <code className="text-foreground">{selectedApp.serviceName}</code>
+                                            </span>
+                                        ) : null}
                                         {selectedApp.port !== undefined ? (
                                             <span>
                                                 Port <code className="text-foreground">{selectedApp.port}</code>
@@ -492,51 +492,51 @@ const containerEngineDetails: Record<
         ],
     },
     podman: {
-        summary: "Podman is daemonless and supports both system-wide and rootless container workflows.",
+        summary: "Podman runs rootless inside each Linux user account. Containers, images, storage, and sockets are isolated from other panel users.",
         items: [
             {
-                label: "Container configuration",
-                value: "/etc/containers/containers.conf",
+                label: "User configuration",
+                value: "~/.config/containers/containers.conf",
                 icon: FileCode2,
-                description: "System defaults for the runtime, networking, capabilities, and container behavior.",
+                description: "Per-user runtime, networking, capabilities, and container behavior. Manage this from that user's account.",
             },
             {
-                label: "Registry configuration",
-                value: "/etc/containers/registries.conf",
+                label: "User registries",
+                value: "~/.config/containers/registries.conf",
                 icon: Network,
-                description: "Registry search order, aliases, mirrors, and insecure registry settings.",
+                description: "Per-user registry search order, aliases, mirrors, and registry security settings.",
             },
             {
-                label: "Storage configuration",
-                value: "/etc/containers/storage.conf",
+                label: "User storage configuration",
+                value: "~/.config/containers/storage.conf",
                 icon: HardDrive,
-                description: "Storage driver and system-wide container storage locations.",
+                description: "Storage driver and graph root overrides owned by the selected Linux user.",
             },
             {
-                label: "Rootless configuration",
-                value: "~/.config/containers/",
+                label: "User container data",
+                value: "~/.local/share/containers/storage",
+                icon: HardDrive,
+                description: "Private images, writable layers, volumes, and metadata for this user only.",
+            },
+            {
+                label: "User API socket",
+                value: "$XDG_RUNTIME_DIR/podman/podman.sock",
+                icon: Network,
+                description: "Optional Docker-compatible socket scoped to the user's runtime directory; never shared globally.",
+            },
+            {
+                label: "UID and GID mappings",
+                value: "/etc/subuid and /etc/subgid",
                 icon: Settings2,
-                description: "Per-user overrides for containers, registries, storage, and policy settings.",
-            },
-            {
-                label: "Root API socket",
-                value: "/run/podman/podman.sock",
-                icon: Network,
-                description: "Optional Docker-compatible API socket activated through podman.socket.",
-            },
-            {
-                label: "Root storage",
-                value: "/var/lib/containers/storage",
-                icon: HardDrive,
-                description: "Default image, layer, volume, and container storage for rootful Podman.",
+                description: "Unique subordinate ID ranges provide each user with an isolated user namespace.",
             },
         ],
         commands: [
-            { label: "Engine information", command: "podman info" },
+            { label: "Verify rootless mode", command: "podman info --format '{{.Host.Security.Rootless}}'" },
             { label: "Running containers", command: "podman ps" },
             { label: "All containers", command: "podman ps -a" },
             { label: "Disk usage", command: "podman system df" },
-            { label: "System connections", command: "podman system connection list" },
+            { label: "Enable user API socket", command: "systemctl --user enable --now podman.socket" },
         ],
     },
 };

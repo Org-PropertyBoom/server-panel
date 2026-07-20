@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	containersroute "mthan/vps/routes/api/containers"
 	apifiles "mthan/vps/routes/api/files"
+	vhostroute "mthan/vps/routes/api/vhost"
 	settingsroute "mthan/vps/routes/settings"
 	"mthan/vps/services"
 )
@@ -103,6 +105,9 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	})))
 
 	mux.Handle("GET /api/files", public(apifiles.Handler(deps.Sessions)))
+	mux.Handle("GET /api/containers", public(containersroute.UserHandler(deps.Sessions, services.NewContainerService())))
+	mux.Handle("GET /api/vhost", public(vhostroute.Handler(deps.Sessions, services.NewVHostService())))
+	mux.Handle("GET /api/vhost/", public(vhostroute.Handler(deps.Sessions, services.NewVHostService())))
 
 	mux.Handle("GET /healthz", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, deps.Health.Status())

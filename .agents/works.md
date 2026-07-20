@@ -23,11 +23,25 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-20 - Containers inventory page
+
+- Goal: Separate global container-engine configuration from the operational list of containers.
+- Files changed: container discovery service, separate root POST and user API handlers, sidebar/router/API map, Containers page, tests, and work log.
+- Important decisions: root sees system Docker plus rootless Podman containers grouped by Linux owner; non-root sessions see only their own Podman inventory; listing commands are fixed and Podman executes under the owning user without a shared socket.
+- Validation: Go formatting/tests, TypeScript type-check, production client build, and `git diff --check`.
+
+### 2026-07-20 - Virtual host discovery API
+
+- Goal: Expose public web-server ownership and virtual-host discovery under `/api/vhost`.
+- Files changed: vhost discovery service/parser, authenticated API routes/tests, and work log.
+- Important decisions: port ownership comes from listening processes; Nginx, Caddy, and Apache use their native configuration dump/adaptation commands; hostname lookup never reaches a shell command; all vhost endpoints require a valid session.
+- Validation: Go formatting, targeted tests, full Go tests, and `git diff --check`.
+
 ### 2026-07-20 - Container engine configuration and header layout
 
 - Goal: Place pinned app shortcuts on the left, improve App Details fields, and add Docker/Podman configuration pages.
 - Files changed: header layout, Apps details, and work log.
-- Important decisions: shortcuts now follow the app title; App Details omits Port for apps without a fixed network port; Docker and Podman show engine-specific configuration paths and management commands without presenting them as editable settings.
+- Important decisions: shortcuts now follow the app title; App Details omits Port for apps without a fixed network port; Docker remains system-managed while Podman is explicitly rootless and isolated per Linux user, with no shared root service/socket controls.
 - Validation: TypeScript type-check and `git diff --check`.
 
 ### 2026-07-17 - Restore system Node.js 22

@@ -19,6 +19,14 @@ func TestKnownAppsIncludeContainersNodeAndPHP(t *testing.T) {
 	}
 }
 
+func TestPodmanIsNotManagedAsRootService(t *testing.T) {
+	for _, app := range knownApps {
+		if app.name == "podman" && len(app.services) != 0 {
+			t.Fatalf("Podman services = %v, want none for per-user rootless isolation", app.services)
+		}
+	}
+}
+
 func TestPHPServicesCoverSupportedLinuxFamilies(t *testing.T) {
 	services := phpServices("8.2")
 	for _, service := range []string{

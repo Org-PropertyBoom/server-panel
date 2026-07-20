@@ -12,6 +12,7 @@ import {
     Boxes,
     Settings,
     Braces,
+    Container,
 } from "lucide-react";
 import { useUser } from "../../_contexts/user";
 import { runtime } from "../../runtime";
@@ -31,6 +32,7 @@ export default function Sidebar({ className = "", isTerminalOpen, onTerminalTogg
         { icon: LayoutDashboard, label: "Dashboard", href: "/" },
         { icon: Users, label: "Users", href: "/users" },
         { icon: Globe, label: "VHosts", href: "/vhosts" },
+        { icon: Container, label: "Containers", href: "/containers" },
         { icon: Folder, label: "Files", href: "/files" },
         { icon: Boxes, label: "Apps", href: "/apps" },
     ];

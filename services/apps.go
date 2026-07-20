@@ -30,7 +30,7 @@ var knownApps = []appDefinition{
 	{name: "mariadb", binaries: []string{"mariadbd", "mysqld", "mariadb"}, services: []string{"mariadb.service", "mysql.service"}, versionArgs: []string{"--version"}},
 	{name: "redis", binaries: []string{"redis-server"}, services: []string{"redis-server.service", "redis.service"}, versionArgs: []string{"--version"}},
 	{name: "docker", binaries: []string{"docker", "/usr/bin/docker", "/usr/local/bin/docker"}, services: []string{"docker.service"}, versionArgs: []string{"--version"}},
-	{name: "podman", binaries: []string{"podman", "/usr/bin/podman", "/usr/local/bin/podman"}, services: []string{"podman.service", "podman.socket"}, versionArgs: []string{"--version"}},
+	{name: "podman", binaries: []string{"podman", "/usr/bin/podman", "/usr/local/bin/podman"}, versionArgs: []string{"--version"}},
 	{name: "node", binaries: []string{"node", "nodejs", "/usr/bin/node", "/usr/local/bin/node"}, versionArgs: []string{"--version"}},
 	{name: "php", services: allPHPServices()},
 }

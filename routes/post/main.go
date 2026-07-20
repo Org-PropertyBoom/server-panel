@@ -9,6 +9,7 @@ import (
 
 	postapis "mthan/vps/routes/post/apis"
 	postapps "mthan/vps/routes/post/apps"
+	postcontainers "mthan/vps/routes/post/containers"
 	postfiles "mthan/vps/routes/post/files"
 	postlogin "mthan/vps/routes/post/login"
 	"mthan/vps/routes/post/ping"
@@ -49,6 +50,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("GET /post/users", postOnly(deps.Startup, users.Handler()))
 	mux.Handle("GET /post/files", postOnly(deps.Startup, postfiles.Handler(deps.Sessions)))
 	mux.Handle("GET /post/apps", postOnly(deps.Startup, postapps.Handler(deps.Sessions)))
+	mux.Handle("GET /post/containers", postOnly(deps.Startup, postcontainers.Handler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("POST /post/apps", postOnly(deps.Startup, postapps.Handler(deps.Sessions)))
 	mux.Handle("GET /post/apis", postOnly(deps.Startup, postapis.Handler(deps.Sessions, deps.Settings)))
 	mux.Handle("POST /post/apis", postOnly(deps.Startup, postapis.Handler(deps.Sessions, deps.Settings)))
