@@ -88,6 +88,7 @@ export default function ContainersRoute() {
         <DashboardLayout
             title="Containers"
             description="View Docker system containers and isolated rootless Podman containers."
+            wide
             actions={
                 <Button variant="outline" size="sm" className="gap-2" onClick={loadContainers} disabled={loading}>
                     <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />

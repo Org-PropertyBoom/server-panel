@@ -12,6 +12,7 @@ type DashboardLayoutProps = {
     description?: string;
     title: string;
     fullWidth?: boolean;
+    wide?: boolean;
 };
 
 function DashboardLayoutContent({
@@ -20,6 +21,7 @@ function DashboardLayoutContent({
     description,
     title,
     fullWidth,
+    wide,
 }: DashboardLayoutProps) {
     const { isLoggedIn } = useUser();
     const { appName } = useApp();
@@ -73,7 +75,7 @@ function DashboardLayoutContent({
                         </main>
                     ) : (
                         <main className="flex-1 overflow-y-auto px-6 py-8">
-                            <div className="mx-auto max-w-5xl">
+                            <div className={`mx-auto w-full ${wide ? "max-w-none" : "max-w-5xl"}`}>
                                 {/* Page Header */}
                                 <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="max-w-2xl space-y-2">
