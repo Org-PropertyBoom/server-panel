@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, Loader2, Pencil, Plus, Trash2, XCircle } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
 
@@ -48,8 +49,6 @@ export default function DataSourcesSection() {
     const [loading, setLoading] = useState(true);
     const [draft, setDraft] = useState<Draft | null>(null);
     const [saving, setSaving] = useState(false);
-    const [formError, setFormError] = useState<string | null>(null);
-    const [tests, setTests] = useState<Record<string, TestResult>>({});
     const [testingId, setTestingId] = useState<string | null>(null);
 
     const load = useCallback(async () => {
@@ -70,12 +69,10 @@ export default function DataSourcesSection() {
     }, [load]);
 
     const startAdd = () => {
-        setFormError(null);
         setDraft(blankDraft());
     };
 
     const startEdit = (s: DataSource) => {
-        setFormError(null);
         setDraft({ id: s.id, name: s.name, engine: s.engine, host: s.host, port: s.port, database: s.database, user: s.user, password: "" });
     };
 
@@ -86,7 +83,6 @@ export default function DataSourcesSection() {
     const save = async () => {
         if (!draft) return;
         setSaving(true);
-        setFormError(null);
         try {
             const res = await fetch("/post/datasources", {
                 method: "PUT",
@@ -94,13 +90,14 @@ export default function DataSourcesSection() {
                 body: JSON.stringify(draft),
             });
             if (!res.ok) {
-                setFormError(`Save failed: ${(await res.text()).trim() || res.statusText}`);
+                toast.error(`Save failed: ${(await res.text()).trim() || res.statusText}`);
                 return;
             }
+            toast.success(`Data source "${draft.name}" saved`);
             setDraft(null);
             await load();
         } catch (err) {
-            setFormError(`Save failed: ${String(err)}`);
+            toast.error(`Save failed: ${String(err)}`);
         } finally {
             setSaving(false);
         }
@@ -108,22 +105,19 @@ export default function DataSourcesSection() {
 
     const remove = async (s: DataSource) => {
         if (!window.confirm(`Remove data source "${s.name}"?`)) return;
-        await fetch(`/post/datasources?id=${encodeURIComponent(s.id)}`, { method: "DELETE" });
-        setTests((t) => {
-            const next = { ...t };
-            delete next[s.id];
-            return next;
-        });
+        try {
+            const res = await fetch(`/post/datasources?id=${encodeURIComponent(s.id)}`, { method: "DELETE" });
+            if (res.ok) toast.success(`Removed "${s.name}"`);
+            else toast.error(`Failed to remove "${s.name}": ${(await res.text()).trim() || res.statusText}`);
+        } catch (err) {
+            toast.error(`Failed to remove "${s.name}": ${String(err)}`);
+        }
         await load();
     };
 
     const test = async (s: DataSource) => {
         setTestingId(s.id);
-        setTests((t) => {
-            const next = { ...t };
-            delete next[s.id];
-            return next;
-        });
+        const toastId = toast.loading(`Testing "${s.name}"…`);
         try {
             const res = await fetch("/post/datasources/test", {
                 method: "POST",
@@ -131,9 +125,10 @@ export default function DataSourcesSection() {
                 body: JSON.stringify({ id: s.id }),
             });
             const result = (await res.json()) as TestResult;
-            setTests((t) => ({ ...t, [s.id]: result }));
+            if (result.ok) toast.success(`"${s.name}" — connected`, { id: toastId });
+            else toast.error(`"${s.name}" — ${result.error || "connection failed"}`, { id: toastId });
         } catch (err) {
-            setTests((t) => ({ ...t, [s.id]: { ok: false, error: String(err) } }));
+            toast.error(`"${s.name}" — ${String(err)}`, { id: toastId });
         } finally {
             setTestingId(null);
         }
@@ -167,7 +162,6 @@ export default function DataSourcesSection() {
             ) : (
                 <div className="space-y-3">
                     {sources.map((s) => {
-                        const result = tests[s.id];
                         return (
                             <div key={s.id} className="rounded-md border border-border bg-card p-4">
                                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -207,18 +201,6 @@ export default function DataSourcesSection() {
                                         </button>
                                     </div>
                                 </div>
-                                {result ? (
-                                    result.ok ? (
-                                        <div className="mt-3 flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
-                                            <CheckCircle2 className="h-4 w-4" /> Connected
-                                        </div>
-                                    ) : (
-                                        <div className="mt-3 flex items-start gap-2 text-sm text-destructive">
-                                            <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                                            <span>{result.error || "Connection failed."}</span>
-                                        </div>
-                                    )
-                                ) : null}
                             </div>
                         );
                     })}
@@ -314,7 +296,6 @@ export default function DataSourcesSection() {
                             </>
                         )}
                     </div>
-                    {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
                     <div className="flex items-center gap-3">
                         <Button onClick={save} disabled={saving}>
                             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

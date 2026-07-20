@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
     Plus,
     RefreshCw,
@@ -231,8 +232,10 @@ export default function UsersRoute() {
                 response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: addAppName.trim(), repository: repository.trim() }) });
             }
             if (!response.ok) throw new Error((await response.text()) || "Failed to add app");
+            const addedName = addAppName.trim();
             setAddAppOpen(false); setAddAppName(""); setRepository(""); setAppArchive(null);
-            setUserApps((current) => [...current, addAppName.trim()].sort());
+            setUserApps((current) => [...current, addedName].sort());
+            toast.success(`Added "${addedName}"`);
         } catch (requestError) { setAddAppError(requestError instanceof Error ? requestError.message : "Failed to add app"); }
         finally { setAddAppSaving(false); }
     };
@@ -281,6 +284,7 @@ export default function UsersRoute() {
                 setConfirmPassword("");
                 setUsername("");
                 fetchUsers();
+                toast.success(`User "${data.username}" created`);
             } else {
                 throw new Error(data.message || "Failed to create user");
             }
@@ -324,11 +328,12 @@ export default function UsersRoute() {
             const data = await response.json();
             if (data.status === "ok") {
                 fetchUsers();
+                toast.success(`Deleted user "${username}"`);
             } else {
                 throw new Error(data.message || "Failed to delete user");
             }
         } catch (err: any) {
-            alert(err.message || "Could not delete user.");
+            toast.error(err.message || "Could not delete user.");
         } finally {
             setIsDeleting(false);
         }
@@ -359,6 +364,7 @@ export default function UsersRoute() {
             setActivationConfirm("");
             setActivationShowPassword(false);
             await fetchUsers(true);
+            toast.success(`cPanel access activated for ${selectedUser.username}`);
         } catch (activationRequestError) {
             setActivationError(activationRequestError instanceof Error ? activationRequestError.message : "Failed to activate cPanel access");
         } finally {

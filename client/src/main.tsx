@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { TerminalProvider, useTerminal } from "./_contexts/terminal";
 import TerminalPanel from "./_components/terminal-panel";
+import { Toaster } from "_layouts/_components/ui/sonner";
 
 export default function Main() {
     return (
@@ -12,6 +13,7 @@ export default function Main() {
                 <TerminalProvider>
                     <Routes />
                     <GlobalTerminal />
+                    <Toaster />
                 </TerminalProvider>
             </AppProvider>
         </BrowserRouter>

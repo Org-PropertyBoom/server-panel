@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Braces, Check, Copy, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
@@ -46,7 +47,6 @@ export default function APIsRoute() {
         event.preventDefault();
         if (!name.trim()) return;
         setSaving(true);
-        setError("");
         try {
             const response = await fetch("/post/apis", {
                 method: "POST",
@@ -59,8 +59,9 @@ export default function APIsRoute() {
             setAPIs((current) => [data.api, ...current]);
             setName("");
             setAcceptedIPs("");
+            toast.success("API key created");
         } catch (requestError) {
-            setError(requestError instanceof Error ? requestError.message : "Failed to create API key");
+            toast.error(requestError instanceof Error ? requestError.message : "Failed to create API key");
         } finally {
             setSaving(false);
         }
@@ -81,9 +82,9 @@ export default function APIsRoute() {
         if (value === null) return;
         try {
             await updateAPI(api.id, { acceptedIps: parseAcceptedIPs(value) });
-            setError("");
+            toast.success("Accepted IPs updated");
         } catch (requestError) {
-            setError(requestError instanceof Error ? requestError.message : "Failed to update accepted IPs");
+            toast.error(requestError instanceof Error ? requestError.message : "Failed to update accepted IPs");
         }
     };
 
@@ -91,10 +92,11 @@ export default function APIsRoute() {
         if (!window.confirm(`Delete API key "${api.name}"? This action cannot be undone.`)) return;
         const response = await fetch(`/post/apis?id=${encodeURIComponent(api.id)}`, { method: "DELETE" });
         if (!response.ok) {
-            setError((await response.text()) || "Failed to delete API key");
+            toast.error((await response.text()) || "Failed to delete API key");
             return;
         }
         setAPIs((current) => current.filter((item) => item.id !== api.id));
+        toast.success(`Deleted "${api.name}"`);
     };
 
     const copySecret = async () => {
@@ -158,7 +160,7 @@ export default function APIsRoute() {
                                     <td className="px-4 py-3 font-mono text-muted-foreground">{api.keyPrefix}••••••••</td>
                                     <td className="max-w-xs px-4 py-3 font-mono text-[11px] text-muted-foreground">{api.acceptedIps.length ? api.acceptedIps.join(", ") : "All IPs"}</td>
                                     <td className="px-4 py-3">
-                                        <button type="button" onClick={() => void updateAPI(api.id, { enabled: !api.enabled }).catch((requestError) => setError(requestError.message))} className={`font-semibold ${api.enabled ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>{api.enabled ? "Enabled" : "Disabled"}</button>
+                                        <button type="button" onClick={() => void updateAPI(api.id, { enabled: !api.enabled }).then(() => toast.success(api.enabled ? "API key disabled" : "API key enabled")).catch((requestError) => toast.error(requestError.message))} className={`font-semibold ${api.enabled ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>{api.enabled ? "Enabled" : "Disabled"}</button>
                                     </td>
                                     <td className="px-4 py-3 text-muted-foreground">{formatDate(api.createdAt)}</td>
                                     <td className="px-4 py-3">

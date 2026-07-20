@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Toast notifications (Sonner) repo-wide
+
+- Goal: Replace ad-hoc/silent action feedback with a consistent toast system (user asked for shadcn; shadcn's toast is deprecated in favor of Sonner).
+- Files changed: added `sonner` dep + `client/src/_layouts/_components/ui/sonner.tsx` (theme-aware `Toaster` following the `.dark` class via MutationObserver) mounted once in `main.tsx`. Converted user-initiated action feedback to `toast.success/error`: `settings/data-sources.tsx` (save/test/delete — removed the inline formError + per-row test result), `_layouts/_components/header.tsx` (update check up-to-date/failed — replaced the button flash), `containers` (start/stop/restart, Dockerfile save), `apps` (install, config save), `apis` (create/toggle/edit-IPs/delete), `root/users` (add app, create user, delete user [replaced a raw `alert()`], activate cPanel).
+- Important decisions: kept load-error banners (containers/apps/apis) and modal-form validation errors inline; only converted discrete action outcomes to toasts. Left read-only pages (files/vhosts/system-dashboard), login (its own inline UX), and settings onBlur autosaves (would be noisy) untouched. apps `handleServiceAction` is a client-side placeholder (no backend) so intentionally not toasted.
+- Validation: `tsc --noEmit` exit 0; `npm run build` (Vite) OK (bundle +~35 kB for sonner); `GOOS=linux CGO_ENABLED=0 go build ./...` exit 0 (embed).
+- Known follow-up: none.
+
 ### 2026-07-21 - Migrate client from CRA to Vite
 
 - Goal: Replace Create React App (react-scripts, deprecated + the source of the CI warnings-as-errors breakage) with Vite.

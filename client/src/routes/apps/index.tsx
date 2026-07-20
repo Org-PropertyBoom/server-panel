@@ -21,6 +21,8 @@ import {
     X,
 } from "lucide-react";
 
+import { toast } from "sonner";
+
 import { useApp } from "_contexts/app";
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
@@ -228,7 +230,6 @@ export default function AppsRoute() {
     const installApp = async () => {
         if (!selectedApp) return;
         setActionLoading("install");
-        setStatusError("");
         try {
             const response = await fetch(Api.current.apps, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: selectedApp.name }) });
             if (!response.ok) throw new Error((await response.text()) || "Failed to install app");
@@ -236,8 +237,9 @@ export default function AppsRoute() {
             setApps((current) => current.map((app) => ({ ...app, ...(data.apps.find((status: ServerApp) => status.name === app.name) ?? {}) })));
             const status = data.apps.find((app: ServerApp) => app.name === selectedApp.name);
             if (status) setSelectedApp((current) => current ? { ...current, ...status } : current);
+            toast.success(`${selectedApp.displayName} installed`);
         } catch (error) {
-            setStatusError(error instanceof Error ? error.message : "Failed to install app");
+            toast.error(error instanceof Error ? error.message : "Failed to install app");
         } finally { setActionLoading(null); }
     };
 
@@ -671,6 +673,7 @@ function AppConfigEditorModal({ target, onClose }: { target: ConfigEditorTarget;
                 body: JSON.stringify({ content }),
             });
             if (!response.ok) throw new Error((await response.text()) || "Failed to save configuration");
+            toast.success(`${target.label} saved`);
             setExists(true);
             onClose();
         } catch (saveError) {

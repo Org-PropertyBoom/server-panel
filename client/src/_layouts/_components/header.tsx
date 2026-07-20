@@ -1,7 +1,8 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import ColorModeSwitch from "_components/color-mode-switch";
-import { AlertTriangle, Boxes, Check, User, Menu, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Boxes, User, Menu, RefreshCw, X } from "lucide-react";
+import { toast } from "sonner";
 import { useApp } from "../../_contexts/app";
 
 type HeaderProps = {
@@ -30,8 +31,6 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const [reloadCountdown, setReloadCountdown] = useState(0);
     const allowReload = useRef(false);
     const updateWorkflowActive = useRef(false);
-    const [checkStatus, setCheckStatus] = useState<"idle" | "uptodate" | "error">("idle");
-    const statusTimer = useRef<number | null>(null);
 
     const checkUpdate = useCallback(async () => {
         if (!isRoot) return null;
@@ -86,19 +85,6 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
             window.removeEventListener("beforeunload", handleBeforeUnload);
     }, [updating, restarting]);
 
-    const flashStatus = (status: "uptodate" | "error") => {
-        setCheckStatus(status);
-        if (statusTimer.current) window.clearTimeout(statusTimer.current);
-        statusTimer.current = window.setTimeout(() => setCheckStatus("idle"), 3000);
-    };
-
-    useEffect(
-        () => () => {
-            if (statusTimer.current) window.clearTimeout(statusTimer.current);
-        },
-        [],
-    );
-
     const handleUpdate = async () => {
         setUpdateError("");
         setUpdateSuccess(false);
@@ -109,15 +95,14 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
             return;
         }
 
-        // Manual "Check Update": re-check and give explicit feedback so the button
-        // never feels dead when there is nothing to update.
+        // Manual "Check Update": re-check and toast the result so it never feels dead.
         const info = await checkUpdate();
         if (info?.updateAvailable) {
             setUpdateModalOpen(true);
         } else if (info) {
-            flashStatus("uptodate");
+            toast.success("You're on the latest version");
         } else {
-            flashStatus("error");
+            toast.error("Couldn't check for updates");
         }
     };
 
@@ -168,25 +153,11 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
           ? "Updating..."
           : updateAvailable
             ? "Update Available"
-            : checkStatus === "uptodate"
-              ? "Up to date"
-              : checkStatus === "error"
-                ? "Check failed"
-                : "Check Update";
+            : "Check Update";
     const updateBtnClass = updateAvailable
         ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
-        : checkStatus === "uptodate"
-          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : checkStatus === "error"
-            ? "border-destructive/30 bg-destructive/10 text-destructive"
-            : "border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground";
-    const updateBtnTitle = updateAvailable
-        ? "New update available!"
-        : checkStatus === "error"
-          ? updateError || "Update check failed"
-          : checkStatus === "uptodate"
-            ? "You're on the latest version"
-            : "Check for updates";
+        : "border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground";
+    const updateBtnTitle = updateAvailable ? "New update available!" : "Check for updates";
 
     return (
         <header className="flex h-14 items-center justify-between border-b border-border bg-card pr-6">
@@ -228,15 +199,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                         className={`relative flex h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-all ${updateBtnClass}`}
                         title={updateBtnTitle}
                     >
-                        {updateAvailable || updating || restarting ? (
-                            <RefreshCw className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`} />
-                        ) : checkStatus === "uptodate" ? (
-                            <Check className="h-3.5 w-3.5" />
-                        ) : checkStatus === "error" ? (
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                        ) : (
-                            <RefreshCw className={`h-3.5 w-3.5 ${checking ? "animate-spin" : ""}`} />
-                        )}
+                        <RefreshCw className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`} />
                         <span>{updateLabel}</span>
                         {updateAvailable && (
                             <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">

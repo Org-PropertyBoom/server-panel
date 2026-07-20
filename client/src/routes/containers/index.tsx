@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Container as ContainerIcon, FileCode2, FileText, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
 
+import { toast } from "sonner";
+
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
 import Api from "_utils/api";
@@ -55,8 +57,9 @@ export default function ContainersRoute() {
 
     const runAction = async (container: ContainerRecord, action: "start" | "stop" | "restart") => {
         const key = `${container.engine}:${container.owner}:${container.id}:${action}`;
+        const label = container.name || container.id.slice(0, 12);
+        const done = action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started";
         setActionLoading(key);
-        setError("");
         try {
             const response = await fetch(`${Api.current.containers}/action`, {
                 method: "POST",
@@ -64,9 +67,10 @@ export default function ContainersRoute() {
                 body: JSON.stringify({ action, engine: container.engine, id: container.id, owner: container.owner }),
             });
             if (!response.ok) throw new Error((await response.text()) || `Failed to ${action} container`);
+            toast.success(`${label} ${done}`);
             await loadContainers();
         } catch (actionError) {
-            setError(actionError instanceof Error ? actionError.message : `Failed to ${action} container`);
+            toast.error(actionError instanceof Error ? actionError.message : `Failed to ${action} container`);
         } finally {
             setActionLoading("");
         }
@@ -126,6 +130,7 @@ export default function ContainersRoute() {
                 body: JSON.stringify({ content: dockerfileContent }),
             });
             if (!response.ok) throw new Error((await response.text()) || "Failed to save Dockerfile");
+            toast.success("Dockerfile saved");
             setDockerfileContainer(null);
         } catch (dockerfileSaveError) {
             setDockerfileError(dockerfileSaveError instanceof Error ? dockerfileSaveError.message : "Failed to save Dockerfile");
