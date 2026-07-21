@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,8 +14,23 @@ import (
 	"time"
 )
 
-const defaultBinaryURL = "https://github.com/Org-PropertyBoom/server-panel-dist/raw/main/public/dist/ppt-server-panel"
-const defaultVersionURL = "https://github.com/Org-PropertyBoom/server-panel-dist/raw/main/public/dist/version.json"
+const (
+	distRepo        = "Org-PropertyBoom/server-panel-dist"
+	distBranch      = "main"
+	distVersionPath = "public/dist/version.json"
+	distBinaryPath  = "public/dist/ppt-server-panel"
+
+	// commitSHAURL resolves the latest commit on the dist branch via the GitHub API.
+	// The API reflects a push immediately and is NOT behind the raw-content CDN's
+	// ~5-minute cache — so it's our fresh pointer to "what's published right now".
+	commitSHAURL = "https://api.github.com/repos/" + distRepo + "/commits/" + distBranch
+
+	// Fallback direct URLs, used only if commit-SHA resolution fails. These go
+	// through GitHub's raw CDN (Fastly, max-age=300), so they can be up to ~5 min
+	// stale — acceptable only as a degraded fallback.
+	defaultVersionURL = "https://github.com/" + distRepo + "/raw/" + distBranch + "/" + distVersionPath
+	defaultBinaryURL  = "https://github.com/" + distRepo + "/raw/" + distBranch + "/" + distBinaryPath
+)
 
 var ErrUpdateRequiresRoot = errors.New("self update requires root")
 
@@ -34,24 +50,24 @@ type UpdateCheckResult struct {
 }
 
 type UpdateService struct {
-	binaryURL      string
-	versionURL     string
-	httpClient     *http.Client
-	installPath    string
-	localVersion   string
-	localBuildTime string
-	cacheResult    *UpdateCheckResult
-	cacheExpires   time.Time
+	versionOverride string // VERSION_URL env, if set (escape hatch; used verbatim)
+	binaryOverride  string // BINARY_URL env, if set
+	httpClient      *http.Client
+	installPath     string
+	localVersion    string
+	localBuildTime  string
+	cacheResult     *UpdateCheckResult
+	cacheExpires    time.Time
 }
 
 func NewUpdateService(localVersion, localBuildTime string) *UpdateService {
 	return &UpdateService{
-		binaryURL:      getEnv("BINARY_URL", defaultBinaryURL),
-		versionURL:     getEnv("VERSION_URL", defaultVersionURL),
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
-		installPath:    updateInstallPath(),
-		localVersion:   localVersion,
-		localBuildTime: localBuildTime,
+		versionOverride: os.Getenv("VERSION_URL"),
+		binaryOverride:  os.Getenv("BINARY_URL"),
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		installPath:     updateInstallPath(),
+		localVersion:    localVersion,
+		localBuildTime:  localBuildTime,
 	}
 }
 
@@ -60,7 +76,8 @@ func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, err
 		return *s.cacheResult, nil
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(s.versionURL), nil)
+	versionURL, _ := s.resolveURLs(ctx)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(versionURL), nil)
 	if err != nil {
 		return UpdateCheckResult{}, err
 	}
@@ -117,7 +134,8 @@ func (s *UpdateService) SelfUpdate(ctx context.Context) (UpdateResult, error) {
 		return UpdateResult{}, ErrUpdateRequiresRoot
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(s.binaryURL), nil)
+	_, binaryURL := s.resolveURLs(ctx)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(binaryURL), nil)
 	if err != nil {
 		return UpdateResult{}, err
 	}
@@ -170,16 +188,71 @@ func (s *UpdateService) SelfUpdate(ctx context.Context) (UpdateResult, error) {
 	removeTmp = false
 
 	return UpdateResult{
-		BinaryURL:   s.binaryURL,
+		BinaryURL:   binaryURL,
 		InstallPath: s.installPath,
 		Restart:     true,
 		UpdatedAt:   time.Now(),
 	}, nil
 }
 
-// cacheBust appends a unique query param so GitHub's raw CDN (Fastly, max-age=300)
-// treats each fetch as a distinct object and revalidates against origin — otherwise
-// a fresh dist push isn't visible for up to ~5 minutes.
+// resolveURLs returns the version.json + binary URLs to fetch. Explicit env
+// overrides win (used verbatim). Otherwise it resolves the latest commit SHA via
+// the GitHub API and pins both to that immutable SHA — a SHA-pinned raw URL is a
+// distinct object per push, so it is ALWAYS a cache miss (fresh), and version.json
+// + binary come from the SAME commit. Falls back to the branch raw URLs if the SHA
+// can't be resolved.
+func (s *UpdateService) resolveURLs(ctx context.Context) (string, string) {
+	if s.versionOverride != "" || s.binaryOverride != "" {
+		versionURL := s.versionOverride
+		if versionURL == "" {
+			versionURL = defaultVersionURL
+		}
+		binaryURL := s.binaryOverride
+		if binaryURL == "" {
+			binaryURL = defaultBinaryURL
+		}
+		return versionURL, binaryURL
+	}
+	if sha, err := s.latestSHA(ctx); err == nil && sha != "" {
+		return rawAtSHA(sha, distVersionPath), rawAtSHA(sha, distBinaryPath)
+	}
+	return defaultVersionURL, defaultBinaryURL
+}
+
+// latestSHA returns the current commit SHA of the dist branch from the GitHub API.
+func (s *UpdateService) latestSHA(ctx context.Context) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(commitSHAURL), nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Accept", "application/vnd.github.sha")
+	noStore(request)
+
+	response, err := s.httpClient.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("commit sha lookup failed: http %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64))
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(string(body))
+	if len(sha) < 7 {
+		return "", errors.New("empty commit sha")
+	}
+	return sha, nil
+}
+
+func rawAtSHA(sha, path string) string {
+	return "https://raw.githubusercontent.com/" + distRepo + "/" + sha + "/" + path
+}
+
+// cacheBust appends a unique query param — a belt for the fallback (branch) URLs
+// and the API call; harmless on the already-unique SHA-pinned URLs.
 func cacheBust(rawURL string) string {
 	sep := "?"
 	if strings.Contains(rawURL, "?") {
@@ -188,8 +261,7 @@ func cacheBust(rawURL string) string {
 	return rawURL + sep + "_cb=" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
-// noStore asks any intermediary not to serve a cached copy (belt-and-suspenders
-// alongside the cache-busting query).
+// noStore asks any intermediary not to serve a cached copy.
 func noStore(r *http.Request) {
 	r.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	r.Header.Set("Pragma", "no-cache")
