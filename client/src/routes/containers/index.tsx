@@ -34,9 +34,16 @@ function RouteCell({ container }: { container: ContainerRecord }) {
     return (
         <div className="flex flex-wrap items-center gap-1.5">
             {apps.map((h) => (
-                <span key={h} className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground" title={`App route → ${h}`}>
+                <a
+                    key={h}
+                    href={`https://${h}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground hover:text-primary hover:underline"
+                    title={`Open https://${h} in a new tab`}
+                >
                     {h}
-                </span>
+                </a>
             ))}
             {tenants > 0 ? (
                 <span

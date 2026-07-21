@@ -253,6 +253,39 @@ export function EmptyBanner({ title, body }: { title: string; body: string }) {
     );
 }
 
+// HostLink renders a hostname as a link to https://<host> in a new tab — so an
+// operator can check whether a site is still live (e.g. before pruning an orphan).
+export function HostLink({ host, className }: { host: string; className?: string }) {
+    return (
+        <a
+            href={`https://${host}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`hover:text-primary hover:underline ${className ?? ""}`}
+            title={`Open https://${host} in a new tab`}
+        >
+            {host}
+        </a>
+    );
+}
+
+// UrlLink renders an already-absolute URL (e.g. a redirect target) as a new-tab link.
+export function UrlLink({ url, className }: { url: string; className?: string }) {
+    return (
+        <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`hover:text-primary hover:underline ${className ?? ""}`}
+            title={`Open ${url} in a new tab`}
+        >
+            {url}
+        </a>
+    );
+}
+
 export function ViewHeader({ title, subtitle, actions }: { title: string; subtitle: string; actions?: ReactNode }) {
     return (
         <div className="mb-4 flex flex-wrap items-end justify-between gap-2">

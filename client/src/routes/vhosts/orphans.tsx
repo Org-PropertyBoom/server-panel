@@ -1,8 +1,13 @@
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { ExternalLink, Trash2 } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
 import { EmptyBanner, Modal, ViewHeader } from "./shared";
+
+// hostOf strips the ".caddy" suffix so an orphan file maps to its hostname.
+function hostOf(name: string): string {
+    return name.endsWith(".caddy") ? name.slice(0, -".caddy".length) : name;
+}
 
 // OrphansView lists on-disk `<host>.caddy` files with no active DB row. Prune is
 // deliberate — per-file or a bulk select+confirm; there is NO blind "prune all",
@@ -79,6 +84,16 @@ export default function OrphansView({
                         <li key={name} className="flex items-center gap-3 px-4 py-2.5">
                             <input type="checkbox" checked={selected.has(name)} onChange={() => toggle(name)} className="h-3.5 w-3.5" />
                             <span className="flex-1 font-mono text-xs text-foreground">{name}</span>
+                            <a
+                                href={`https://${hostOf(name)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-primary"
+                                title={`Open https://${hostOf(name)} in a new tab — check if it still serves before pruning`}
+                            >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                Open
+                            </a>
                             <Button
                                 variant="ghost"
                                 size="sm"

@@ -3,7 +3,7 @@ import { AlertTriangle, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, inputCls, type ManageRow, Modal, Pill, type PinnedRow, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, type Upstream, ViewHeader } from "./shared";
 
 const CUSTOM = "__custom__";
 
@@ -71,7 +71,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                     <td className="px-4 py-2.5 font-mono text-foreground">
                                         <span className="inline-flex items-center gap-1.5">
                                             <Lock className="h-3 w-3 text-muted-foreground" />
-                                            {p.host}
+                                            <HostLink host={p.host} />
                                         </span>
                                     </td>
                                     <td className="px-4 py-2.5">
@@ -101,7 +101,9 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                             ))}
                             {rows.map((r) => (
                                 <tr key={r.id} className={r.isActive ? "" : "opacity-55"}>
-                                    <td className="px-4 py-2.5 font-mono text-foreground">{r.host}</td>
+                                    <td className="px-4 py-2.5 font-mono text-foreground">
+                                        <HostLink host={r.host} />
+                                    </td>
                                     <td className="px-4 py-2.5">
                                         <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                                             {r.serverStack || "—"}

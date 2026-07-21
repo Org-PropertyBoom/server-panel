@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Lock, Search } from "lucide-react";
 
-import { EmptyBanner, type HostHealth, type HostRow, rowTint, StatusChip, UnreachableChip, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type HostHealth, type HostRow, rowTint, StatusChip, UnreachableChip, ViewHeader } from "./shared";
 
 // TenantView renders website_hosts — the stack-owned tenant sites. READ-ONLY here:
 // the stack apps own these rows; the panel only views + monitors drift + health.
@@ -97,7 +97,9 @@ export default function TenantView({ hosts, health }: { hosts: HostRow[]; health
                                     <tbody className="divide-y divide-border">
                                         {filtered.map((h, i) => (
                                             <tr key={`${h.hostname}-${i}`} className={rowTint(h.status)}>
-                                                <td className="px-4 py-3 font-mono text-foreground">{h.hostname}</td>
+                                                <td className="px-4 py-3 font-mono text-foreground">
+                                                    <HostLink host={h.hostname} />
+                                                </td>
                                                 <td className="px-4 py-3">
                                                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                                                         {h.stack || "—"}

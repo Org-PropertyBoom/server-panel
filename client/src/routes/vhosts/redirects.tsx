@@ -3,7 +3,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, Field, FormActions, inputCls, type ManageRow, Modal, Pill, ViewHeader } from "./shared";
+import { EmptyBanner, Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, UrlLink, ViewHeader } from "./shared";
 
 // RedirectsView manages platform_redirect_hosts — host → URL redirects answered at
 // the edge. Full CRUD; live on the next global reconcile.
@@ -60,8 +60,12 @@ export default function RedirectsView({ rows, onSaved }: { rows: ManageRow[]; on
                             <tbody className="divide-y divide-border">
                                 {rows.map((r) => (
                                     <tr key={r.id} className={r.isActive ? "" : "opacity-55"}>
-                                        <td className="px-4 py-2.5 font-mono text-foreground">{r.host}</td>
-                                        <td className="px-4 py-2.5 font-mono text-muted-foreground">{r.target}</td>
+                                        <td className="px-4 py-2.5 font-mono text-foreground">
+                                            <HostLink host={r.host} />
+                                        </td>
+                                        <td className="px-4 py-2.5 font-mono text-muted-foreground">
+                                            <UrlLink url={r.target} />
+                                        </td>
                                         <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{r.code}</td>
                                         <td className="px-4 py-2.5">{r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
                                         <td className="px-4 py-2.5">
