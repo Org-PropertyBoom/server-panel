@@ -261,13 +261,13 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out.Health = v.health.Snapshot()
 	out.Protected, out.ProtectedWarning = v.protectedRows()
 
-	name := v.settings.Get("vhost_data_source", "")
-	if name == "" {
-		out.Message = "No host-source data source selected. Choose one under Settings → Data Sources."
+	ds, ok := v.sources.ActiveSource()
+	if !ok {
+		out.Message = "No active data source. Add one under Settings → Data Sources."
 		return out
 	}
 	out.Configured = true
-	out.Source = name
+	out.Source = ds.Name
 
 	conn, err := v.openDB(ctx)
 	if err != nil {
@@ -423,11 +423,11 @@ func (v *VhostEngineService) RenderedStatus(ctx context.Context) RenderedStatusR
 	}
 	out.RenderedHosts = phys
 
-	name := v.settings.Get("vhost_data_source", "")
-	if name == "" {
-		return out // rendered list only — no data source to compute per-host status
+	ds, ok := v.sources.ActiveSource()
+	if !ok {
+		return out // rendered list only — no active data source to compute per-host status
 	}
-	out.Source = name
+	out.Source = ds.Name
 
 	conn, err := v.openDB(ctx)
 	if err != nil {
@@ -482,7 +482,7 @@ type targetRoutes struct {
 // ("127.0.0.1:port"): App routes (platform_hosts.target) contribute hostnames;
 // tenant routes (website_hosts, via server_stack→port) contribute a count. Read-only.
 func (v *VhostEngineService) routesByTarget(ctx context.Context) (map[string]targetRoutes, error) {
-	if v.settings.Get("vhost_data_source", "") == "" {
+	if _, ok := v.sources.ActiveSource(); !ok {
 		return nil, nil
 	}
 	conn, err := v.openDB(ctx)
@@ -679,17 +679,13 @@ func (v *VhostEngineService) PruneOrphans(ctx context.Context, names []string) (
 }
 
 func (v *VhostEngineService) openDB(ctx context.Context) (*caddydb.DB, error) {
-	name := v.settings.Get("vhost_data_source", "")
-	if name == "" {
-		return nil, errors.New("no host-source data source selected")
-	}
-	ds, ok := v.sources.ResolveByName(name)
+	ds, ok := v.sources.ActiveSource()
 	if !ok {
-		return nil, fmt.Errorf("data source %q no longer exists", name)
+		return nil, errors.New("no active data source — add one under Settings → Data Sources")
 	}
 	adapter, ok := adapterFor(ds.Engine)
 	if !ok {
-		return nil, fmt.Errorf("unsupported engine for data source %q", name)
+		return nil, fmt.Errorf("unsupported engine for data source %q", ds.Name)
 	}
 	return caddydb.Open(ctx, adapter.BuildDSN(ds))
 }

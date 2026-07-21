@@ -88,15 +88,59 @@ func TestDataSourcesDuplicateNameRejected(t *testing.T) {
 
 func TestDataSourcesDelete(t *testing.T) {
 	svc := newTestDataSources(t)
-	created, _ := svc.Save(DataSource{Name: "x", Engine: "mysql", Host: "h", Port: "3306", Database: "d", User: "u"})
-	if err := svc.Delete(created.ID); err != nil {
-		t.Fatalf("delete: %v", err)
+	first, _ := svc.Save(DataSource{Name: "x", Engine: "mysql", Host: "h", Port: "3306", Database: "d", User: "u"})
+	// The first source is auto-active; deleting the ONLY source is blocked.
+	if err := svc.Delete(first.ID); err != ErrCannotDeleteOnlyActive {
+		t.Fatalf("deleting the only source should be blocked; got %v", err)
 	}
-	if _, ok := svc.Resolve(created.ID); ok {
+	// Add a second, then deleting the non-active one succeeds.
+	second, _ := svc.Save(DataSource{Name: "y", Engine: "mysql", Host: "h", Port: "3306", Database: "d", User: "u"})
+	if err := svc.Delete(second.ID); err != nil {
+		t.Fatalf("delete non-active: %v", err)
+	}
+	if _, ok := svc.Resolve(second.ID); ok {
 		t.Fatalf("source still present after delete")
 	}
 	if err := svc.Delete("nope"); err != ErrDataSourceNotFound {
 		t.Fatalf("expected ErrDataSourceNotFound, got %v", err)
+	}
+}
+
+func TestDataSources_SingleActiveModel(t *testing.T) {
+	svc := newTestDataSources(t)
+	a, _ := svc.Save(DataSource{Name: "a", Engine: "mysql", Host: "h", Port: "3306", Database: "d", User: "u"})
+	// First source is auto-active.
+	if act, ok := svc.ActiveSource(); !ok || act.ID != a.ID {
+		t.Fatalf("first source should be auto-active; got %+v ok=%v", act, ok)
+	}
+	b, _ := svc.Save(DataSource{Name: "b", Engine: "mysql", Host: "h", Port: "3306", Database: "d", User: "u"})
+	// Second is NOT auto-active.
+	if act, _ := svc.ActiveSource(); act.ID != a.ID {
+		t.Fatalf("active should still be a; got %s", act.ID)
+	}
+	// Switching active is radio — exactly one active.
+	if err := svc.SetActive(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := svc.List()
+	activeCount := 0
+	for _, d := range list {
+		if d.Active {
+			activeCount++
+		}
+	}
+	if activeCount != 1 {
+		t.Fatalf("exactly one active expected, got %d", activeCount)
+	}
+	if act, _ := svc.ActiveSource(); act.ID != b.ID {
+		t.Fatalf("active should be b after SetActive; got %s", act.ID)
+	}
+	// Deleting the active source (b) promotes another (a) — never zero active.
+	if err := svc.Delete(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if act, ok := svc.ActiveSource(); !ok || act.ID != a.ID {
+		t.Fatalf("deleting active should promote a; got %+v ok=%v", act, ok)
 	}
 }
 

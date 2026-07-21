@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Single active Data Source model (one source every feature reads) + live health
+
+- Goal: replace the per-screen host-source picker with ONE global active Data Source (structurally prevents a mis-pick). Exactly one active while any exist; every DB-reading feature reads it.
+- Files changed: `services/datasources.go` — `Active bool` on DataSource+view; Save auto-actives the FIRST source (never zero) + preserves active on update (active changes only via SetActive); `SetActive(id)` (radio: clears others); `Delete` blocks the only source (`ErrCannotDeleteOnlyActive`) and promotes another when deleting the active one; `ActiveSource()`; `loadNormalized()` migrates legacy no-active data by promoting the first (durable); `ActiveHealth(ctx)` pings the active source for LIVE status. `routes/post/datasources` — GET includes `activeHealth`; new `POST /post/datasources/activate {id}`; delete maps the block to 400. `services/caddy_engine.go` — openDB/State/RenderedStatus/routesByTarget now read `ActiveSource()` instead of the `vhost_data_source` setting. Frontend: `reconcile-header.tsx` — the "Reading from" picker → a READ-ONLY indicator (active source + green/red health dot, links to Settings → Data Sources); `index.tsx` dropped the sources fetch/changeSource plumbing; `settings/data-sources.tsx` — a radio (activate) + "Active" badge per row, live health on the active row ("Connected · live" from activeHealth, no manual Test needed), description updated. Tests: updated the delete test + new `TestDataSources_SingleActiveModel` (auto-active, radio, promote-on-delete).
+- Important decisions: delete-the-active edge = promote-next when others remain, BLOCK when it's the only one (replace via add→activate→delete). Never zero active while any source exists. Live health is a fresh ping on the Data Sources GET (admin page; VHosts derives health from the state read succeeding, no extra ping). The `vhost_data_source` setting is no longer read (left allowlisted, harmless).
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet ./services/... ./routes/...` 0 (compiles the datasources tests — they run on Linux/CI, not natively: `system.go` uses Linux syscalls); native `go test ./services/caddy/...` pass; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-21 - Pinned domains from the ACTUAL Caddyfile + drift vs config (ground truth)
 
 - Goal: the pinned rows were sourced from config (a DECLARATION). Derive them from the REAL main Caddyfile (ground truth) and flag drift vs config.ProtectedHosts() (what the reload guards) — so a mismatch is visible, not silent. (Only this of the two relayed items; Orphan→Adopt not chosen.)

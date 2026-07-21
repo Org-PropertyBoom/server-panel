@@ -17,7 +17,6 @@ import {
     normalizeState,
     type ReconcileResult,
     type Section,
-    type Source,
     summarizeError,
     type VhostState,
 } from "./shared";
@@ -45,9 +44,7 @@ export default function VHostsRoute() {
 
 function VHostsShell({ active }: { active: Section }) {
     const [state, setState] = useState<VhostState | null>(null);
-    const [sources, setSources] = useState<Source[]>([]);
     const [loading, setLoading] = useState(true);
-    const [savingSource, setSavingSource] = useState(false);
     const [applying, setApplying] = useState<"reconcile" | "reload" | null>(null);
     const [pruning, setPruning] = useState(false);
     const [result, setResult] = useState<ReconcileResult | null>(null);
@@ -65,34 +62,8 @@ function VHostsShell({ active }: { active: Section }) {
     }, []);
 
     useEffect(() => {
-        void fetch("/post/datasources", { cache: "no-store" })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => setSources((d?.dataSources as Source[]) ?? []))
-            .catch(() => setSources([]));
         void loadState();
     }, [loadState]);
-
-    const changeSource = async (name: string) => {
-        setSavingSource(true);
-        try {
-            const res = await fetch("/post/settings", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ key: "vhost_data_source", value: name }),
-            });
-            if (!res.ok) {
-                toast.error(`Could not set host-source: ${(await res.text()).trim() || res.statusText}`);
-                return;
-            }
-            toast.success(name ? `Reading vhosts from "${name}"` : "Host-source cleared");
-            setResult(null);
-            await loadState();
-        } catch (err) {
-            toast.error(`Could not set host-source: ${String(err)}`);
-        } finally {
-            setSavingSource(false);
-        }
-    };
 
     const applyReconcile = async (kind: "reconcile" | "reload") => {
         setApplying(kind);
@@ -166,11 +137,8 @@ function VHostsShell({ active }: { active: Section }) {
                 {state ? (
                     <ReconcileHeader
                         state={state}
-                        sources={sources}
-                        savingSource={savingSource}
                         applying={applying}
                         result={result}
-                        onChangeSource={changeSource}
                         onApply={applyReconcile}
                         onToggleGate={toggleGate}
                         onDismissResult={() => setResult(null)}
@@ -192,7 +160,7 @@ function VHostsShell({ active }: { active: Section }) {
                                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                             </div>
                         ) : !state?.configured || state.error ? (
-                            <ConfiguringNotice state={state} sourceCount={sources.length} />
+                            <ConfiguringNotice state={state} />
                         ) : active === "tenant" ? (
                             <TenantView hosts={tenantHosts} health={state.health ?? {}} />
                         ) : active === "system" ? (
@@ -209,7 +177,7 @@ function VHostsShell({ active }: { active: Section }) {
     );
 }
 
-function ConfiguringNotice({ state, sourceCount }: { state: VhostState | null; sourceCount: number }) {
+function ConfiguringNotice({ state }: { state: VhostState | null }) {
     if (state?.error) {
         return (
             <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -219,12 +187,8 @@ function ConfiguringNotice({ state, sourceCount }: { state: VhostState | null; s
     }
     return (
         <EmptyBanner
-            title="No host-source selected"
-            body={
-                sourceCount === 0
-                    ? "Add a MySQL data source under Settings → Data Sources, then select it in the header above."
-                    : "Pick the data source that holds website_hosts / platform_hosts from the header above."
-            }
+            title="No active data source"
+            body="Add a MySQL data source under Settings → Data Sources and mark it active — every feature reads the single active source."
         />
     );
 }

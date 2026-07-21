@@ -2,25 +2,19 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Database, Lock, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Modal, Pill, type ReconcileResult, type Source, type VhostState } from "./shared";
+import { Modal, Pill, type ReconcileResult, type VhostState } from "./shared";
 
 export default function ReconcileHeader({
     state,
-    sources,
-    savingSource,
     applying,
     result,
-    onChangeSource,
     onApply,
     onToggleGate,
     onDismissResult,
 }: {
     state: VhostState;
-    sources: Source[];
-    savingSource: boolean;
     applying: "reconcile" | "reload" | null;
     result: ReconcileResult | null;
-    onChangeSource: (name: string) => void;
     onApply: (kind: "reconcile" | "reload") => void;
     onToggleGate: (enabled: boolean) => void;
     onDismissResult: () => void;
@@ -53,23 +47,25 @@ export default function ReconcileHeader({
                 ) : null}
                 <span className="flex-1" />
                 {dry ? dry.in_sync ? <Pill tone="ok">In sync</Pill> : <Pill tone="warn">Drift — {pending} pending</Pill> : null}
-                <label className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+                <a
+                    href="/settings/data-sources"
+                    className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+                    title="Change the active source in Settings → Data Sources"
+                >
                     <Database className="h-3.5 w-3.5" />
                     Reading from
-                    <select
-                        value={state.source ?? ""}
-                        onChange={(e) => onChangeSource(e.target.value)}
-                        disabled={savingSource}
-                        className="rounded border border-input bg-background px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-                    >
-                        <option value="">— select —</option>
-                        {sources.map((s) => (
-                            <option key={s.id} value={s.name}>
-                                {s.name}
-                            </option>
-                        ))}
-                    </select>
-                </label>
+                    {state.source ? (
+                        <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                            {state.source}
+                            <span
+                                className={`h-1.5 w-1.5 rounded-full ${configured ? "bg-emerald-500" : "bg-destructive"}`}
+                                title={configured ? "connected" : state.error || "not connected"}
+                            />
+                        </span>
+                    ) : (
+                        <span className="font-medium text-primary">set an active source</span>
+                    )}
+                </a>
                 <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" className="gap-2" disabled={!configured || applying !== null} onClick={() => setConfirm("reload")}>
                         <RefreshCw className={`h-4 w-4 ${applying === "reload" ? "animate-spin" : ""}`} />

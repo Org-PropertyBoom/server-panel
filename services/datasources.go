@@ -33,6 +33,10 @@ var ErrDataSourceNotFound = errors.New("data source not found")
 // source's name (sources are consumed by name, so names are unique).
 var ErrDuplicateName = errors.New("a data source with that name already exists")
 
+// ErrCannotDeleteOnlyActive blocks deleting the single remaining source (it's the
+// active one by definition). Add + activate a replacement first, then delete this.
+var ErrCannotDeleteOnlyActive = errors.New("cannot delete the only data source — add and activate another first")
+
 // DataSource is one saved connection, as persisted (Password included on disk
 // only). Engine is one of the registered adapter keys (mysql|postgres|sqlite).
 type DataSource struct {
@@ -44,6 +48,9 @@ type DataSource struct {
 	Database string `json:"database"`
 	User     string `json:"user"`
 	Password string `json:"password"`
+	// Active marks the SINGLE source every feature reads. Exactly one active while
+	// any source exists (radio semantics — set-active clears the others).
+	Active bool `json:"active"`
 }
 
 // DataSourceView is the client-facing shape — identical to DataSource but with
@@ -57,6 +64,7 @@ type DataSourceView struct {
 	Database    string `json:"database"`
 	User        string `json:"user"`
 	PasswordSet bool   `json:"passwordSet"`
+	Active      bool   `json:"active"`
 }
 
 // DataSourceTestResult is the truthful outcome of a per-source liveness Test
@@ -70,7 +78,7 @@ type DataSourceTestResult struct {
 func (d DataSource) view() DataSourceView {
 	return DataSourceView{
 		ID: d.ID, Name: d.Name, Engine: d.Engine, Host: d.Host, Port: d.Port,
-		Database: d.Database, User: d.User, PasswordSet: d.Password != "",
+		Database: d.Database, User: d.User, PasswordSet: d.Password != "", Active: d.Active,
 	}
 }
 
@@ -95,7 +103,7 @@ func NewDataSourceService() *DataSourceService {
 func (s *DataSourceService) List() ([]DataSourceView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list, err := s.load()
+	list, err := s.loadNormalized()
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +149,7 @@ func (s *DataSourceService) Save(in DataSource) (DataSourceView, error) {
 
 	if in.ID == "" {
 		in.ID = newDataSourceID()
+		in.Active = len(list) == 0 // the first source is auto-active; never zero active
 		list = append(list, in)
 	} else {
 		idx := indexByID(list, in.ID)
@@ -150,6 +159,7 @@ func (s *DataSourceService) Save(in DataSource) (DataSourceView, error) {
 		if in.Password == "" {
 			in.Password = list[idx].Password // keep existing secret
 		}
+		in.Active = list[idx].Active // active is changed only via SetActive, never a plain Save
 		list[idx] = in
 	}
 
@@ -159,7 +169,9 @@ func (s *DataSourceService) Save(in DataSource) (DataSourceView, error) {
 	return in.view(), nil
 }
 
-// Delete removes a source by id.
+// Delete removes a source by id. Deleting the ONLY source is blocked (it's the
+// active one — add + activate a replacement first). Deleting the active source when
+// others remain promotes another to active, so there is never zero active.
 func (s *DataSourceService) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,8 +183,47 @@ func (s *DataSourceService) Delete(id string) error {
 	if idx < 0 {
 		return ErrDataSourceNotFound
 	}
+	if len(list) == 1 {
+		return ErrCannotDeleteOnlyActive
+	}
+	wasActive := list[idx].Active
 	list = append(list[:idx], list[idx+1:]...)
+	if wasActive && activeIndex(list) < 0 && len(list) > 0 {
+		list[0].Active = true // promote another — never zero active while a source exists
+	}
 	return s.persist(list)
+}
+
+// SetActive makes id the single active source and clears the rest (radio).
+func (s *DataSourceService) SetActive(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.load()
+	if err != nil {
+		return err
+	}
+	if indexByID(list, id) < 0 {
+		return ErrDataSourceNotFound
+	}
+	for i := range list {
+		list[i].Active = list[i].ID == id
+	}
+	return s.persist(list)
+}
+
+// ActiveSource returns the single active source (full, incl. password) for a
+// feature to open a connection. Second return is false when no source exists.
+func (s *DataSourceService) ActiveSource() (DataSource, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.loadNormalized()
+	if err != nil || len(list) == 0 {
+		return DataSource{}, false
+	}
+	if i := activeIndex(list); i >= 0 {
+		return list[i], true
+	}
+	return DataSource{}, false
 }
 
 // Test opens the source via its adapter, pings, and runs the engine-agnostic
@@ -234,6 +285,70 @@ func (s *DataSourceService) ResolveByName(name string) (DataSource, bool) {
 		}
 	}
 	return DataSource{}, false
+}
+
+// DataSourceHealth is the ACTIVE source's live connection status — derived from a
+// real ping, so "active + healthy" is visible without clicking Test.
+type DataSourceHealth struct {
+	SourceID    string `json:"sourceId,omitempty"`
+	Name        string `json:"name,omitempty"`
+	OK          bool   `json:"ok"`
+	Error       string `json:"error,omitempty"`
+	CheckedAtMs int64  `json:"checkedAtMs"`
+}
+
+// ActiveHealth pings the active source and returns its live status. Present=false
+// when there is no active source to check.
+func (s *DataSourceService) ActiveHealth(ctx context.Context) (DataSourceHealth, bool) {
+	ds, ok := s.ActiveSource()
+	if !ok {
+		return DataSourceHealth{}, false
+	}
+	h := DataSourceHealth{SourceID: ds.ID, Name: ds.Name, CheckedAtMs: time.Now().UnixMilli()}
+	adapter, ok := adapterFor(ds.Engine)
+	if !ok {
+		h.Error = "unsupported engine: " + ds.Engine
+		return h, true
+	}
+	db, err := sql.Open(adapter.Driver(), adapter.BuildDSN(ds))
+	if err != nil {
+		h.Error = friendlyDBError(err)
+		return h, true
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	pingCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		h.Error = friendlyDBError(err)
+		return h, true
+	}
+	h.OK = true
+	return h, true
+}
+
+// loadNormalized loads the list and guarantees exactly one active source when any
+// exist (migrates legacy data with no active flag by promoting the first). Persists
+// the promotion so the invariant is durable. Caller holds s.mu.
+func (s *DataSourceService) loadNormalized() ([]DataSource, error) {
+	list, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if len(list) > 0 && activeIndex(list) < 0 {
+		list[0].Active = true
+		_ = s.persist(list)
+	}
+	return list, nil
+}
+
+func activeIndex(list []DataSource) int {
+	for i := range list {
+		if list[i].Active {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *DataSourceService) get(id string) (DataSource, bool) {

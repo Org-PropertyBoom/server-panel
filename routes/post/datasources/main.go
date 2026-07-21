@@ -25,7 +25,11 @@ func Handler(sessions *services.SessionService, svc *services.DataSourceService)
 				http.Error(w, "could not load data sources", http.StatusInternalServerError)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"dataSources": list})
+			resp := map[string]any{"dataSources": list}
+			if h, ok := svc.ActiveHealth(r.Context()); ok {
+				resp["activeHealth"] = h
+			}
+			writeJSON(w, http.StatusOK, resp)
 		case http.MethodPut, http.MethodPost:
 			var in services.DataSource
 			if json.NewDecoder(r.Body).Decode(&in) != nil {
@@ -50,8 +54,11 @@ func Handler(sessions *services.SessionService, svc *services.DataSourceService)
 			}
 			if err := svc.Delete(id); err != nil {
 				status := http.StatusInternalServerError
-				if errors.Is(err, services.ErrDataSourceNotFound) {
+				switch {
+				case errors.Is(err, services.ErrDataSourceNotFound):
 					status = http.StatusNotFound
+				case errors.Is(err, services.ErrCannotDeleteOnlyActive):
+					status = http.StatusBadRequest
 				}
 				http.Error(w, err.Error(), status)
 				return
@@ -60,6 +67,32 @@ func Handler(sessions *services.SessionService, svc *services.DataSourceService)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+}
+
+// ActivateHandler sets the single active data source (radio: clears the others).
+func ActivateHandler(sessions *services.SessionService, svc *services.DataSourceService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			ID string `json:"id"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.ID == "" {
+			http.Error(w, "id is required", http.StatusBadRequest)
+			return
+		}
+		if err := svc.SetActive(body.ID); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, services.ErrDataSourceNotFound) {
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 }
 
