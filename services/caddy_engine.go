@@ -217,43 +217,43 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 	return m
 }
 
-// PhysicalHostStatus is one host's DB-vs-file standing for stack consumption.
-type PhysicalHostStatus struct {
+// RenderedHostStatus is one host's DB-vs-file standing for stack consumption.
+type RenderedHostStatus struct {
 	Host    string `json:"host"`
 	Kind    string `json:"kind,omitempty"` // tenant | system | redirect | orphan
 	Status  string `json:"status"`         // in_sync | will_write | will_remove | orphan
 	HasFile bool   `json:"hasFile"`        // a matching <host>.caddy exists on disk
 }
 
-// PhysicalStatusResult is the read-only feed the stack apps consume to badge their
-// own DB-vhost tables — "does this DB vhost have a matching physical vhost file?"
+// RenderedStatusResult is the read-only feed the stack apps consume to badge their
+// own DB-vhost tables — "does this DB vhost have a matching rendered vhost file?"
 // It is sourced entirely from server-panel (the folder it owns + the shared DB it
-// reads), NEVER from Caddy. PhysicalHosts is always present (a folder read needs no
+// reads), NEVER from Caddy. RenderedHosts is always present (a folder read needs no
 // DB); Hosts carries the richer per-host status when a data source is selected.
-type PhysicalStatusResult struct {
+type RenderedStatusResult struct {
 	VhostsDir     string               `json:"vhostsDir"`
 	Source        string               `json:"source,omitempty"`
-	PhysicalHosts []string             `json:"physicalHosts"`
-	Hosts         []PhysicalHostStatus `json:"hosts"`
+	RenderedHosts []string             `json:"renderedHosts"`
+	Hosts         []RenderedHostStatus `json:"hosts"`
 	Error         string               `json:"error,omitempty"`
 }
 
-// PhysicalStatus reports the physical vhosts on disk and, when a host-source is
+// RenderedStatus reports the rendered vhosts on disk and, when a host-source is
 // configured, each host's DB-vs-file status. Read-only; failure modes are returned
-// in the result (the physical list still comes back even if the DB join fails).
-func (v *VhostEngineService) PhysicalStatus(ctx context.Context) PhysicalStatusResult {
-	out := PhysicalStatusResult{VhostsDir: v.cfg.VhostsDir, PhysicalHosts: []string{}, Hosts: []PhysicalHostStatus{}}
+// in the result (the rendered list still comes back even if the DB join fails).
+func (v *VhostEngineService) RenderedStatus(ctx context.Context) RenderedStatusResult {
+	out := RenderedStatusResult{VhostsDir: v.cfg.VhostsDir, RenderedHosts: []string{}, Hosts: []RenderedHostStatus{}}
 
-	phys, err := v.engine.PhysicalHosts()
+	phys, err := v.engine.RenderedHosts()
 	if err != nil {
 		out.Error = "vhosts folder: " + err.Error()
 		return out
 	}
-	out.PhysicalHosts = phys
+	out.RenderedHosts = phys
 
 	name := v.settings.Get("vhost_data_source", "")
 	if name == "" {
-		return out // physical list only — no data source to compute per-host status
+		return out // rendered list only — no data source to compute per-host status
 	}
 	out.Source = name
 
@@ -279,7 +279,7 @@ func (v *VhostEngineService) PhysicalStatus(ctx context.Context) PhysicalStatusR
 		physSet[h] = true
 	}
 	for _, h := range dry.Hosts {
-		out.Hosts = append(out.Hosts, PhysicalHostStatus{
+		out.Hosts = append(out.Hosts, RenderedHostStatus{
 			Host: h.Hostname, Kind: h.Kind, Status: h.Status, HasFile: physSet[h.Hostname],
 		})
 	}

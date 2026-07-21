@@ -389,10 +389,10 @@ func (e *Engine) since(start time.Time) int64 {
 	return e.now().Sub(start).Milliseconds()
 }
 
-// PhysicalHosts returns the hostnames that currently have a `<host>.caddy` file on
-// disk (sorted) — server-panel's authoritative "physical vhosts" list, read from
+// RenderedHosts returns the hostnames that currently have a `<host>.caddy` file on
+// disk (sorted) — server-panel's authoritative "rendered vhosts" list, read from
 // the folder it owns, never from Caddy. Read-only.
-func (e *Engine) PhysicalHosts() ([]string, error) {
+func (e *Engine) RenderedHosts() ([]string, error) {
 	names, err := e.dir.ListNames()
 	if err != nil {
 		return nil, err

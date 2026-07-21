@@ -408,7 +408,7 @@ func TestReconcile_RefusedWhenReadOnly(t *testing.T) {
 	}
 }
 
-func TestPhysicalHosts_ListsFolderHostnames(t *testing.T) {
+func TestRenderedHosts_ListsFolderHostnames(t *testing.T) {
 	dir := t.TempDir()
 	for _, f := range []string{"b.com.caddy", "a.com.caddy", "notacaddy.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
@@ -416,12 +416,12 @@ func TestPhysicalHosts_ListsFolderHostnames(t *testing.T) {
 		}
 	}
 	e := NewEngine(config.Config{VhostsDir: dir}, nil, nil)
-	hosts, err := e.PhysicalHosts()
+	hosts, err := e.RenderedHosts()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hosts) != 2 || hosts[0] != "a.com" || hosts[1] != "b.com" {
-		t.Errorf("PhysicalHosts = %v, want [a.com b.com] (sorted, non-.caddy ignored)", hosts)
+		t.Errorf("RenderedHosts = %v, want [a.com b.com] (sorted, non-.caddy ignored)", hosts)
 	}
 }
 
