@@ -112,7 +112,7 @@ function VHostsCockpit() {
         setLoading(true);
         try {
             const res = await fetch("/post/vhost/state", { cache: "no-store" });
-            setState(res.ok ? await res.json() : { configured: false, vhostsDir: "", liveReload: false, error: await res.text() });
+            setState(res.ok ? normalizeState(await res.json()) : { configured: false, vhostsDir: "", liveReload: false, error: await res.text() });
         } catch (err) {
             setState({ configured: false, vhostsDir: "", liveReload: false, error: String(err) });
         } finally {
@@ -155,7 +155,7 @@ function VHostsCockpit() {
         setApplying(kind);
         try {
             const res = await fetch(`/post/vhost/${kind}`, { method: "POST" });
-            const data = (await res.json()) as ReconcileResult;
+            const data = normalizeResult((await res.json()) as ReconcileResult);
             setResult(data);
             if (data.error) {
                 toast.error(data.reloaded ? "Applied with warnings" : summarizeError(data.error));
@@ -179,7 +179,7 @@ function VHostsCockpit() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name }),
             });
-            const data = (await res.json()) as ReconcileResult;
+            const data = normalizeResult((await res.json()) as ReconcileResult);
             setResult(data);
             if (data.error) {
                 toast.error(summarizeError(data.error));
@@ -939,6 +939,50 @@ function EmptyBanner({ title, body }: { title: string; body: string }) {
 function summarizeError(err: string): string {
     const first = err.split("\n")[0].trim();
     return first.length > 140 ? `${first.slice(0, 137)}…` : first;
+}
+
+// Go marshals a nil slice as JSON `null`, not `[]`, so any empty array field on
+// the state/result payload arrives as null. Coerce them so the UI can safely read
+// `.length` / `.map` without white-screening on an empty (but valid) response.
+function arr<T>(x: T[] | null | undefined): T[] {
+    return Array.isArray(x) ? x : [];
+}
+
+function normalizeState(s: VhostState): VhostState {
+    if (s.dryRun) {
+        const d = s.dryRun;
+        s.dryRun = {
+            ...d,
+            files: arr(d.files),
+            hosts: arr(d.hosts),
+            would_write: arr(d.would_write),
+            would_remove: arr(d.would_remove),
+            orphans: arr(d.orphans),
+            skips: arr(d.skips),
+            missing_tables: arr(d.missing_tables),
+        };
+    }
+    if (s.manage) {
+        s.manage = {
+            systemHosts: arr(s.manage.systemHosts),
+            redirects: arr(s.manage.redirects),
+            stacks: arr(s.manage.stacks),
+        };
+    }
+    return s;
+}
+
+function normalizeResult(r: ReconcileResult): ReconcileResult {
+    return {
+        ...r,
+        written: arr(r.written),
+        removed: arr(r.removed),
+        removes_suppressed: arr(r.removes_suppressed),
+        orphans: arr(r.orphans),
+        skips: arr(r.skips),
+        adapt_warnings: arr(r.adapt_warnings),
+        missing_tables: arr(r.missing_tables),
+    };
 }
 
 const inputCls =

@@ -384,7 +384,26 @@ func (e *Engine) DryRun(snap db.Snapshot) (DryRunResult, error) {
 	for _, name := range plan.Orphans {
 		out.Hosts = append(out.Hosts, HostRow{Hostname: render.HostFromFileName(name), Kind: "orphan", Status: "orphan"})
 	}
+
+	// Coerce empty slices to non-nil so they serialize as [] not null — a nil slice
+	// marshals to JSON null, which the cockpit would read `.length` off of.
+	out.Files = nonNil(out.Files)
+	out.Hosts = nonNil(out.Hosts)
+	out.WouldWrite = nonNil(out.WouldWrite)
+	out.WouldRemove = nonNil(out.WouldRemove)
+	out.Orphans = nonNil(out.Orphans)
+	out.Skips = nonNil(out.Skips)
+	out.MissingTables = nonNil(out.MissingTables)
 	return out, nil
+}
+
+// nonNil returns s, or an empty (non-nil) slice when s is nil, so JSON encodes []
+// rather than null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 func (e *Engine) firstPassDone() bool {
