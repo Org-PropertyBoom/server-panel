@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Loader2, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
@@ -14,6 +14,37 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
     const [edit, setEdit] = useState<ManageRow | null>(null);
     const [removeBlock, setRemoveBlock] = useState<PinnedRow | null>(null);
     const [removing, setRemoving] = useState(false);
+    const [pinRow, setPinRow] = useState<ManageRow | null>(null);
+    const [unpinRow, setUnpinRow] = useState<PinnedRow | null>(null);
+    const [converting, setConverting] = useState(false);
+
+    // convert POSTs a pin/unpin and reports the truthful Result (both mutate the main
+    // Caddyfile via the same backup → adapt → diff-assert → reload discipline).
+    const convert = async (path: "pin" | "unpin", body: object, host: string, verb: string) => {
+        setConverting(true);
+        try {
+            const res = await fetch(`/post/vhost/${path}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (data.error) {
+                toast.error(summarizeError(String(data.error)));
+            } else if (data.reloaded) {
+                toast.success(`${host} ${verb}`);
+            } else {
+                toast.error(`Not ${verb}`);
+            }
+            setPinRow(null);
+            setUnpinRow(null);
+            onSaved();
+        } catch (err) {
+            toast.error(`${verb} failed: ${String(err)}`);
+        } finally {
+            setConverting(false);
+        }
+    };
 
     const removePinnedBlock = async (p: PinnedRow) => {
         setRemoving(true);
@@ -121,15 +152,24 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                     </td>
                                     <td className="px-4 py-2.5 text-right">
                                         {p.drift === "unmanaged" ? (
-                                            <button
-                                                onClick={() => setRemoveBlock(p)}
-                                                className="ml-auto inline-flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                                title="Remove this stale static block from the main Caddyfile"
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </button>
+                                            <div className="flex justify-end gap-1">
+                                                <button
+                                                    onClick={() => setUnpinRow(p)}
+                                                    className="inline-flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                                                    title="Unpin — convert this static block back into a managed system host"
+                                                >
+                                                    <PinOff className="h-3.5 w-3.5" />
+                                                </button>
+                                                <button
+                                                    onClick={() => setRemoveBlock(p)}
+                                                    className="inline-flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                                    title="Remove this stale static block from the main Caddyfile"
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
                                         ) : (
-                                            <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block)" />
+                                            <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block — pin-permanent)" />
                                         )}
                                     </td>
                                 </tr>
@@ -151,6 +191,15 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                             <button onClick={() => setEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Edit">
                                                 <Pencil className="h-3.5 w-3.5" />
                                             </button>
+                                            {r.isActive ? (
+                                                <button
+                                                    onClick={() => setPinRow(r)}
+                                                    className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                                                    title="Pin — freeze this route as a static block in the main Caddyfile (off the reconcile path)"
+                                                >
+                                                    <Pin className="h-3.5 w-3.5" />
+                                                </button>
+                                            ) : null}
                                             <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable">
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </button>
@@ -207,6 +256,54 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                         <Button variant="destructive" size="sm" className="gap-2" onClick={() => removePinnedBlock(removeBlock)} disabled={removing}>
                             {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             Remove block
+                        </Button>
+                    </div>
+                </Modal>
+            ) : null}
+
+            {pinRow ? (
+                <Modal onClose={() => (converting ? null : setPinRow(null))} title={`Pin ${pinRow.host}?`}>
+                    <p className="text-xs text-muted-foreground">
+                        Pinning freezes this route as a hand-written <code>reverse_proxy</code> block in the main Caddyfile and removes its
+                        database row — taking it <b>off the reconcile path</b> entirely. It backs the Caddyfile up, adds the block, re-validates
+                        with <code>caddy adapt</code>, asserts the served host set is unchanged and the dashboard/panel survive, then reloads
+                        (aborting + restoring on any mismatch). It lands as <b className="text-amber-600 dark:text-amber-400">Pinned · unmanaged</b>.
+                        Gated by live reconcile.
+                    </p>
+                    <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                        {pinRow.host} → {pinRow.target}
+                    </p>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setPinRow(null)} disabled={converting}>
+                            Cancel
+                        </Button>
+                        <Button size="sm" className="gap-2" onClick={() => convert("pin", { id: pinRow.id }, pinRow.host, "pinned")} disabled={converting}>
+                            {converting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                            Pin route
+                        </Button>
+                    </div>
+                </Modal>
+            ) : null}
+
+            {unpinRow ? (
+                <Modal onClose={() => (converting ? null : setUnpinRow(null))} title={`Unpin ${unpinRow.host}?`}>
+                    <p className="text-xs text-muted-foreground">
+                        Unpinning converts this static block back into a <b>managed system host</b>: it removes the block, renders a
+                        reconcile-owned vhost file for the same upstream, re-validates with <code>caddy adapt</code>, asserts the served host
+                        set is unchanged and the dashboard/panel survive, reloads (aborting + restoring on any mismatch), then adopts it as a
+                        <code> platform_hosts</code> row. Gated by live reconcile.
+                    </p>
+                    <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                        {unpinRow.host}
+                        {unpinRow.upstreams && unpinRow.upstreams.length > 0 ? ` → ${unpinRow.upstreams.join(", ")}` : ""}
+                    </p>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setUnpinRow(null)} disabled={converting}>
+                            Cancel
+                        </Button>
+                        <Button size="sm" className="gap-2" onClick={() => convert("unpin", { host: unpinRow.host }, unpinRow.host, "unpinned")} disabled={converting}>
+                            {converting ? <Loader2 className="h-4 w-4 animate-spin" /> : <PinOff className="h-4 w-4" />}
+                            Unpin route
                         </Button>
                     </div>
                 </Modal>

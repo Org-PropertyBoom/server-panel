@@ -544,6 +544,78 @@ func (v *VhostEngineService) RemovePinnedBlock(ctx context.Context, host string)
 	return v.engine.RemoveStaticBlock(ctx, host)
 }
 
+// PinRoute converts an Active platform_hosts row into a hand-written static
+// Caddyfile block (the "unmanaged pinned" representation). Engine-first: the
+// static block is added + folder file removed + validated + reloaded BEFORE the DB
+// row is dropped, so no window ever serves the host from neither source. If the DB
+// delete fails afterwards the host still serves from the new block — surfaced as a
+// warning to clean up (an active row would otherwise duplicate the block on a
+// reconcile, which adapt refuses fail-safe). GATED.
+func (v *VhostEngineService) PinRoute(ctx context.Context, id int64) (reconcile.Result, error) {
+	if !v.LiveReloadEnabled() {
+		return reconcile.Result{Error: liveGateMsg}, errLiveGate
+	}
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		return reconcile.Result{Error: friendlyDBError(err)}, err
+	}
+	defer conn.Close()
+	snap, err := conn.ReadSnapshot(ctx)
+	if err != nil {
+		return reconcile.Result{Error: friendlyDBError(err)}, err
+	}
+	var host, target string
+	found := false
+	for _, r := range snap.Rows {
+		if r.Table == "platform_hosts" && r.ID == id && r.Desired() {
+			host, target, found = r.Host, r.Target, true
+			break
+		}
+	}
+	if !found {
+		return reconcile.Result{Error: "active system host not found"}, errors.New("system host not found")
+	}
+	res, err := v.engine.PinStaticBlock(ctx, host, target)
+	if err != nil {
+		return res, err
+	}
+	if derr := conn.DeleteSystemHost(ctx, id); derr != nil {
+		res.Error = "pinned + reloaded, but removing the DB row failed — delete this row so a reconcile doesn't conflict with the new static block: " + derr.Error()
+	}
+	return res, nil
+}
+
+// UnpinRoute converts a "Pinned · unmanaged" static block back into a managed
+// platform_hosts row. Engine-first: the block is removed + folder file rendered +
+// validated + reloaded (the host now serves from an orphan folder file), THEN the
+// DB row is created to adopt it. REFUSED on protected domains by the engine. If the
+// DB create fails the host still serves (as an orphan folder file) — surfaced so the
+// operator re-adds it under System. GATED.
+func (v *VhostEngineService) UnpinRoute(ctx context.Context, host string) (reconcile.Result, error) {
+	if !v.LiveReloadEnabled() {
+		return reconcile.Result{Error: liveGateMsg}, errLiveGate
+	}
+	res, target, err := v.engine.UnpinStaticBlock(ctx, host)
+	if err != nil {
+		return res, err
+	}
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		res.Error = "unpinned + reloaded, but opening the DB to adopt the route failed (it now serves as an orphan folder file — re-add it under System): " + friendlyDBError(err)
+		return res, nil
+	}
+	defer conn.Close()
+	in, verr := caddydb.ValidateSystemHost(caddydb.SystemHostInput{Host: host, Target: target, IsActive: true}, v.guard())
+	if verr != nil {
+		res.Error = "unpinned + reloaded, but the adopted route is invalid (" + verr.Error() + ") — re-add it under System"
+		return res, nil
+	}
+	if _, cerr := conn.CreateSystemHost(ctx, in); cerr != nil {
+		res.Error = "unpinned + reloaded, but creating the DB row failed (" + cerr.Error() + ") — the host serves as an orphan folder file; re-add it under System"
+	}
+	return res, nil
+}
+
 // SaveSystemHost creates (ID==0) or updates a platform_hosts row. This is a DB
 // write only — the change becomes live on the next Reconcile.
 func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostForm) error {

@@ -249,6 +249,48 @@ func PinnedRemoveHandler(sessions *services.SessionService, engine *services.Vho
 	})
 }
 
+// PinHandler converts an Active platform_hosts row into a static Caddyfile block
+// (adds the block + validated reload, then drops the DB row). GATED; the truthful
+// Result is returned either way.
+func PinHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			ID int64 `json:"id"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.ID == 0 {
+			http.Error(w, "id is required", http.StatusBadRequest)
+			return
+		}
+		res, _ := engine.PinRoute(r.Context(), body.ID)
+		writeJSON(w, res)
+	})
+}
+
+// UnpinHandler converts a "Pinned · unmanaged" static block back into a managed
+// platform_hosts row (removes the block + validated reload, then adopts the DB
+// row). REFUSED on protected domains. GATED; the truthful Result is returned either way.
+func UnpinHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host string `json:"host"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Host) == "" {
+			http.Error(w, "host is required", http.StatusBadRequest)
+			return
+		}
+		res, _ := engine.UnpinRoute(r.Context(), body.Host)
+		writeJSON(w, res)
+	})
+}
+
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {

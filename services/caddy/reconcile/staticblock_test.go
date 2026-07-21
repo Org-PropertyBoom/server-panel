@@ -56,6 +56,29 @@ func TestBlockMatchesHost_ExactTokenOnly(t *testing.T) {
 	}
 }
 
+func TestSymmetricDiff(t *testing.T) {
+	// A pin/unpin only moves a host's source → the served set is identical → empty diff.
+	same := symmetricDiff(
+		map[string]bool{"a.com": true, "b.com": true},
+		map[string]bool{"b.com": true, "a.com": true},
+	)
+	if len(same) != 0 {
+		t.Errorf("identical sets must diff empty, got %v", same)
+	}
+	// A dropped host and an added host both surface (order-independent).
+	got := symmetricDiff(
+		map[string]bool{"a.com": true, "b.com": true},
+		map[string]bool{"a.com": true, "c.com": true},
+	)
+	set := map[string]bool{}
+	for _, h := range got {
+		set[h] = true
+	}
+	if len(got) != 2 || !set["b.com"] || !set["c.com"] {
+		t.Errorf("expected {b.com, c.com}, got %v", got)
+	}
+}
+
 func TestAssertOnlyTargetDropped(t *testing.T) {
 	before := map[string]bool{"a.com": true, "b.com": true, "cp.propertyweb.co": true, "app.propertyboom.co": true}
 	protected := []string{"cp.propertyweb.co", "app.propertyboom.co"}
