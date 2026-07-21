@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -58,10 +60,11 @@ func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, err
 		return *s.cacheResult, nil
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.versionURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(s.versionURL), nil)
 	if err != nil {
 		return UpdateCheckResult{}, err
 	}
+	noStore(request)
 
 	response, err := s.httpClient.Do(request)
 	if err != nil {
@@ -114,10 +117,11 @@ func (s *UpdateService) SelfUpdate(ctx context.Context) (UpdateResult, error) {
 		return UpdateResult{}, ErrUpdateRequiresRoot
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.binaryURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(s.binaryURL), nil)
 	if err != nil {
 		return UpdateResult{}, err
 	}
+	noStore(request)
 
 	response, err := s.httpClient.Do(request)
 	if err != nil {
@@ -171,6 +175,24 @@ func (s *UpdateService) SelfUpdate(ctx context.Context) (UpdateResult, error) {
 		Restart:     true,
 		UpdatedAt:   time.Now(),
 	}, nil
+}
+
+// cacheBust appends a unique query param so GitHub's raw CDN (Fastly, max-age=300)
+// treats each fetch as a distinct object and revalidates against origin — otherwise
+// a fresh dist push isn't visible for up to ~5 minutes.
+func cacheBust(rawURL string) string {
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + "_cb=" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+// noStore asks any intermediary not to serve a cached copy (belt-and-suspenders
+// alongside the cache-busting query).
+func noStore(r *http.Request) {
+	r.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	r.Header.Set("Pragma", "no-cache")
 }
 
 func updateInstallPath() string {
