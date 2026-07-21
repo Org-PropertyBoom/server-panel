@@ -113,8 +113,13 @@ func isMissingTable(err error) bool {
 	return errors.As(err, &me) && me.Number == 1146
 }
 
+// readWebsiteHosts reads the tenant host→stack pivot. website_hosts is LEAN in the
+// current propertyteam schema (MyApp\Model\WebsiteHosts extends ModelBase): it has
+// NO is_active and NO deleted_at — a row is "desired" simply by existing (removal
+// is a hard delete so a freed host can be reused immediately). So every row read is
+// active and non-deleted; the upstream is derived from server_stack, not a column.
 func (d *DB) readWebsiteHosts(ctx context.Context) ([]Row, error) {
-	const q = `SELECT id, host, server_stack, is_active, deleted_at FROM website_hosts`
+	const q = `SELECT id, host, server_stack FROM website_hosts`
 	rows, err := d.sql.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("read website_hosts: %w", err)
@@ -125,14 +130,12 @@ func (d *DB) readWebsiteHosts(ctx context.Context) ([]Row, error) {
 	for rows.Next() {
 		var id int64
 		var host, stack string
-		var active int
-		var deletedAt sql.NullTime
-		if err := rows.Scan(&id, &host, &stack, &active, &deletedAt); err != nil {
+		if err := rows.Scan(&id, &host, &stack); err != nil {
 			return nil, fmt.Errorf("scan website_hosts: %w", err)
 		}
 		out = append(out, Row{
 			ID: id, Table: "website_hosts", Host: host, ServerStack: stack,
-			IsActive: active != 0, SoftDeleted: deletedAt.Valid,
+			IsActive: true, SoftDeleted: false,
 		})
 	}
 	return out, rows.Err()
