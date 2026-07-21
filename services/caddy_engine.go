@@ -251,16 +251,32 @@ func (v *VhostEngineService) DeleteRedirect(ctx context.Context, id int64) error
 	return conn.DeleteRedirect(ctx, id)
 }
 
-// PruneOrphan removes one orphan `<host>.caddy` file (refusing protected/wildcard),
-// then reconciles to validate + reload. GATED.
+// PruneOrphan removes one orphan `<host>.caddy` file, then reconciles. GATED.
 func (v *VhostEngineService) PruneOrphan(ctx context.Context, name string) (reconcile.Result, error) {
+	return v.PruneOrphans(ctx, []string{name})
+}
+
+// PruneOrphans removes the given orphan `<host>.caddy` files (each refusing
+// protected/wildcard), then reconciles ONCE to validate + reload. Every removed
+// file is recorded as an intentional removal so the drop-guard allows it. GATED.
+func (v *VhostEngineService) PruneOrphans(ctx context.Context, names []string) (reconcile.Result, error) {
 	if !v.LiveReloadEnabled() {
 		return reconcile.Result{Error: liveGateMsg}, errLiveGate
 	}
-	if _, err := v.engine.RemoveFile(name); err != nil {
-		return reconcile.Result{Error: err.Error()}, err
+	if len(names) == 0 {
+		return reconcile.Result{Error: "no orphan files given"}, errors.New("no orphan files given")
 	}
-	return v.Reconcile(ctx)
+	var refused []string
+	for _, name := range names {
+		if _, err := v.engine.RemoveFile(name); err != nil {
+			refused = append(refused, name+" ("+err.Error()+")")
+		}
+	}
+	res, err := v.Reconcile(ctx)
+	if len(refused) > 0 && res.Error == "" {
+		res.Error = fmt.Sprintf("skipped %d file(s): %s", len(refused), strings.Join(refused, "; "))
+	}
+	return res, err
 }
 
 func (v *VhostEngineService) openDB(ctx context.Context) (*caddydb.DB, error) {

@@ -164,13 +164,19 @@ func OrphanPruneHandler(sessions *services.SessionService, engine *services.Vhos
 			return
 		}
 		var body struct {
-			Name string `json:"name"`
+			Name  string   `json:"name"`
+			Names []string `json:"names"`
 		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		names := body.Names
+		if len(names) == 0 && body.Name != "" {
+			names = []string{body.Name}
+		}
+		if len(names) == 0 {
+			http.Error(w, "name or names is required", http.StatusBadRequest)
 			return
 		}
-		res, _ := engine.PruneOrphan(r.Context(), body.Name)
+		res, _ := engine.PruneOrphans(r.Context(), names)
 		writeJSON(w, res)
 	})
 }
