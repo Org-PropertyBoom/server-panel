@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Remove the stack-facing read bridge (obviated — stacks dropped their vhost views)
+
+- Goal (hub): the stacks are removing their dashboard vhost views, so the read-only rendered-status feed has no consumers. Remove it cleanly (zero orphans), keep everything the panel's OWN UI uses.
+- REMOVED (bridge-only): `RenderedHandler` + the `GET /post/vhost/rendered` route; the whole `intranetOnly`/`sourceIntranetOnly`/`isIntranet`/`parseIntranetCIDRs`/`intranetNets` gate (only that route used it) + the now-unused `os` import + the `VHOST_INTRANET_CIDRS` env; `RenderedStatus()` + `RenderedStatusResult` + `RenderedHostStatus` + `renderedStatusVersion` (caddy_engine.go). server-panel now has NO no-session intranet surface at all — every /post/* route is session-authed + same-origin again.
+- KEPT (panel-used, verified by grep before removal): `Engine.RenderedHosts()` — used by `PinnedFromCaddyfile` (pinned-from-Caddyfile drift); `db.Row.WebsiteID/WebsiteName` + the `websites` LEFT JOIN — used by `RedirectTargets` (redirect combobox); `StateHandler`/`State` (the /vhosts drift view), `RedirectTargetsHandler` (session-authed combobox), and all reconcile/CRUD/gate/prune/annotate handlers.
+- Important decisions: not part of this cleanup — the model-A reconcile TRIGGER (write-side, stack signals a reconcile) was never built, so nothing to keep/remove there; it stays a future item.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet ./services/... ./routes/...` 0; `go test ./services/caddy/...` pass; no client refs to the removed feed.
+
 ### 2026-07-21 - Tenant "Manage in stack ↗" deep-link (hub ruling: Tenant stays read-only)
 
 - Goal: Owner asked whether to prune vhost + delete website_hosts from server-panel. Hub RULED NO — website_hosts is stack-owned (Model A single writer); server-panel writing/deleting it = two writers = the coupling that was removed, and server-panel lacks the website business logic (primary-domain, UNIQUE(server_stack,host) reuse). The correct delete flow already works (delete in the stack dashboard → KnownHostsFile detects the removal → reconcile removes the vhost). Convenience instead: a per-row deep-link to the stack dashboard.

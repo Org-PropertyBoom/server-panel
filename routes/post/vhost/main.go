@@ -229,16 +229,6 @@ func RedirectTargetsHandler(sessions *services.SessionService, engine *services.
 	})
 }
 
-// RenderedHandler is the READ-ONLY rendered-vhost status feed for the stack apps.
-// No session/token — the route is gated to loopback + the Docker bridge by
-// intranetOnly. It reports server-panel's own view (files it owns + the shared DB
-// it reads), so the stacks never query Caddy. Never mutates.
-func RenderedHandler(engine *services.VhostEngineService) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, engine.RenderedStatus(r.Context()))
-	})
-}
-
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {
