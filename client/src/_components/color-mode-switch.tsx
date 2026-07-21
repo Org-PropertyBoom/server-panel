@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
+import { useApp } from "_contexts/app";
 import {
     applyColorMode,
     type ColorMode,
     getColorMode,
     getStoredColorMode,
     getSystemColorMode,
-    toggleColorMode,
 } from "_utils/color-mode";
 
 export default function ColorModeSwitch() {
+    const { setDefaultColorMode } = useApp();
     const [colorMode, setCurrentColorMode] = useState<ColorMode>(getColorMode);
 
     useEffect(() => {
@@ -48,7 +49,12 @@ export default function ColorModeSwitch() {
             type="button"
             aria-label={`Switch to ${nextColorMode} mode`}
             title={`Switch to ${nextColorMode} mode`}
-            onClick={() => setCurrentColorMode(toggleColorMode(colorMode))}
+            onClick={() => {
+                // Persist to BOTH localStorage and the server setting (general_color_mode)
+                // so a refresh — which re-applies the server setting — can't clobber it.
+                setDefaultColorMode(nextColorMode);
+                setCurrentColorMode(nextColorMode);
+            }}
         >
             {colorMode === "dark" ? (
                 <Sun className="h-4 w-4" aria-hidden="true" />
