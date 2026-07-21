@@ -389,6 +389,22 @@ func (e *Engine) since(start time.Time) int64 {
 	return e.now().Sub(start).Milliseconds()
 }
 
+// PhysicalHosts returns the hostnames that currently have a `<host>.caddy` file on
+// disk (sorted) — server-panel's authoritative "physical vhosts" list, read from
+// the folder it owns, never from Caddy. Read-only.
+func (e *Engine) PhysicalHosts() ([]string, error) {
+	names, err := e.dir.ListNames()
+	if err != nil {
+		return nil, err
+	}
+	hosts := make([]string, 0, len(names))
+	for _, n := range names {
+		hosts = append(hosts, render.HostFromFileName(n))
+	}
+	sort.Strings(hosts)
+	return hosts, nil
+}
+
 // RemoveFile deletes one `<host>.caddy` file — the explicit operator-driven
 // "prune this orphan" action. It REFUSES a protected file (dashboard/panel domain,
 // or a wildcard). It does NOT reconcile; the caller reconciles after so the removal

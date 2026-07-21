@@ -217,6 +217,75 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 	return m
 }
 
+// PhysicalHostStatus is one host's DB-vs-file standing for stack consumption.
+type PhysicalHostStatus struct {
+	Host    string `json:"host"`
+	Kind    string `json:"kind,omitempty"` // tenant | system | redirect | orphan
+	Status  string `json:"status"`         // in_sync | will_write | will_remove | orphan
+	HasFile bool   `json:"hasFile"`        // a matching <host>.caddy exists on disk
+}
+
+// PhysicalStatusResult is the read-only feed the stack apps consume to badge their
+// own DB-vhost tables — "does this DB vhost have a matching physical vhost file?"
+// It is sourced entirely from server-panel (the folder it owns + the shared DB it
+// reads), NEVER from Caddy. PhysicalHosts is always present (a folder read needs no
+// DB); Hosts carries the richer per-host status when a data source is selected.
+type PhysicalStatusResult struct {
+	VhostsDir     string               `json:"vhostsDir"`
+	Source        string               `json:"source,omitempty"`
+	PhysicalHosts []string             `json:"physicalHosts"`
+	Hosts         []PhysicalHostStatus `json:"hosts"`
+	Error         string               `json:"error,omitempty"`
+}
+
+// PhysicalStatus reports the physical vhosts on disk and, when a host-source is
+// configured, each host's DB-vs-file status. Read-only; failure modes are returned
+// in the result (the physical list still comes back even if the DB join fails).
+func (v *VhostEngineService) PhysicalStatus(ctx context.Context) PhysicalStatusResult {
+	out := PhysicalStatusResult{VhostsDir: v.cfg.VhostsDir, PhysicalHosts: []string{}, Hosts: []PhysicalHostStatus{}}
+
+	phys, err := v.engine.PhysicalHosts()
+	if err != nil {
+		out.Error = "vhosts folder: " + err.Error()
+		return out
+	}
+	out.PhysicalHosts = phys
+
+	name := v.settings.Get("vhost_data_source", "")
+	if name == "" {
+		return out // physical list only — no data source to compute per-host status
+	}
+	out.Source = name
+
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		out.Error = friendlyDBError(err)
+		return out
+	}
+	defer conn.Close()
+	snap, err := conn.ReadSnapshot(ctx)
+	if err != nil {
+		out.Error = friendlyDBError(err)
+		return out
+	}
+	snap.ReadAt = time.Now()
+	dry, err := v.engine.DryRun(snap)
+	if err != nil {
+		out.Error = "vhosts folder: " + err.Error()
+		return out
+	}
+	physSet := make(map[string]bool, len(phys))
+	for _, h := range phys {
+		physSet[h] = true
+	}
+	for _, h := range dry.Hosts {
+		out.Hosts = append(out.Hosts, PhysicalHostStatus{
+			Host: h.Hostname, Kind: h.Kind, Status: h.Status, HasFile: physSet[h.Hostname],
+		})
+	}
+	return out
+}
+
 // Reconcile applies desired state: render → validate (adapt) → backup → reload.
 // GATED: refuses unless CADDY_LIVE_RELOAD is on.
 func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, error) {

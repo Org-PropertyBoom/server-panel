@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	postapis "ppt/server-panel/routes/post/apis"
@@ -85,6 +86,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("DELETE /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/orphan/prune", postOnly(deps.Startup, postvhost.OrphanPruneHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/gate", postOnly(deps.Startup, postvhost.GateHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("GET /post/vhost/physical", intranetOnly(deps.Startup, postvhost.PhysicalHandler(deps.VhostEngine)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))
@@ -115,6 +117,59 @@ func authenticatedSystemHandler(sessions *services.SessionService, system *servi
 
 func postOnly(startup services.StartupConfig, next http.Handler) http.Handler {
 	return sameDomainOrLocalhostOnly(rootOnly(startup, next))
+}
+
+// intranetOnly gates a READ-ONLY route to loopback + the Docker-bridge source IPs
+// (no session/token) so co-located stack apps can read it server-to-server, while
+// it stays unreachable from the public internet. Still root-only (the data comes
+// from the root-owned vhosts folder). Use ONLY for non-mutating endpoints.
+func intranetOnly(startup services.StartupConfig, next http.Handler) http.Handler {
+	return sourceIntranetOnly(rootOnly(startup, next))
+}
+
+func sourceIntranetOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isIntranet(remoteHost(r.RemoteAddr)) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// intranetNets defaults to loopback + the Docker bridge range (172.16.0.0/12 covers
+// the default bridge and user-defined networks). Override with VHOST_INTRANET_CIDRS
+// (comma-separated CIDRs).
+var intranetNets = parseIntranetCIDRs()
+
+func parseIntranetCIDRs() []*net.IPNet {
+	spec := os.Getenv("VHOST_INTRANET_CIDRS")
+	if strings.TrimSpace(spec) == "" {
+		spec = "127.0.0.0/8,::1/128,172.16.0.0/12"
+	}
+	var nets []*net.IPNet
+	for _, c := range strings.Split(spec, ",") {
+		if c = strings.TrimSpace(c); c == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}
+
+func isIntranet(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range intranetNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func rootOnly(startup services.StartupConfig, next http.Handler) http.Handler {

@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Read-only physical-vhost status feed for the stacks (intranet-gated); reconcile-hook dropped
+
+- Goal: let the stack apps (pc/la/go dashboards) show a badge — "does this DB vhost have a matching PHYSICAL vhost file?" — sourced from SERVER-PANEL (the authority on the files it owns), NEVER from Caddy. The Owner explicitly KILLED the stack reconcile-hook idea (no endpoint that lets the stacks trigger anything); stacks get read-only status only. Transport (Owner-chosen): loopback + Docker-bridge source IPs, NO token.
+- Files changed: `reconcile.Engine.PhysicalHosts()` lists the vhosts folder → sorted hostnames (server-panel's authoritative physical list; a folder read, no Caddy, no DB) (+ test). `services/caddy_engine.go` `PhysicalStatus(ctx)` → `PhysicalStatusResult{vhostsDir, source, physicalHosts[], hosts[]}`: physicalHosts always returned (folder-only); when a host-source is configured it adds per-host `{host, kind, status(in_sync|will_write|will_remove|orphan), hasFile}` from DryRun. New read-only `GET /post/vhost/physical` (`PhysicalHandler`, no session/token) gated by `intranetOnly` = `sourceIntranetOnly(rootOnly(...))` — allows only loopback + Docker-bridge CIDRs (default `127.0.0.0/8,::1/128,172.16.0.0/12`, override `VHOST_INTRANET_CIDRS`), unreachable from the public internet. `routes/post/main.go` gains the gate + CIDR parsing.
+- Important decisions: strictly READ-ONLY — the endpoint only reads the folder + the shared DB server-panel already reads; it cannot mutate. The reconcile-hook (a stacks-trigger-reconcile mutation endpoint) is DROPPED permanently, which also removes the cross-origin-mutation concern; the only cross-origin surface now is this read-only, IP-gated status feed. Still root-only (the data comes from the root-owned folder). The stacks repoint their "ask Caddy" code to this endpoint — that's their side, not done here.
+- Validation: `go test ./services/caddy/...` pass (incl. PhysicalHosts); `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; gofmt clean.
+- Known follow-up: stack-side change (pc/la/go stop calling Caddy, call GET /post/vhost/physical instead) is owned by the stack agents. No parked items remain on server-panel's side.
+
 ### 2026-07-21 - Live-reconcile gate: runtime UI toggle (was env-only) + update cache-bust
 
 - Goal (gate toggle): make arming/disarming the live-reconcile gate a one-click UI switch instead of an env edit + restart, WITHOUT weakening the coded safety net. Ships DISARMED (seeds from CADDY_LIVE_RELOAD which is unset → off), so building it arms nothing.
