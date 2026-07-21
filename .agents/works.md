@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - System host Backend field → combobox (container OR host:port)
+
+- Goal (Owner: "follow the hub"): the backend abstraction should honestly cover "container OR host process". The System host backend picker becomes a single combobox — pick a running container (port auto-fills) OR type any host:port (a host-level service like server-panel :2205). Relabel "Upstream" → "Backend". (Also: the Architect's ruling to NOT build a host-services/systemd inventory — noted, nothing built; server-panel-the-host-service is already the pinned cp.propertyweb.co row.)
+- Files changed: `client/.../vhosts/system.tsx` HostForm — replaced the `<select>` (containers + "Custom host:port…" reveal) with a type-ahead combobox (same pattern as the redirect-target one): a single input, filtered container suggestions on focus/type, pick fills the container's `127.0.0.1:port`, free-type any host:port stays. Field relabeled "Backend" with hint "pick a container or type a host:port for a host-level service". On save, server_stack is labeled from a matching container else "custom" (platform_hosts.target already allows any host:port — this just lets the UX express it). Removed the now-unused CUSTOM sentinel.
+- Important decisions: no backend/model change — platform_hosts.target already accepts any host:port; this is purely the form UX. server_stack stays a free label.
+- Validation: `tsc --noEmit` 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` 0.
+
 ### 2026-07-21 - Redirect target combobox (tenant-domain suggestions) + proper link styling
 
 - Goal: (1) the redirect Target URL becomes a type-ahead combobox — free-type OR pick a tenant domain; (2) fix the clickable links to actually LOOK like links (Owner: color is the primary cue, not just hover-underline).

@@ -5,8 +5,6 @@ import { toast } from "sonner";
 import { Button } from "_layouts/_components/ui/button";
 import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, type Upstream, ViewHeader } from "./shared";
 
-const CUSTOM = "__custom__";
-
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
 // The pinned domains (derived from the ACTUAL Caddyfile) show as read-only rows on
@@ -159,22 +157,29 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
 
 function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstreams: Upstream[]; onClose: () => void; onSaved: () => void }) {
     const [host, setHost] = useState(row.host);
-    const matched = upstreams.find((u) => u.target === row.target);
-    const [sel, setSel] = useState(row.target ? (matched ? row.target : CUSTOM) : (upstreams[0]?.target ?? CUSTOM));
-    const [customTarget, setCustomTarget] = useState(matched ? "" : row.target);
+    const [target, setTarget] = useState(row.target);
     const [isActive, setIsActive] = useState(row.isActive);
     const [saving, setSaving] = useState(false);
+    const [showSuggest, setShowSuggest] = useState(false);
 
-    const target = sel === CUSTOM ? customTarget.trim() : sel;
-    const serverStack = sel === CUSTOM ? "custom" : (upstreams.find((u) => u.target === sel)?.name ?? "system");
+    // Backend combobox: type a host:port OR pick a running container (port auto-fills).
+    const q = target.toLowerCase().trim();
+    const suggestions = upstreams
+        .filter((u) => q === "" || u.target.toLowerCase().includes(q) || u.name.toLowerCase().includes(q))
+        .slice(0, 8);
 
     const save = async () => {
         setSaving(true);
         try {
+            const t = target.trim();
+            // Label the service from a matching container, else a generic "custom" (a
+            // host-level backend like server-panel :2205). platform_hosts.target takes
+            // any host:port; server_stack is just a label here.
+            const serverStack = upstreams.find((u) => u.target === t)?.name ?? "custom";
             const res = await fetch("/post/vhost/system", {
                 method: row.id === 0 ? "POST" : "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target, isActive }),
+                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target: t, isActive }),
             });
             if (!res.ok) {
                 toast.error((await res.text()).trim() || res.statusText);
@@ -195,27 +200,48 @@ function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstre
                 <Field label="Hostname">
                     <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="dbs.example.com" className={inputCls} autoFocus />
                 </Field>
-                <Field label="Upstream" hint="The running container this host reverse-proxies to (synced from this server), or a custom host:port.">
-                    <select value={sel} onChange={(e) => setSel(e.target.value)} className={inputCls}>
-                        {upstreams.map((u) => (
-                            <option key={u.target} value={u.target}>
-                                {u.name} — {u.target}
-                            </option>
-                        ))}
-                        <option value={CUSTOM}>Custom host:port…</option>
-                    </select>
+                <Field label="Backend" hint="Pick a running container (port auto-fills), or type a host:port for a host-level service (e.g. 127.0.0.1:2205).">
+                    <div className="relative">
+                        <input
+                            value={target}
+                            onChange={(e) => {
+                                setTarget(e.target.value);
+                                setShowSuggest(true);
+                            }}
+                            onFocus={() => setShowSuggest(true)}
+                            onBlur={() => window.setTimeout(() => setShowSuggest(false), 120)}
+                            placeholder="pick a container or type 127.0.0.1:9001"
+                            className={inputCls}
+                            autoComplete="off"
+                        />
+                        {showSuggest && suggestions.length > 0 ? (
+                            <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+                                {suggestions.map((u) => (
+                                    <li key={u.target}>
+                                        <button
+                                            type="button"
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setTarget(u.target);
+                                                setShowSuggest(false);
+                                            }}
+                                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-muted"
+                                        >
+                                            <span className="font-medium text-foreground">{u.name}</span>
+                                            <span className="font-mono text-[11px] text-muted-foreground">{u.target}</span>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : null}
+                    </div>
                 </Field>
-                {sel === CUSTOM ? (
-                    <Field label="Custom target" hint="Upstream host:port the reverse_proxy dials.">
-                        <input value={customTarget} onChange={(e) => setCustomTarget(e.target.value)} placeholder="127.0.0.1:9001" className={inputCls} />
-                    </Field>
-                ) : null}
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                     <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
                     Active (rendered to a vhost file)
                 </label>
             </div>
-            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target} />
+            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target.trim()} />
         </Modal>
     );
 }
