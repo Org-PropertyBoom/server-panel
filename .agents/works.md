@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - VHosts cockpit UI + host-source picker (read-only)
+
+- Goal: Build the read-only VHosts drift cockpit (per the approved mockup) over the Phase-1 engine, and let the operator pick which Data Source is the host-source.
+- Files changed: enriched `reconcile.FileOp` with Kind/Stack/Upstream + `DryRunResult.Hosts []HostRow` (built in `DryRun`); `settings_validation.go` allowlists `vhost_data_source`; replaced `client/.../routes/vhosts/index.tsx` (was the caddy-adapt viewer) with the cockpit — summary strip (hosts on disk / pending / orphans + in-sync/drift badge), a host-source `<select>` that saves the `vhost_data_source` setting and refetches, and a status-chipped/row-tinted host table (in_sync/will_write/will_remove/orphan) + skipped-rows panel.
+- Important decisions: cockpit is root-only (reads `/post/vhost/state`); non-root sees a "root session" notice. Strictly READ-ONLY — a clear "applying changes is a gated step, not yet enabled" banner; no reconcile/apply button (Phase 2). Host-source persisted via the existing `PUT /post/settings`.
+- Validation: `go test ./services/caddy/...` pass; `tsc --noEmit` exit 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` exit 0.
+- Known follow-up: Phase 2 live reconcile+reload (caddyctl, gated) turns the read-only preview into an apply flow (Confirm & apply + safety bar) + orphan adopt/prune + platform-table CRUD.
+
 ### 2026-07-21 - Caddy vhost engine — Phase 1 (inert, read-only drift)
 
 - Goal: Port CaddyDash's reconcile engine into server-panel, INERT: read-only drift only, NO live Caddy reload (that stays a separately-gated Phase 2 needing the Owner's per-activation go-ahead).

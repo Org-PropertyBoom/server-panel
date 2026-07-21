@@ -7,6 +7,7 @@ import (
 
 	"ppt/server-panel/services/caddy/config"
 	"ppt/server-panel/services/caddy/db"
+	"ppt/server-panel/services/caddy/render"
 	"ppt/server-panel/services/caddy/vhostfs"
 )
 
@@ -42,12 +43,23 @@ type FileState struct {
 	Contents string `json:"contents"`
 }
 
+// HostRow is one host as the cockpit renders it: its class, upstream, and the
+// status a reconcile WOULD produce (never applied here).
+type HostRow struct {
+	Hostname string `json:"hostname"`
+	Kind     string `json:"kind"`               // "tenant" | "system" | "redirect" | "orphan"
+	Stack    string `json:"stack,omitempty"`    // server_stack for tenant/system
+	Upstream string `json:"upstream,omitempty"` // reverse_proxy upstream or redirect URL
+	Status   string `json:"status"`             // "in_sync" | "will_write" | "will_remove" | "orphan"
+}
+
 // DryRunResult is the read-only drift view: what a reconcile WOULD do, computed
 // without touching anything. would_write = desired files whose on-disk bytes
 // differ (or are missing); would_remove / orphans / skips come from the plan.
 type DryRunResult struct {
 	VhostsDir     string         `json:"vhosts_dir"`
 	Files         []FileState    `json:"files"`
+	Hosts         []HostRow      `json:"hosts"`
 	DesiredCount  int            `json:"desired_count"`
 	WouldWrite    []string       `json:"would_write"`
 	WouldRemove   []string       `json:"would_remove"`
@@ -101,6 +113,24 @@ func (e *Engine) DryRun(snap db.Snapshot) (DryRunResult, error) {
 	}
 	for _, f := range files {
 		out.Files = append(out.Files, FileState{Name: f.Name, Size: len(f.Contents), Contents: f.Contents})
+	}
+
+	// Per-host cockpit rows: desired hosts (in_sync/will_write), plus removals and
+	// orphans (never applied here — just reported).
+	for _, w := range plan.Writes {
+		status := "in_sync"
+		if cur, ok := onDisk[w.Name]; !ok || cur != w.Contents {
+			status = "will_write"
+		}
+		out.Hosts = append(out.Hosts, HostRow{
+			Hostname: w.Host, Kind: w.Kind, Stack: w.Stack, Upstream: w.Upstream, Status: status,
+		})
+	}
+	for _, name := range plan.Removes {
+		out.Hosts = append(out.Hosts, HostRow{Hostname: render.HostFromFileName(name), Status: "will_remove"})
+	}
+	for _, name := range plan.Orphans {
+		out.Hosts = append(out.Hosts, HostRow{Hostname: render.HostFromFileName(name), Kind: "orphan", Status: "orphan"})
 	}
 	return out, nil
 }

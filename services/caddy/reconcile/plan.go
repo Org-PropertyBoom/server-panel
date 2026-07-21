@@ -32,6 +32,9 @@ type FileOp struct {
 	Name     string // "<host>.caddy"
 	Host     string
 	Contents string
+	Kind     string // display class: "tenant" | "system" | "redirect"
+	Stack    string // server_stack for tenant/system ("" for redirect)
+	Upstream string // reverse_proxy upstream (host:port) or redirect URL
 }
 
 // Skip records a row that was NOT rendered, with the reason (surfaced to the
@@ -114,7 +117,10 @@ func BuildPlan(cfg config.Config, snap db.Snapshot, folderNames []string) Plan {
 			skips = append(skips, Skip{r.Table, host, "duplicate host — already rendered from " + prev.table})
 			continue
 		}
-		desired[name] = won{op: FileOp{Name: name, Host: host, Contents: contents}, table: r.Table}
+		desired[name] = won{op: FileOp{
+			Name: name, Host: host, Contents: contents,
+			Kind: h.Kind.String(), Stack: r.ServerStack, Upstream: h.Target,
+		}, table: r.Table}
 	}
 
 	// A host that is desired by one row wins over a disabled row for the same host

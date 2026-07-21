@@ -9,6 +9,7 @@ var allowedSettingKeys = map[string]bool{
 	"general_app_name": true, "general_color_mode": true, "apps_header": true,
 	"users_default_shell": true, "users_home_base": true, "users_create_home": true,
 	"users_auto_username": true,
+	"vhost_data_source":   true,
 }
 
 func ValidSetting(key, value string) bool {
@@ -24,6 +25,9 @@ func ValidSetting(key, value string) bool {
 		return strings.HasPrefix(value, "/") && !strings.Contains(value, "..") && len(value) <= 255
 	case "users_create_home", "users_auto_username":
 		return value == "true" || value == "false"
+	case "vhost_data_source":
+		// A Data Source name (or empty to clear the host-source selection).
+		return len(value) <= 120
 	case "apps_header":
 		var apps []string
 		if json.Unmarshal([]byte(value), &apps) != nil || len(apps) > 8 {
