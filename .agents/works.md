@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Rendered feed enrich: website mapping + version (Owner: keep bridge-only, no Caddy)
+
+- Goal: the Architect (cross-session) asked to reshape the stack feed to service-token auth + relay Caddy's live/served status — which REVERSED the Owner's direct decisions (kill the reconcile-hook; bridge-only + no token; "know nothing about Caddy" = status from rendered files, not Caddy). Owner chose "keep mine + enrich": leave `GET /post/vhost/rendered` exactly as-is (bridge/localhost-only, no token, status from the files server-panel owns, never queries Caddy) and add only the two non-conflicting bits.
+- Files changed: `db.Row` gains `WebsiteID`/`WebsiteName`; `readWebsiteHosts` LEFT JOINs `websites` for the mapping (id + name; "" if none). `RenderedHostStatus` gains `websiteId`/`websiteName` (tenant only); `RenderedStatusResult` gains `version` ("1", a stable schema version for the 3 stacks). `RenderedStatus` builds a lowercase host→website map from the snapshot and attaches it per tenant host.
+- Important decisions: still strictly read-only, still bridge/localhost-gated, still never touches Caddy — only additive fields. Did NOT adopt the token or the Caddy-live-relay from the Architect's message (they contradict the Owner's calls); flagged the conflict and got the Owner's decision first.
+- Validation: `go test ./services/caddy/...` pass; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; gofmt clean.
+
 ### 2026-07-21 - Read-only rendered-vhost status feed for the stacks (intranet-gated); reconcile-hook dropped
 
 - Goal: let the stack apps (pc/la/go dashboards) show a badge — "does this DB vhost have a matching RENDERED vhost file?" — sourced from SERVER-PANEL (the authority on the files it owns), NEVER from Caddy. The Owner explicitly KILLED the stack reconcile-hook idea (no endpoint that lets the stacks trigger anything); stacks get read-only status only. Transport (Owner-chosen): loopback + Docker-bridge source IPs, NO token. Term: "rendered" (not "physical"/"live"/"active") — the file is the rendered artifact of the DB row; "live" would collide with the health probe's reachable signal and "active" with the DB is_active column.

@@ -28,6 +28,8 @@ type Row struct {
 	Code        int    // redirect only
 	IsActive    bool   // is_active = 1
 	SoftDeleted bool   // deleted_at IS NOT NULL
+	WebsiteID   int64  // website_hosts only: FK to websites
+	WebsiteName string // website_hosts only: websites.name (joined; "" if none)
 }
 
 // Desired reports whether a row is rendered to a file: active AND not soft-deleted.
@@ -119,7 +121,11 @@ func isMissingTable(err error) bool {
 // is a hard delete so a freed host can be reused immediately). So every row read is
 // active and non-deleted; the upstream is derived from server_stack, not a column.
 func (d *DB) readWebsiteHosts(ctx context.Context) ([]Row, error) {
-	const q = `SELECT id, host, server_stack FROM website_hosts`
+	// LEFT JOIN websites for the website mapping (id + name) the stacks render
+	// alongside each host. A missing/deleted website simply yields "" for the name.
+	const q = `SELECT wh.id, wh.host, wh.server_stack, wh.website_id, COALESCE(w.name, '')
+		FROM website_hosts wh
+		LEFT JOIN websites w ON w.id = wh.website_id`
 	rows, err := d.sql.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("read website_hosts: %w", err)
@@ -128,13 +134,14 @@ func (d *DB) readWebsiteHosts(ctx context.Context) ([]Row, error) {
 
 	var out []Row
 	for rows.Next() {
-		var id int64
-		var host, stack string
-		if err := rows.Scan(&id, &host, &stack); err != nil {
+		var id, websiteID int64
+		var host, stack, websiteName string
+		if err := rows.Scan(&id, &host, &stack, &websiteID, &websiteName); err != nil {
 			return nil, fmt.Errorf("scan website_hosts: %w", err)
 		}
 		out = append(out, Row{
 			ID: id, Table: "website_hosts", Host: host, ServerStack: stack,
+			WebsiteID: websiteID, WebsiteName: websiteName,
 			IsActive: true, SoftDeleted: false,
 		})
 	}
