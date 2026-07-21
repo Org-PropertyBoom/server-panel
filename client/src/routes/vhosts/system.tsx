@@ -1,17 +1,18 @@
 import { useState } from "react";
-import { Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, inputCls, type ManageRow, Modal, Pill, type ProtectedHost, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, inputCls, type ManageRow, Modal, Pill, type PinnedRow, type Upstream, ViewHeader } from "./shared";
 
 const CUSTOM = "__custom__";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
-// The pinned protected domains (panel + dashboard) show as read-only rows on top —
-// they ARE App/System hosts, just static Caddyfile blocks, not DB-reconciled.
-export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: ProtectedHost[]; onSaved: () => void }) {
+// The pinned domains (derived from the ACTUAL Caddyfile) show as read-only rows on
+// top — they ARE App/System hosts, just static blocks, not DB-reconciled — with a
+// drift flag vs what the reload actually guards.
+export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
 
     const del = async (row: ManageRow) => {
@@ -46,6 +47,12 @@ export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows:
                     </Button>
                 }
             />
+            {pinnedWarning ? (
+                <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{pinnedWarning}</span>
+                </div>
+            ) : null}
             <div className="overflow-hidden rounded-md border border-border bg-card">
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[680px] text-left text-xs">
@@ -60,7 +67,7 @@ export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows:
                         </thead>
                         <tbody className="divide-y divide-border">
                             {pinned.map((p) => (
-                                <tr key={`pinned-${p.host}`} className="bg-primary/[0.04]">
+                                <tr key={`pinned-${p.host}`} className={p.drift === "missing" ? "bg-destructive/[0.06]" : "bg-primary/[0.04]"}>
                                     <td className="px-4 py-2.5 font-mono text-foreground">
                                         <span className="inline-flex items-center gap-1.5">
                                             <Lock className="h-3 w-3 text-muted-foreground" />
@@ -68,16 +75,24 @@ export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows:
                                         </span>
                                     </td>
                                     <td className="px-4 py-2.5">
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{p.role}</span>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            {p.role ? <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{p.role}</span> : null}
                                             <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                                                 pinned
                                             </span>
                                         </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-muted-foreground">main Caddyfile · static</td>
+                                    <td className="px-4 py-2.5 font-mono text-muted-foreground">
+                                        {p.upstreams && p.upstreams.length > 0 ? p.upstreams.map((u) => `→ ${u}`).join(", ") : "static · main Caddyfile"}
+                                    </td>
                                     <td className="px-4 py-2.5">
-                                        <Pill tone="ok">Protected</Pill>
+                                        {p.drift === "missing" ? (
+                                            <Pill tone="err">Guarded, not pinned</Pill>
+                                        ) : p.drift === "unmanaged" ? (
+                                            <Pill tone="warn">Pinned · unmanaged</Pill>
+                                        ) : (
+                                            <Pill tone="ok">Protected</Pill>
+                                        )}
                                     </td>
                                     <td className="px-4 py-2.5 text-right">
                                         <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block)" />
@@ -120,7 +135,9 @@ export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows:
             {pinned.length > 0 ? (
                 <p className="mt-2 text-[11px] text-muted-foreground">
                     <Lock className="mr-1 inline h-3 w-3" />
-                    Pinned rows are static in the main Caddyfile — read-only, always served, guarded by every reconcile. They’re App/System hosts, just not DB-reconciled.
+                    Pinned rows are derived from the actual main Caddyfile — read-only static blocks, not DB-reconciled.{" "}
+                    <b className="text-destructive">Guarded, not pinned</b> means a domain the reload asserts but isn’t really a static block (fix the Caddyfile);{" "}
+                    <b className="text-amber-600 dark:text-amber-400">Pinned · unmanaged</b> means a static block the reload doesn’t guard.
                 </p>
             ) : null}
             {edit ? (

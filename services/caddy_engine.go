@@ -234,16 +234,23 @@ type VhostStateResult struct {
 	// to reconcile drift. Empty/absent when the probe is disabled or hasn't run.
 	Health   map[string]caddyhealth.Status `json:"health,omitempty"`
 	HealthOn bool                          `json:"healthOn"`
-	// Protected are the pinned dashboard/panel domains — App/System hosts that are
-	// static Caddyfile blocks (bootstrap-critical, not DB-reconciled), never
-	// rendered/removed as routes, and asserted present on every reload.
-	Protected []ProtectedHost `json:"protected"`
+	// Protected are the pinned domains shown read-only atop the System list. Derived
+	// from the ACTUAL main Caddyfile (adapt − folder routes) = ground truth, with a
+	// drift flag vs config.ProtectedHosts() (what the reload actually guards).
+	Protected        []PinnedRow `json:"protected"`
+	ProtectedWarning string      `json:"protectedWarning,omitempty"` // set when the Caddyfile couldn't be adapted (showing config declaration only)
 }
 
-// ProtectedHost is a pinned domain surfaced read-only in the System list.
-type ProtectedHost struct {
-	Host string `json:"host"`
-	Role string `json:"role"` // "Panel" | "Dashboard" | "Protected"
+// PinnedRow is one pinned/protected domain for the System list.
+type PinnedRow struct {
+	Host      string   `json:"host"`
+	Role      string   `json:"role,omitempty"`      // Panel | Dashboard | Protected (config role)
+	Upstreams []string `json:"upstreams,omitempty"` // reverse_proxy dials from the adapted Caddyfile
+	Guarded   bool     `json:"guarded"`             // in config.ProtectedHosts() (asserted on every reload)
+	Pinned    bool     `json:"pinned"`              // actually a static block in the Caddyfile
+	// Drift: "" = in sync; "missing" = guarded but NOT actually pinned (CRITICAL);
+	// "unmanaged" = actually pinned but NOT guarded.
+	Drift string `json:"drift,omitempty"`
 }
 
 // State resolves the configured host-source Data Source, reads its desired-state
@@ -252,7 +259,7 @@ type ProtectedHost struct {
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), HealthOn: v.health.Enabled()}
 	out.Health = v.health.Snapshot()
-	out.Protected = v.protectedHosts()
+	out.Protected, out.ProtectedWarning = v.protectedRows()
 
 	name := v.settings.Get("vhost_data_source", "")
 	if name == "" {
@@ -286,10 +293,12 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	return out
 }
 
-// protectedHosts labels the guarded (pinned) domains by role, sourced from the
-// SAME config.ProtectedHosts() the reconcile enforces (never a second copy).
-func (v *VhostEngineService) protectedHosts() []ProtectedHost {
-	out := make([]ProtectedHost, 0, 2)
+// protectedRows builds the pinned display from the ACTUAL Caddyfile (ground truth)
+// joined with config.ProtectedHosts() (what the reload guards), flagging drift. On
+// an adapt failure it falls back to the config declaration + a warning — never
+// nothing. config.ProtectedHosts() itself remains the untouched reload invariant.
+func (v *VhostEngineService) protectedRows() ([]PinnedRow, string) {
+	guardedRole := map[string]string{}
 	for _, h := range v.cfg.ProtectedHosts() {
 		role := "Protected"
 		switch {
@@ -298,9 +307,54 @@ func (v *VhostEngineService) protectedHosts() []ProtectedHost {
 		case strings.EqualFold(h, v.cfg.DashboardDomain):
 			role = "Dashboard"
 		}
-		out = append(out, ProtectedHost{Host: h, Role: role})
+		guardedRole[strings.ToLower(strings.TrimSpace(h))] = role
 	}
-	return out
+
+	pinned, err := v.engine.PinnedFromCaddyfile()
+	if err != nil {
+		out := make([]PinnedRow, 0, len(guardedRole))
+		for h, role := range guardedRole {
+			out = append(out, PinnedRow{Host: h, Role: role, Guarded: true})
+		}
+		sortPinned(out)
+		return out, "Could not adapt the main Caddyfile to verify the pinned set — showing the config declaration only: " + err.Error()
+	}
+
+	upstreams := map[string][]string{}
+	for _, p := range pinned {
+		upstreams[strings.ToLower(strings.TrimSpace(p.Host))] = p.Upstreams
+	}
+
+	seen := map[string]bool{}
+	var out []PinnedRow
+	add := func(h string) {
+		if seen[h] {
+			return
+		}
+		seen[h] = true
+		role, isGuarded := guardedRole[h]
+		ups, isPinned := upstreams[h]
+		row := PinnedRow{Host: h, Role: role, Upstreams: ups, Guarded: isGuarded, Pinned: isPinned}
+		switch {
+		case isGuarded && !isPinned:
+			row.Drift = "missing" // guarded but not actually a static block — CRITICAL
+		case isPinned && !isGuarded:
+			row.Drift = "unmanaged" // a static block we don't guard
+		}
+		out = append(out, row)
+	}
+	for h := range guardedRole {
+		add(h)
+	}
+	for h := range upstreams {
+		add(h)
+	}
+	sortPinned(out)
+	return out, ""
+}
+
+func sortPinned(rows []PinnedRow) {
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Host < rows[j].Host })
 }
 
 // manageSets projects the snapshot's panel-owned rows (platform_hosts +

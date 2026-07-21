@@ -72,10 +72,18 @@ export type VhostState = {
     manage?: ManageSets;
     health?: Record<string, HostHealth>;
     healthOn?: boolean;
-    protected?: ProtectedHost[];
+    protected?: PinnedRow[];
+    protectedWarning?: string;
 };
 
-export type ProtectedHost = { host: string; role: string };
+export type PinnedRow = {
+    host: string;
+    role?: string;
+    upstreams?: string[];
+    guarded: boolean;
+    pinned: boolean;
+    drift?: "missing" | "unmanaged" | string;
+};
 
 export type ReconcileResult = {
     reloaded: boolean;
