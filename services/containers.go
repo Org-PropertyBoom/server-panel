@@ -39,6 +39,12 @@ type Container struct {
 	Status    string   `json:"status"`
 	CreatedAt string   `json:"createdAt,omitempty"`
 	Ports     []string `json:"ports"`
+	// Reverse route view (the mirror of /vhosts route→container): which hostnames
+	// route to this container, joined by its published 127.0.0.1:PORT. Populated by
+	// VhostEngineService.AnnotateContainers; empty when there's no host-source.
+	RouteHosts       []string `json:"routeHosts,omitempty"`       // App-route hostnames (platform_hosts) pointing here
+	RouteTenantCount int      `json:"routeTenantCount,omitempty"` // tenant sites (website_hosts) via this container's stack
+	RouteTenantStack string   `json:"routeTenantStack,omitempty"` // the stack name backing those tenants
 }
 
 type containerCommandRunner interface {

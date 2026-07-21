@@ -8,15 +8,19 @@ import (
 	"ppt/server-panel/services"
 )
 
-func Handler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+func Handler(sessions *services.SessionService, containers *services.ContainerService, vhost *services.VhostEngineService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validSession(r, sessions) {
 			http.Error(w, "session invalid", http.StatusUnauthorized)
 			return
 		}
 
+		list := containers.ListAll()
+		if vhost != nil {
+			list = vhost.AnnotateContainers(r.Context(), list) // reverse route view: which hostnames point here
+		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{"containers": containers.ListAll()}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]any{"containers": list}); err != nil {
 			http.Error(w, "could not read containers", http.StatusInternalServerError)
 		}
 	})

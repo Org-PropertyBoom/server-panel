@@ -18,7 +18,37 @@ type ContainerRecord = {
     status: string;
     createdAt?: string;
     ports: string[];
+    routeHosts?: string[];
+    routeTenantCount?: number;
+    routeTenantStack?: string;
 };
+
+// RouteCell shows the reverse route view: which hostnames point at this container
+// (App-route hostnames + a tenant-site count), the mirror of the /vhosts view.
+function RouteCell({ container }: { container: ContainerRecord }) {
+    const apps = container.routeHosts ?? [];
+    const tenants = container.routeTenantCount ?? 0;
+    if (apps.length === 0 && tenants === 0) {
+        return <span className="text-muted-foreground">—</span>;
+    }
+    return (
+        <div className="flex flex-wrap items-center gap-1.5">
+            {apps.map((h) => (
+                <span key={h} className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground" title={`App route → ${h}`}>
+                    {h}
+                </span>
+            ))}
+            {tenants > 0 ? (
+                <span
+                    className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary"
+                    title={`${tenants} tenant site(s) via ${container.routeTenantStack ?? "this stack"}`}
+                >
+                    {tenants} tenant{container.routeTenantStack ? ` · ${container.routeTenantStack}` : ""}
+                </span>
+            ) : null}
+        </div>
+    );
+}
 
 export default function ContainersRoute() {
     const [containers, setContainers] = useState<ContainerRecord[]>([]);
@@ -168,7 +198,7 @@ export default function ContainersRoute() {
             {containers.length > 0 ? (
                 <div className="overflow-hidden rounded-md border border-border bg-card">
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1080px] text-left text-xs">
+                        <table className="w-full min-w-[1240px] text-left text-xs">
                             <thead className="border-b border-border bg-muted/40 text-muted-foreground">
                                 <tr>
                                     <th className="px-4 py-3 font-medium">Container</th>
@@ -177,6 +207,7 @@ export default function ContainersRoute() {
                                     <th className="px-4 py-3 font-medium">Image</th>
                                     <th className="px-4 py-3 font-medium">State</th>
                                     <th className="px-4 py-3 font-medium">Ports</th>
+                                    <th className="px-4 py-3 font-medium">Routes</th>
                                     <th className="px-4 py-3 text-right font-medium">Actions</th>
                                 </tr>
                             </thead>
@@ -200,6 +231,9 @@ export default function ContainersRoute() {
                                         </td>
                                         <td className="px-4 py-3 text-muted-foreground">
                                             {container.ports?.length ? container.ports.join(", ") : "—"}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <RouteCell container={container} />
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center justify-end gap-1.5">

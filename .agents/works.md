@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Containers page: container→hostnames reverse route view
+
+- Goal: close the route loop both ways — /vhosts shows route→container; now the Containers page shows container→hostnames (which domains route to each container), the Owner's reverse-index ask. (Only this of the two relayed items; the System→Apps rename was NOT selected.)
+- Files changed: `services/caddy_engine.go` — `routesByTarget(ctx)` indexes desired host routes by upstream target "127.0.0.1:port" (platform_hosts.target → App hostnames; website_hosts via server_stack→UpstreamFor → a tenant count + stack); `AnnotateContainers(ctx, []Container)` matches each container's published host ports (reusing `publishedHostPorts`) to that index and fills new `Container.RouteHosts`/`RouteTenantCount`/`RouteTenantStack` (read-only; on any error returns containers unannotated). `services/containers.go` Container struct gains those 3 omitempty fields. `routes/post/containers` GET handler takes the VhostEngine and annotates the list; registered with `deps.VhostEngine`. Frontend `client/.../routes/containers/index.tsx` gains a "Routes" column + `RouteCell`: App hostnames as mono chips, a "N tenant · <stack>" pill, or "—".
+- Important decisions: strictly read-only (reads the same DB truth + container list; never mutates, never touches Caddy). Tenant routes show a COUNT, never N rows inline (per spec — a stack container backs ~100 tenants). Join key is the upstream string "127.0.0.1:port" so App (explicit target) and Tenant (stack→port) both match a container's published port. Multi-port containers: any published port that matches contributes. Nil-safe: no host-source or DB error → containers render without route annotations.
+- Validation: `go test ./services/caddy/...` pass; `tsc --noEmit` 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; gofmt clean.
+
 ### 2026-07-21 - Tenant-deletion removal: deleted website_hosts mapping stops serving (was orphan)
 
 - Goal: website_hosts is LEAN (hard-delete, no is_active/deleted_at), so deleting a tenant mapping left its <host>.caddy file backed by NO row → classified ORPHAN → never auto-pruned → the deleted site KEPT SERVING (a big chunk of the ~70 orphans). Make deletion actually remove the file, safely.

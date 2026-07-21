@@ -389,6 +389,97 @@ func (v *VhostEngineService) RenderedStatus(ctx context.Context) RenderedStatusR
 	return out
 }
 
+// targetRoutes is the set of host routes pointing at one upstream target.
+type targetRoutes struct {
+	appHosts    []string
+	tenantCount int
+	tenantStack string
+}
+
+// routesByTarget indexes desired host routes by their upstream target
+// ("127.0.0.1:port"): App routes (platform_hosts.target) contribute hostnames;
+// tenant routes (website_hosts, via server_stack→port) contribute a count. Read-only.
+func (v *VhostEngineService) routesByTarget(ctx context.Context) (map[string]targetRoutes, error) {
+	if v.settings.Get("vhost_data_source", "") == "" {
+		return nil, nil
+	}
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	snap, err := conn.ReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]targetRoutes{}
+	for _, r := range snap.Rows {
+		if !r.Desired() {
+			continue
+		}
+		switch r.Table {
+		case "website_hosts":
+			up, ok := v.cfg.UpstreamFor(r.ServerStack)
+			if !ok {
+				continue
+			}
+			tr := out[up]
+			tr.tenantCount++
+			tr.tenantStack = strings.ToLower(strings.TrimSpace(r.ServerStack))
+			out[up] = tr
+		case "platform_hosts":
+			t := strings.TrimSpace(r.Target)
+			if t == "" {
+				continue
+			}
+			tr := out[t]
+			tr.appHosts = append(tr.appHosts, strings.ToLower(strings.TrimSpace(r.Host)))
+			out[t] = tr
+		}
+	}
+	for k, tr := range out {
+		sort.Strings(tr.appHosts)
+		out[k] = tr
+	}
+	return out, nil
+}
+
+// AnnotateContainers fills each container's reverse route view — the hostnames that
+// route to it — by matching its published 127.0.0.1:PORT against the host routes.
+// Read-only; on any error (no source, DB down) the containers are returned as-is.
+func (v *VhostEngineService) AnnotateContainers(ctx context.Context, containers []Container) []Container {
+	routes, err := v.routesByTarget(ctx)
+	if err != nil || routes == nil {
+		return containers
+	}
+	for i := range containers {
+		seen := map[string]bool{}
+		var appHosts []string
+		tenantCount, tenantStack := 0, ""
+		for _, port := range publishedHostPorts(containers[i].Ports) {
+			tr, ok := routes["127.0.0.1:"+port]
+			if !ok {
+				continue
+			}
+			for _, h := range tr.appHosts {
+				if !seen[h] {
+					seen[h] = true
+					appHosts = append(appHosts, h)
+				}
+			}
+			tenantCount += tr.tenantCount
+			if tr.tenantStack != "" {
+				tenantStack = tr.tenantStack
+			}
+		}
+		sort.Strings(appHosts)
+		containers[i].RouteHosts = appHosts
+		containers[i].RouteTenantCount = tenantCount
+		containers[i].RouteTenantStack = tenantStack
+	}
+	return containers
+}
+
 // Reconcile applies desired state: render → validate (adapt) → backup → reload.
 // GATED: refuses unless CADDY_LIVE_RELOAD is on.
 func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, error) {
