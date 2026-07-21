@@ -31,6 +31,7 @@ export default function ReconcileHeader({
     const removes = dry?.would_remove ?? [];
     const pending = writes.length + removes.length;
     const orphanCount = dry?.orphans.length ?? 0;
+    const unreachable = Object.values(state.health ?? {}).filter((h) => h.alert).length;
     const configured = state.configured && !state.error;
 
     return (
@@ -41,6 +42,12 @@ export default function ReconcileHeader({
                 <Stat n={pending} label="Pending" tone={pending > 0 ? "warn" : undefined} />
                 <span className="hidden h-8 w-px bg-border sm:block" />
                 <Stat n={orphanCount} label="Orphans" tone={orphanCount > 0 ? "err" : undefined} />
+                {state.healthOn ? (
+                    <>
+                        <span className="hidden h-8 w-px bg-border sm:block" />
+                        <Stat n={unreachable} label="Unreachable" tone={unreachable > 0 ? "warn" : undefined} />
+                    </>
+                ) : null}
                 <span className="flex-1" />
                 {dry ? dry.in_sync ? <Pill tone="ok">In sync</Pill> : <Pill tone="warn">Drift — {pending} pending</Pill> : null}
                 <label className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">

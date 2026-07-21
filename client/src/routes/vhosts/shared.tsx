@@ -43,6 +43,18 @@ export type ManageSets = {
     stacks: string[];
 };
 
+export type HostHealth = {
+    host: string;
+    alert: boolean;
+    dnsOk: boolean;
+    tlsOk: boolean;
+    resolvedIps?: string[];
+    certExpiryMs?: number;
+    lastError?: string;
+    failures: number;
+    checkedAtMs: number;
+};
+
 export type VhostState = {
     configured: boolean;
     source?: string;
@@ -52,6 +64,8 @@ export type VhostState = {
     error?: string;
     dryRun?: DryRun;
     manage?: ManageSets;
+    health?: Record<string, HostHealth>;
+    healthOn?: boolean;
 };
 
 export type ReconcileResult = {
@@ -100,7 +114,23 @@ export function normalizeState(s: VhostState): VhostState {
             stacks: arr(s.manage.stacks),
         };
     }
+    if (!s.health) s.health = {};
     return s;
+}
+
+// UnreachableChip rides ALONGSIDE the sync chip: an orthogonal reachability warning
+// (DNS/TLS) that is alert-only and never drives a write or removal.
+export function UnreachableChip({ health }: { health?: HostHealth }) {
+    if (!health?.alert) return null;
+    return (
+        <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400"
+            title={health.lastError || "Not reaching this server"}
+        >
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+            Not reaching us
+        </span>
+    );
 }
 
 export function normalizeResult(r: ReconcileResult): ReconcileResult {

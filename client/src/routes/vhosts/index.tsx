@@ -175,7 +175,7 @@ function VHostsShell({ active }: { active: Section }) {
                         ) : !state?.configured || state.error ? (
                             <ConfiguringNotice state={state} sourceCount={sources.length} />
                         ) : active === "tenant" ? (
-                            <TenantView hosts={tenantHosts} />
+                            <TenantView hosts={tenantHosts} health={state.health ?? {}} />
                         ) : active === "system" ? (
                             <SystemView rows={manage?.systemHosts ?? []} stacks={manage?.stacks ?? []} onSaved={loadState} />
                         ) : active === "redirects" ? (

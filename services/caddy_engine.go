@@ -11,6 +11,7 @@ import (
 	"ppt/server-panel/services/caddy/caddyctl"
 	caddyconfig "ppt/server-panel/services/caddy/config"
 	caddydb "ppt/server-panel/services/caddy/db"
+	caddyhealth "ppt/server-panel/services/caddy/health"
 	"ppt/server-panel/services/caddy/reconcile"
 )
 
@@ -28,6 +29,32 @@ type VhostEngineService struct {
 	settings *SettingsService
 	cfg      caddyconfig.Config
 	engine   *reconcile.Engine
+	health   *HealthProbeService // alert-only reachability probe (read-only), attached post-construction
+}
+
+// AttachHealth wires the reachability probe so State can surface it. Set once at
+// boot; nil-safe if never attached.
+func (v *VhostEngineService) AttachHealth(h *HealthProbeService) { v.health = h }
+
+// TenantHosts returns the active website_hosts hostnames — the set the health
+// probe checks for reachability. Read-only.
+func (v *VhostEngineService) TenantHosts(ctx context.Context) ([]string, error) {
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	snap, err := conn.ReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range snap.Rows {
+		if r.Table == "website_hosts" && r.Desired() {
+			out = append(out, r.Host)
+		}
+	}
+	return out, nil
 }
 
 // NewVhostEngineService builds the engine over the env-configured folder + main
@@ -98,13 +125,18 @@ type VhostStateResult struct {
 	Error      string                  `json:"error,omitempty"`
 	DryRun     *reconcile.DryRunResult `json:"dryRun,omitempty"`
 	Manage     *ManageSets             `json:"manage,omitempty"`
+	// Health is the alert-only reachability status per host (DNS + TLS), orthogonal
+	// to reconcile drift. Empty/absent when the probe is disabled or hasn't run.
+	Health   map[string]caddyhealth.Status `json:"health,omitempty"`
+	HealthOn bool                          `json:"healthOn"`
 }
 
 // State resolves the configured host-source Data Source, reads its desired-state
 // snapshot, and computes drift against the vhosts folder. It never mutates
 // anything. Failure modes are returned in the result (never a 500).
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
-	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled()}
+	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), HealthOn: v.health.Enabled()}
+	out.Health = v.health.Snapshot()
 
 	name := v.settings.Get("vhost_data_source", "")
 	if name == "" {

@@ -56,6 +56,8 @@ func main() {
 	}
 
 	vhostEngine := services.NewVhostEngineService(services.NewDataSourceService(), settings)
+	healthProbe := services.NewHealthProbeService(vhostEngine)
+	vhostEngine.AttachHealth(healthProbe)
 
 	routes.Register(mux, routes.Dependencies{
 		Auth:        auth,
@@ -77,6 +79,16 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Alert-only reachability probe (root mode): DNS + TLS per tenant host. It only
+	// observes — it never writes, removes, or reloads — so it starts unconditionally
+	// here, gated internally by CADDY_HEALTH_PROBE (default on).
+	if startup.IsRoot {
+		healthProbe.Start(ctx)
+		if healthProbe.Enabled() {
+			logger.Info("health probe started")
+		}
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

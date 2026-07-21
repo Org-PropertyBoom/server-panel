@@ -1,10 +1,10 @@
 import { Lock } from "lucide-react";
 
-import { EmptyBanner, type HostRow, rowTint, StatusChip, ViewHeader } from "./shared";
+import { EmptyBanner, type HostHealth, type HostRow, rowTint, StatusChip, UnreachableChip, ViewHeader } from "./shared";
 
 // TenantView renders website_hosts — the stack-owned tenant sites. READ-ONLY here:
-// the stack apps own these rows; the panel only views + monitors drift.
-export default function TenantView({ hosts }: { hosts: HostRow[] }) {
+// the stack apps own these rows; the panel only views + monitors drift + health.
+export default function TenantView({ hosts, health }: { hosts: HostRow[]; health: Record<string, HostHealth> }) {
     return (
         <div>
             <ViewHeader
@@ -44,7 +44,10 @@ export default function TenantView({ hosts }: { hosts: HostRow[] }) {
                                             {h.upstream ? `→ ${h.upstream}` : h.status === "will_remove" ? "— disabled in DB" : "on disk only"}
                                         </td>
                                         <td className="px-4 py-3">
-                                            <StatusChip status={h.status} />
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <StatusChip status={h.status} />
+                                                <UnreachableChip health={health[h.hostname]} />
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
