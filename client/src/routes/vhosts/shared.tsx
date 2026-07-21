@@ -72,8 +72,10 @@ export type VhostState = {
     manage?: ManageSets;
     health?: Record<string, HostHealth>;
     healthOn?: boolean;
-    protected?: string[];
+    protected?: ProtectedHost[];
 };
+
+export type ProtectedHost = { host: string; role: string };
 
 export type ReconcileResult = {
     reloaded: boolean;

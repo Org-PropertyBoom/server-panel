@@ -234,9 +234,16 @@ type VhostStateResult struct {
 	// to reconcile drift. Empty/absent when the probe is disabled or hasn't run.
 	Health   map[string]caddyhealth.Status `json:"health,omitempty"`
 	HealthOn bool                          `json:"healthOn"`
-	// Protected are the pinned dashboard/panel domains — static Caddyfile blocks,
-	// never rendered/removed as routes, and asserted present on every reload.
-	Protected []string `json:"protected"`
+	// Protected are the pinned dashboard/panel domains — App/System hosts that are
+	// static Caddyfile blocks (bootstrap-critical, not DB-reconciled), never
+	// rendered/removed as routes, and asserted present on every reload.
+	Protected []ProtectedHost `json:"protected"`
+}
+
+// ProtectedHost is a pinned domain surfaced read-only in the System list.
+type ProtectedHost struct {
+	Host string `json:"host"`
+	Role string `json:"role"` // "Panel" | "Dashboard" | "Protected"
 }
 
 // State resolves the configured host-source Data Source, reads its desired-state
@@ -245,7 +252,7 @@ type VhostStateResult struct {
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), HealthOn: v.health.Enabled()}
 	out.Health = v.health.Snapshot()
-	out.Protected = v.cfg.ProtectedHosts()
+	out.Protected = v.protectedHosts()
 
 	name := v.settings.Get("vhost_data_source", "")
 	if name == "" {
@@ -276,6 +283,23 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	}
 	out.DryRun = &dry
 	out.Manage = v.manageSets(snap)
+	return out
+}
+
+// protectedHosts labels the guarded (pinned) domains by role, sourced from the
+// SAME config.ProtectedHosts() the reconcile enforces (never a second copy).
+func (v *VhostEngineService) protectedHosts() []ProtectedHost {
+	out := make([]ProtectedHost, 0, 2)
+	for _, h := range v.cfg.ProtectedHosts() {
+		role := "Protected"
+		switch {
+		case strings.EqualFold(h, v.cfg.PanelDomain):
+			role = "Panel"
+		case strings.EqualFold(h, v.cfg.DashboardDomain):
+			role = "Dashboard"
+		}
+		out = append(out, ProtectedHost{Host: h, Role: role})
+	}
 	return out
 }
 

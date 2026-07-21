@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, Field, FormActions, inputCls, type ManageRow, Modal, Pill, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, inputCls, type ManageRow, Modal, Pill, type ProtectedHost, type Upstream, ViewHeader } from "./shared";
 
 const CUSTOM = "__custom__";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
-export default function SystemView({ rows, upstreams, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; onSaved: () => void }) {
+// The pinned protected domains (panel + dashboard) show as read-only rows on top —
+// they ARE App/System hosts, just static Caddyfile blocks, not DB-reconciled.
+export default function SystemView({ rows, upstreams, pinned, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: ProtectedHost[]; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
 
     const del = async (row: ManageRow) => {
@@ -44,49 +46,83 @@ export default function SystemView({ rows, upstreams, onSaved }: { rows: ManageR
                     </Button>
                 }
             />
-            {rows.length === 0 ? (
-                <EmptyBanner title="No system hosts" body="Add a platform_hosts row to reverse-proxy a panel-owned domain to an upstream." />
-            ) : (
-                <div className="overflow-hidden rounded-md border border-border bg-card">
-                    <div className="overflow-x-auto">
-                        <table className="w-full min-w-[680px] text-left text-xs">
-                            <thead className="border-b border-border bg-muted/40 text-muted-foreground">
-                                <tr>
-                                    <th className="px-4 py-2.5 font-medium">Host</th>
-                                    <th className="px-4 py-2.5 font-medium">Service</th>
-                                    <th className="px-4 py-2.5 font-medium">Upstream</th>
-                                    <th className="px-4 py-2.5 font-medium">State</th>
-                                    <th className="px-4 py-2.5 text-right font-medium">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border">
-                                {rows.map((r) => (
-                                    <tr key={r.id} className={r.isActive ? "" : "opacity-55"}>
-                                        <td className="px-4 py-2.5 font-mono text-foreground">{r.host}</td>
-                                        <td className="px-4 py-2.5">
-                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                                                {r.serverStack || "—"}
+            <div className="overflow-hidden rounded-md border border-border bg-card">
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[680px] text-left text-xs">
+                        <thead className="border-b border-border bg-muted/40 text-muted-foreground">
+                            <tr>
+                                <th className="px-4 py-2.5 font-medium">Host</th>
+                                <th className="px-4 py-2.5 font-medium">Service</th>
+                                <th className="px-4 py-2.5 font-medium">Upstream</th>
+                                <th className="px-4 py-2.5 font-medium">State</th>
+                                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                            {pinned.map((p) => (
+                                <tr key={`pinned-${p.host}`} className="bg-primary/[0.04]">
+                                    <td className="px-4 py-2.5 font-mono text-foreground">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Lock className="h-3 w-3 text-muted-foreground" />
+                                            {p.host}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{p.role}</span>
+                                            <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                                pinned
                                             </span>
-                                        </td>
-                                        <td className="px-4 py-2.5 font-mono text-muted-foreground">{r.target}</td>
-                                        <td className="px-4 py-2.5">{r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
-                                        <td className="px-4 py-2.5">
-                                            <div className="flex justify-end gap-1">
-                                                <button onClick={() => setEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Edit">
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                </button>
-                                                <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable">
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-muted-foreground">main Caddyfile · static</td>
+                                    <td className="px-4 py-2.5">
+                                        <Pill tone="ok">Protected</Pill>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right">
+                                        <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block)" />
+                                    </td>
+                                </tr>
+                            ))}
+                            {rows.map((r) => (
+                                <tr key={r.id} className={r.isActive ? "" : "opacity-55"}>
+                                    <td className="px-4 py-2.5 font-mono text-foreground">{r.host}</td>
+                                    <td className="px-4 py-2.5">
+                                        <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                            {r.serverStack || "—"}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-2.5 font-mono text-muted-foreground">{r.target}</td>
+                                    <td className="px-4 py-2.5">{r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
+                                    <td className="px-4 py-2.5">
+                                        <div className="flex justify-end gap-1">
+                                            <button onClick={() => setEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Edit">
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </button>
+                                            <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable">
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {rows.length === 0 ? (
+                                <tr>
+                                    <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
+                                        No editable system hosts yet — use “Add system host”.
+                                    </td>
+                                </tr>
+                            ) : null}
+                        </tbody>
+                    </table>
                 </div>
-            )}
+            </div>
+            {pinned.length > 0 ? (
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                    <Lock className="mr-1 inline h-3 w-3" />
+                    Pinned rows are static in the main Caddyfile — read-only, always served, guarded by every reconcile. They’re App/System hosts, just not DB-reconciled.
+                </p>
+            ) : null}
             {edit ? (
                 <HostForm
                     row={edit}
