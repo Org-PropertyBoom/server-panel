@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -53,6 +54,7 @@ type Result struct {
 	AdaptWarnings     []string       `json:"adapt_warnings,omitempty"`
 	Sources           map[string]int `json:"sources,omitempty"`
 	MissingTables     []string       `json:"missing_tables,omitempty"`
+	BlockedDrops      []string       `json:"blocked_drops,omitempty"` // live hosts the drop-guard refused to drop
 	BackupPath        string         `json:"backup_path,omitempty"`
 	Error             string         `json:"error,omitempty"`
 	DurationMS        int64          `json:"duration_ms"`
@@ -180,6 +182,16 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		e.firstDone = true
 		return res, err
 	}
+	// Drop-guard: refuse if the new config would drop a host Caddy is serving right
+	// now, unless we intentionally removed it this pass (res.Removed). This is the
+	// automatic form of the manual pre-flight superset check.
+	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, res.Removed); err != nil {
+		res.BlockedDrops = dropped
+		res.Error = err.Error()
+		res.DurationMS = e.since(start)
+		e.firstDone = true
+		return res, err
+	}
 
 	// Backup the PRIOR live config before we replace it (best-effort).
 	if path, berr := e.backupPrior(ctx); berr != nil {
@@ -236,6 +248,13 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 		res.DurationMS = e.since(start)
 		return res, err
 	}
+	// ReloadOnly writes/removes nothing, so it must never drop a live host.
+	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, nil); err != nil {
+		res.BlockedDrops = dropped
+		res.Error = err.Error()
+		res.DurationMS = e.since(start)
+		return res, err
+	}
 	if path, berr := e.backupPrior(ctx); berr != nil {
 		log.Printf("reload: prior-config backup failed (continuing): %v", berr)
 	} else {
@@ -265,6 +284,99 @@ func (e *Engine) assertDashboardPresent(adapted []byte) error {
 		return fmt.Errorf("validate: adapted config is missing the dashboard domain %q — REFUSING to reload (the main Caddyfile's static block is broken; this is the outage signature)", dash)
 	}
 	return nil
+}
+
+// assertNoUnexpectedDrops refuses a reload whose adapted config would drop a host
+// Caddy is CURRENTLY serving, unless that host is one we intentionally removed this
+// pass (intentionalRemovals, as `<host>.caddy` file names) or a protected static
+// domain. This is the automatic form of the manual pre-flight superset check — it
+// makes "a reload never silently drops a live site" an engine invariant instead of
+// a human checklist step, and it catches the 2026-07-11 signature that the
+// dashboard canary alone would miss (all tenants gone but the static block intact).
+//
+// If the current live config can't be read or parsed, the check is SKIPPED (a
+// warning is logged) rather than blocking — it is an extra guard layered on top of
+// assertDashboardPresent, never a new way to wedge reloads.
+func (e *Engine) assertNoUnexpectedDrops(ctx context.Context, adapted []byte, intentionalRemovals []string) ([]string, error) {
+	live, err := e.reloader.CurrentConfig(ctx)
+	if err != nil {
+		log.Printf("reconcile: drop-guard skipped — could not read current Caddy config (dashboard-assert still applies): %v", err)
+		return nil, nil
+	}
+	liveHosts, err := hostSet(live)
+	if err != nil {
+		log.Printf("reconcile: drop-guard skipped — current Caddy config not parseable: %v", err)
+		return nil, nil
+	}
+	if len(liveHosts) == 0 {
+		return nil, nil // nothing currently served to protect (fresh/empty Caddy)
+	}
+	adaptedHosts, err := hostSet(adapted)
+	if err != nil {
+		return nil, fmt.Errorf("validate: adapted config is not valid JSON: %w", err)
+	}
+
+	keep := make(map[string]bool, len(intentionalRemovals)+2)
+	for _, name := range intentionalRemovals {
+		keep[strings.ToLower(strings.TrimSpace(render.HostFromFileName(name)))] = true
+	}
+	for _, p := range e.cfg.ProtectedHosts() {
+		keep[strings.ToLower(strings.TrimSpace(p))] = true
+	}
+
+	var dropped []string
+	for h := range liveHosts {
+		if !adaptedHosts[h] && !keep[h] {
+			dropped = append(dropped, h)
+		}
+	}
+	if len(dropped) == 0 {
+		return nil, nil
+	}
+	sort.Strings(dropped)
+	shown := dropped
+	suffix := ""
+	if len(shown) > 10 {
+		shown, suffix = shown[:10], fmt.Sprintf(" … (+%d more)", len(dropped)-10)
+	}
+	return dropped, fmt.Errorf("validate: reload would DROP %d live host(s) absent from the new config and not intentionally removed — REFUSING (outage guard): %s%s",
+		len(dropped), strings.Join(shown, ", "), suffix)
+}
+
+// hostSet collects every hostname in a Caddy JSON config — every string under a
+// "host" key (host matchers live at apps.http.servers.*.routes[].match[].host[]).
+// Mirrors the manual `jq '..|.host?//empty|.[]'` extraction. Hosts are lowercased
+// and trimmed so the two configs compare on equal footing.
+func hostSet(cfgJSON []byte) (map[string]bool, error) {
+	var root any
+	if err := json.Unmarshal(cfgJSON, &root); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			for k, val := range t {
+				if k == "host" {
+					if arr, ok := val.([]any); ok {
+						for _, h := range arr {
+							if s, ok := h.(string); ok {
+								out[strings.ToLower(strings.TrimSpace(s))] = true
+							}
+						}
+					}
+				}
+				walk(val)
+			}
+		case []any:
+			for _, item := range t {
+				walk(item)
+			}
+		}
+	}
+	walk(root)
+	return out, nil
 }
 
 func (e *Engine) since(start time.Time) int64 {

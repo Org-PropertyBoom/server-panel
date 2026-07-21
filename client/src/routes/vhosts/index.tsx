@@ -76,6 +76,7 @@ type ReconcileResult = {
     skips?: Skip[];
     adapt_warnings?: string[];
     missing_tables?: string[];
+    blocked_drops?: string[];
     backup_path?: string;
     error?: string;
     duration_ms: number;
@@ -521,6 +522,23 @@ function ResultPanel({ result, onDismiss }: { result: ReconcileResult; onDismiss
                             orphans: <b className="text-foreground">{result.orphans.length}</b>
                         </span>
                     </div>
+                    {result.blocked_drops && result.blocked_drops.length > 0 ? (
+                        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 p-2.5">
+                            <p className="text-[11px] font-semibold text-destructive">
+                                Outage guard: refused — {result.blocked_drops.length} live host(s) would have been dropped
+                            </p>
+                            <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto">
+                                {result.blocked_drops.map((h) => (
+                                    <li key={h} className="font-mono text-[11px] text-foreground">
+                                        {h}
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                                Caddy was not touched. These are served now but missing from the new config — fix the source/import before reloading.
+                            </p>
+                        </div>
+                    ) : null}
                     {result.error ? <p className="mt-2 font-mono text-[11px] text-destructive">{result.error}</p> : null}
                     {result.adapt_warnings && result.adapt_warnings.length > 0 ? (
                         <details className="mt-2">
@@ -982,6 +1000,7 @@ function normalizeResult(r: ReconcileResult): ReconcileResult {
         skips: arr(r.skips),
         adapt_warnings: arr(r.adapt_warnings),
         missing_tables: arr(r.missing_tables),
+        blocked_drops: arr(r.blocked_drops),
     };
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ppt/server-panel/services/caddy/config"
@@ -222,6 +223,90 @@ func TestEngine_ReloadFailureSurfaced(t *testing.T) {
 	}
 	if res.Error == "" {
 		t.Error("Error must be populated")
+	}
+}
+
+// liveConfig builds a minimal Caddy JSON config that serves the given hosts — used
+// to drive the drop-guard (fakeCaddy.CurrentConfig).
+func liveConfig(hosts ...string) []byte {
+	quoted := make([]string, len(hosts))
+	for i, h := range hosts {
+		quoted[i] = `"` + h + `"`
+	}
+	return []byte(`{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"host":[` +
+		strings.Join(quoted, ",") + `]}]}]}}}}}`)
+}
+
+func TestEngine_DropGuard_RefusesWhenLiveHostWouldVanish(t *testing.T) {
+	cfg := engineCfg(t)
+	mkVhosts(t, cfg, nil)
+	// Caddy currently serves a host that the adapted config (app.propertyboom.co
+	// only) does NOT contain, and which we are not removing — the outage signature.
+	fc := &fakeCaddy{current: liveConfig("app.propertyboom.co", "live-tenant.com")}
+	e := NewEngine(cfg, fc, fc)
+
+	res, err := e.Reconcile(context.Background(), db.Snapshot{})
+	if err == nil {
+		t.Fatal("must refuse when the reload would drop a currently-served host")
+	}
+	if res.Reloaded || fc.loads != 0 {
+		t.Errorf("must NOT reload; reloaded=%v loads=%d", res.Reloaded, fc.loads)
+	}
+	if !strings.Contains(res.Error, "live-tenant.com") {
+		t.Errorf("error should name the dropped host; got %q", res.Error)
+	}
+}
+
+func TestEngine_DropGuard_AllowsIntentionalRemoval(t *testing.T) {
+	cfg := engineCfg(t)
+	mkVhosts(t, cfg, map[string]string{"gone.com.caddy": "gone.com {\n    reverse_proxy 127.0.0.1:8002\n}\n"})
+	fc := &fakeCaddy{}
+	e := NewEngine(cfg, fc, fc)
+	snap := db.Snapshot{Rows: []db.Row{{Table: "website_hosts", Host: "gone.com", ServerStack: "phalcon", IsActive: false}}}
+
+	// First pass: live has no hosts, removal suppressed — reload proceeds, firstDone set.
+	if _, err := e.Reconcile(context.Background(), snap); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	// Second pass: Caddy now serves gone.com, but we remove it this pass — the drop
+	// is intentional, so the guard must ALLOW the reload.
+	fc.current = liveConfig("app.propertyboom.co", "gone.com")
+	res, err := e.Reconcile(context.Background(), snap)
+	if err != nil {
+		t.Fatalf("second pass must be allowed (intentional removal): %v (%s)", err, res.Error)
+	}
+	if !res.Reloaded {
+		t.Error("expected reload on the intentional-removal pass")
+	}
+	if len(res.Removed) != 1 || res.Removed[0] != "gone.com.caddy" {
+		t.Errorf("Removed = %v", res.Removed)
+	}
+}
+
+func TestEngine_DropGuard_SkippedWhenLiveUnreadable(t *testing.T) {
+	cfg := engineCfg(t)
+	mkVhosts(t, cfg, nil)
+	// Admin API read fails — the guard degrades to a skip (dashboard-assert still
+	// applies), so a valid reload is not wedged.
+	fc := &fakeCaddy{currErr: errors.New("admin unreachable")}
+	e := NewEngine(cfg, fc, fc)
+	res, err := e.Reconcile(context.Background(), db.Snapshot{})
+	if err != nil {
+		t.Fatalf("guard must degrade to skip when live config is unreadable: %v (%s)", err, res.Error)
+	}
+	if !res.Reloaded {
+		t.Error("reload should proceed under degraded drop-guard")
+	}
+}
+
+func TestEngine_ReloadOnly_DropGuardRefuses(t *testing.T) {
+	cfg := engineCfg(t)
+	mkVhosts(t, cfg, nil)
+	fc := &fakeCaddy{current: liveConfig("app.propertyboom.co", "live-tenant.com")}
+	e := NewEngine(cfg, fc, fc)
+	res, err := e.ReloadOnly(context.Background())
+	if err == nil || res.Reloaded || fc.loads != 0 {
+		t.Errorf("ReloadOnly must refuse to drop a live host; err=%v reloaded=%v loads=%d", err, res.Reloaded, fc.loads)
 	}
 }
 
