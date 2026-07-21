@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Orphan → Redirect (convert a moved domain to a 301 instead of pruning) + clickable hosts
+
+- Goal: give orphans a non-destructive exit — a domain that MOVED (old website → new domain) becomes a 301 redirect (preserves old links/SEO) instead of Prune (which kills them). Also (same session) made hostnames/targets clickable so an operator can check a site is live before acting.
+- Files changed: new `client/.../vhosts/redirect-form.tsx` — extracted the shared RedirectForm (was inline in redirects.tsx) with a `lockHost` prop (orphan host fixed) + a client-side self-redirect-loop guard (target host == source host disables save). `redirects.tsx` now imports it. `orphans.tsx` gains a "→ Redirect" per-row action → opens the form pre-filled (host locked, target entered, code 301); on save writes a platform_redirect_hosts row → next reconcile renders the redir file REPLACING the orphan → the host leaves Orphans, joins Redirects. Backend: `db/validate.go` ValidateRedirect now rejects a self-redirect loop (parse target URL, host == source host) (+ test). Clickable hosts: shared `HostLink`/`UrlLink`; host cells across Tenant/System/Redirects/pinned + orphan "Open" + container Routes chips link to https://<host> (new tab); redirect targets link as-is; internal 127.0.0.1:PORT upstreams stay plain.
+- Important decisions: → Redirect is available for ANY orphan (target is operator-supplied) — the natural exit for tenant-shaped legacy domains. The → App orphan action is NOT built (Owner deferred it earlier), so orphans have Open / → Redirect / Prune. Self-redirect blocked on BOTH client (disable) and server (validate). The target-suggestion combobox (separate Architect ask) was NOT chosen — plain URL input for now.
+- Validation: `go test ./services/caddy/db/...` pass incl. self-redirect rejection; `tsc --noEmit` 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0.
+
 ### 2026-07-21 - Single active Data Source model (one source every feature reads) + live health
 
 - Goal: replace the per-screen host-source picker with ONE global active Data Source (structurally prevents a mis-pick). Exactly one active while any exist; every DB-reading feature reads it.

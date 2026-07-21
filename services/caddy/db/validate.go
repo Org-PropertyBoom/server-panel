@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -65,6 +66,9 @@ func ValidateRedirect(in RedirectInput, g Guard) (RedirectInput, error) {
 	}
 	if !strings.HasPrefix(in.Target, "http://") && !strings.HasPrefix(in.Target, "https://") {
 		return in, fmt.Errorf("target %q must be an absolute URL (http:// or https://)", in.Target)
+	}
+	if u, err := url.Parse(in.Target); err == nil && strings.EqualFold(u.Hostname(), in.Host) {
+		return in, fmt.Errorf("target host equals the source host %q — that is a redirect loop", in.Host)
 	}
 	if in.Code != 301 && in.Code != 302 {
 		return in, fmt.Errorf("redirect_code must be 301 or 302, got %d", in.Code)

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ExternalLink, Trash2 } from "lucide-react";
+import { CornerUpRight, ExternalLink, Trash2 } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
 import { EmptyBanner, Modal, ViewHeader } from "./shared";
+import RedirectForm from "./redirect-form";
 
 // hostOf strips the ".caddy" suffix so an orphan file maps to its hostname.
 function hostOf(name: string): string {
@@ -17,14 +18,17 @@ export default function OrphansView({
     live,
     busy,
     onPrune,
+    onSaved,
 }: {
     orphans: string[];
     live: boolean;
     busy: boolean;
     onPrune: (names: string[]) => Promise<void>;
+    onSaved: () => void;
 }) {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [confirm, setConfirm] = useState<string[] | null>(null);
+    const [redirectHost, setRedirectHost] = useState<string | null>(null);
 
     const toggle = (name: string) =>
         setSelected((prev) => {
@@ -54,7 +58,7 @@ export default function OrphansView({
         <div>
             <ViewHeader
                 title="Orphans"
-                subtitle="On-disk vhost files with no active database row. Never auto-removed — prune deliberately."
+                subtitle="On-disk vhost files with no active database row. Open to check if a site still serves, convert a moved site to a 301 redirect, or prune deliberately."
                 actions={
                     <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" onClick={toggleAll}>
@@ -97,6 +101,16 @@ export default function OrphansView({
                             <Button
                                 variant="ghost"
                                 size="sm"
+                                className="gap-1.5"
+                                onClick={() => setRedirectHost(hostOf(name))}
+                                title="Convert to a 301 redirect (preserves old links/SEO) instead of deleting"
+                            >
+                                <CornerUpRight className="h-3.5 w-3.5" />
+                                Redirect
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
                                 className="gap-1.5 text-destructive hover:bg-destructive/10"
                                 disabled={busy}
                                 onClick={() => setConfirm([name])}
@@ -132,6 +146,19 @@ export default function OrphansView({
                         </Button>
                     </div>
                 </Modal>
+            ) : null}
+
+            {redirectHost ? (
+                <RedirectForm
+                    row={{ id: 0, host: redirectHost, target: "", code: 301, isActive: true, softDeleted: false }}
+                    lockHost
+                    title={`Redirect ${redirectHost}`}
+                    onClose={() => setRedirectHost(null)}
+                    onSaved={() => {
+                        setRedirectHost(null);
+                        void onSaved();
+                    }}
+                />
             ) : null}
         </div>
     );

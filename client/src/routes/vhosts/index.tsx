@@ -168,7 +168,7 @@ function VHostsShell({ active }: { active: Section }) {
                         ) : active === "redirects" ? (
                             <RedirectsView rows={manage?.redirects ?? []} onSaved={loadState} />
                         ) : (
-                            <OrphansView orphans={dry?.orphans ?? []} live={state.liveReload} busy={pruning} onPrune={pruneOrphans} />
+                            <OrphansView orphans={dry?.orphans ?? []} live={state.liveReload} busy={pruning} onPrune={pruneOrphans} onSaved={loadState} />
                         )}
                     </main>
                 </div>

@@ -73,6 +73,7 @@ func TestValidateRedirect_Rejections(t *testing.T) {
 		"empty target":    {Host: "x.com", Target: "", Code: 301},
 		"relative target": {Host: "x.com", Target: "/somewhere", Code: 301},
 		"bad code":        {Host: "x.com", Target: "https://new.com", Code: 307},
+		"self redirect":   {Host: "x.com", Target: "https://x.com/moved", Code: 301},
 	}
 	for name, in := range cases {
 		if _, err := ValidateRedirect(in, g); err == nil {

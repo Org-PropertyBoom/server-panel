@@ -3,7 +3,8 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, UrlLink, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type ManageRow, Pill, UrlLink, ViewHeader } from "./shared";
+import RedirectForm from "./redirect-form";
 
 // RedirectsView manages platform_redirect_hosts — host → URL redirects answered at
 // the edge. Full CRUD; live on the next global reconcile.
@@ -99,57 +100,3 @@ export default function RedirectsView({ rows, onSaved }: { rows: ManageRow[]; on
     );
 }
 
-function RedirectForm({ row, onClose, onSaved }: { row: ManageRow; onClose: () => void; onSaved: () => void }) {
-    const [host, setHost] = useState(row.host);
-    const [target, setTarget] = useState(row.target);
-    const [code, setCode] = useState(row.code ?? 301);
-    const [isActive, setIsActive] = useState(row.isActive);
-    const [saving, setSaving] = useState(false);
-
-    const save = async () => {
-        setSaving(true);
-        try {
-            const res = await fetch("/post/vhost/redirect", {
-                method: row.id === 0 ? "POST" : "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: row.id, host: host.trim(), target: target.trim(), code, isActive }),
-            });
-            if (!res.ok) {
-                toast.error((await res.text()).trim() || res.statusText);
-                return;
-            }
-            toast.success(`${host.trim()} saved`);
-            onSaved();
-        } catch (err) {
-            toast.error(`Save failed: ${String(err)}`);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    return (
-        <Modal onClose={onClose} title={row.id === 0 ? "Add redirect" : "Edit redirect"}>
-            <div className="space-y-3">
-                <Field label="Hostname">
-                    <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="old.example.com" className={inputCls} autoFocus />
-                </Field>
-                <Field label="Target URL">
-                    <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://new.example.com" className={inputCls} />
-                </Field>
-                <Field label="Status code">
-                    <select value={code} onChange={(e) => setCode(Number(e.target.value))} className={inputCls}>
-                        <option value={301}>301 — Permanent</option>
-                        <option value={302}>302 — Found (temporary)</option>
-                        <option value={307}>307 — Temporary (keep method)</option>
-                        <option value={308}>308 — Permanent (keep method)</option>
-                    </select>
-                </Field>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-                    Active
-                </label>
-            </div>
-            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target.trim()} />
-        </Modal>
-    );
-}
