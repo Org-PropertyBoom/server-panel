@@ -562,6 +562,40 @@ func (v *VhostEngineService) AnnotateContainers(ctx context.Context, containers 
 	return containers
 }
 
+// RedirectTarget is a suggested redirect destination — an active tenant website
+// domain (with its website name), for the redirect-target combobox.
+type RedirectTarget struct {
+	Domain    string `json:"domain"`
+	Website   string `json:"website,omitempty"`
+	WebsiteID int64  `json:"websiteId,omitempty"`
+}
+
+// RedirectTargets lists the active tenant domains (website_hosts) as redirect
+// destination suggestions, joined to the website name. Read-only; empty when no
+// active source. Sorted by domain.
+func (v *VhostEngineService) RedirectTargets(ctx context.Context) ([]RedirectTarget, error) {
+	if _, ok := v.sources.ActiveSource(); !ok {
+		return nil, nil
+	}
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	snap, err := conn.ReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []RedirectTarget
+	for _, r := range snap.Rows {
+		if r.Table == "website_hosts" && r.Desired() {
+			out = append(out, RedirectTarget{Domain: r.Host, Website: r.WebsiteName, WebsiteID: r.WebsiteID})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
+	return out, nil
+}
+
 // Reconcile applies desired state: render → validate (adapt) → backup → reload.
 // GATED: refuses unless CADDY_LIVE_RELOAD is on.
 func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, error) {

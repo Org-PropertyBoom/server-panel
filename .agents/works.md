@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Redirect target combobox (tenant-domain suggestions) + proper link styling
+
+- Goal: (1) the redirect Target URL becomes a type-ahead combobox — free-type OR pick a tenant domain; (2) fix the clickable links to actually LOOK like links (Owner: color is the primary cue, not just hover-underline).
+- Files changed: backend `services/caddy_engine.go` `RedirectTarget{domain,website,websiteId}` + `RedirectTargets(ctx)` (active source website_hosts desired → domain + website name, sorted); `routes/post/vhost` `RedirectTargetsHandler` + `GET /post/vhost/redirect-targets` (root-only, read-only). Frontend `redirect-form.tsx` — the Target field is now a combobox: fetches suggestions on open, filters by typed text (scheme-stripped) against domain+website, excludes the source host, pick fills `https://<domain>` (onMouseDown to beat blur); free-type unchanged; used by BOTH the Redirects tab and orphan→Redirect (same component). Link styling: `shared.tsx` HostLink/UrlLink now use a shared `linkCls` — sky link color + underline + underline-offset + a trailing ↗ ExternalLink icon (new-tab cue); `containers/index.tsx` Routes chips get the same link treatment. Internal 127.0.0.1:PORT upstreams stay plain mono.
+- Important decisions: suggestions are DOMAINS (unambiguous), each labeled with its website (#id name); read-only from the active source. Combobox is lightweight (no dep) — input + filtered dropdown, blur-delayed close. Link color = sky (standard link blue, theme-aware) since the app's primary is a neutral, so "primary" alone didn't read as a link.
+- Validation: `tsc --noEmit` 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; `go test ./services/caddy/...` pass.
+
 ### 2026-07-21 - Orphan → Redirect (convert a moved domain to a 301 instead of pruning) + clickable hosts
 
 - Goal: give orphans a non-destructive exit — a domain that MOVED (old website → new domain) becomes a 301 redirect (preserves old links/SEO) instead of Prune (which kills them). Also (same session) made hostnames/targets clickable so an operator can check a site is live before acting.

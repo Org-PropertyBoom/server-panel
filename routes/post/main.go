@@ -82,6 +82,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("POST /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("PUT /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("DELETE /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("GET /post/vhost/redirect-targets", postOnly(deps.Startup, postvhost.RedirectTargetsHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("PUT /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("DELETE /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))

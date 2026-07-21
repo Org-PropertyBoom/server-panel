@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Field, FormActions, inputCls, type ManageRow, Modal } from "./shared";
+
+type RedirectTarget = { domain: string; website?: string; websiteId?: number };
 
 function targetHost(t: string): string {
     try {
@@ -32,8 +34,25 @@ export default function RedirectForm({
     const [code, setCode] = useState(row.code ?? 301);
     const [isActive, setIsActive] = useState(row.isActive);
     const [saving, setSaving] = useState(false);
+    const [targets, setTargets] = useState<RedirectTarget[]>([]);
+    const [showSuggest, setShowSuggest] = useState(false);
+
+    useEffect(() => {
+        void fetch("/post/vhost/redirect-targets", { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setTargets((d?.targets as RedirectTarget[]) ?? []))
+            .catch(() => setTargets([]));
+    }, []);
 
     const selfLoop = target.trim() !== "" && targetHost(target) === host.trim().toLowerCase() && host.trim() !== "";
+
+    // Suggestions filtered by what's typed (scheme stripped), excluding the source host.
+    const q = target.replace(/^https?:\/\//i, "").toLowerCase().trim();
+    const hostLower = host.trim().toLowerCase();
+    const suggestions = targets
+        .filter((t) => t.domain.toLowerCase() !== hostLower)
+        .filter((t) => q === "" || t.domain.toLowerCase().includes(q) || (t.website ?? "").toLowerCase().includes(q))
+        .slice(0, 8);
 
     const save = async () => {
         setSaving(true);
@@ -69,14 +88,47 @@ export default function RedirectForm({
                         autoFocus={!lockHost}
                     />
                 </Field>
-                <Field label="Target URL" hint="Where this host should 301/302 to — an absolute URL.">
-                    <input
-                        value={target}
-                        onChange={(e) => setTarget(e.target.value)}
-                        placeholder="https://new.example.com"
-                        className={inputCls}
-                        autoFocus={lockHost}
-                    />
+                <Field label="Target URL" hint="Type any URL, or pick one of your tenant domains below.">
+                    <div className="relative">
+                        <input
+                            value={target}
+                            onChange={(e) => {
+                                setTarget(e.target.value);
+                                setShowSuggest(true);
+                            }}
+                            onFocus={() => setShowSuggest(true)}
+                            onBlur={() => window.setTimeout(() => setShowSuggest(false), 120)}
+                            placeholder="https://new.example.com"
+                            className={inputCls}
+                            autoFocus={lockHost}
+                            autoComplete="off"
+                        />
+                        {showSuggest && suggestions.length > 0 ? (
+                            <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+                                {suggestions.map((t) => (
+                                    <li key={t.domain}>
+                                        <button
+                                            type="button"
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setTarget(`https://${t.domain}`);
+                                                setShowSuggest(false);
+                                            }}
+                                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-muted"
+                                        >
+                                            <span className="font-mono text-foreground">{t.domain}</span>
+                                            {t.website ? (
+                                                <span className="truncate text-[11px] text-muted-foreground">
+                                                    {t.websiteId ? `#${t.websiteId} ` : ""}
+                                                    {t.website}
+                                                </span>
+                                            ) : null}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : null}
+                    </div>
                 </Field>
                 {selfLoop ? (
                     <p className="text-[11px] text-destructive">Target host equals the source host — that's a redirect loop.</p>

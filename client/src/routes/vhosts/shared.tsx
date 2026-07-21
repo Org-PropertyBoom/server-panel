@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Database, Loader2 } from "lucide-react";
+import { Database, ExternalLink, Loader2 } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
 
@@ -253,6 +253,12 @@ export function EmptyBanner({ title, body }: { title: string; body: string }) {
     );
 }
 
+// linkCls is the standard clickable-link treatment: link color + underline +
+// pointer, so it reads as a link (not body text). Pairs with a trailing ↗ icon
+// since these open in a new tab.
+const linkCls =
+    "inline-flex items-center gap-0.5 text-sky-600 underline decoration-sky-600/30 underline-offset-2 hover:decoration-sky-600 dark:text-sky-400 dark:decoration-sky-400/30 dark:hover:decoration-sky-400";
+
 // HostLink renders a hostname as a link to https://<host> in a new tab — so an
 // operator can check whether a site is still live (e.g. before pruning an orphan).
 export function HostLink({ host, className }: { host: string; className?: string }) {
@@ -262,10 +268,11 @@ export function HostLink({ host, className }: { host: string; className?: string
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className={`hover:text-primary hover:underline ${className ?? ""}`}
+            className={`${linkCls} ${className ?? ""}`}
             title={`Open https://${host} in a new tab`}
         >
             {host}
+            <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
         </a>
     );
 }
@@ -278,10 +285,11 @@ export function UrlLink({ url, className }: { url: string; className?: string })
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className={`hover:text-primary hover:underline ${className ?? ""}`}
+            className={`${linkCls} ${className ?? ""}`}
             title={`Open ${url} in a new tab`}
         >
             {url}
+            <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
         </a>
     );
 }

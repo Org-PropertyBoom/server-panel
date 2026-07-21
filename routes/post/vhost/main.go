@@ -212,6 +212,23 @@ func GateHandler(sessions *services.SessionService, engine *services.VhostEngine
 	})
 }
 
+// RedirectTargetsHandler returns the active tenant domains as redirect-target
+// suggestions for the combobox (read-only).
+func RedirectTargetsHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		targets, err := engine.RedirectTargets(r.Context())
+		if err != nil {
+			writeJSON(w, map[string]any{"targets": []any{}})
+			return
+		}
+		writeJSON(w, map[string]any{"targets": targets})
+	})
+}
+
 // RenderedHandler is the READ-ONLY rendered-vhost status feed for the stack apps.
 // No session/token — the route is gated to loopback + the Docker bridge by
 // intranetOnly. It reports server-panel's own view (files it owns + the shared DB

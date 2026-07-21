@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Container as ContainerIcon, FileCode2, FileText, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
+import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -39,10 +39,11 @@ function RouteCell({ container }: { container: ContainerRecord }) {
                     href={`https://${h}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground hover:text-primary hover:underline"
+                    className="inline-flex items-center gap-0.5 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-600 underline decoration-sky-600/30 underline-offset-2 hover:decoration-sky-600 dark:text-sky-400 dark:decoration-sky-400/30"
                     title={`Open https://${h} in a new tab`}
                 >
                     {h}
+                    <ExternalLink className="h-2.5 w-2.5 opacity-60" />
                 </a>
             ))}
             {tenants > 0 ? (
