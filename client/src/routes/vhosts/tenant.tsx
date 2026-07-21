@@ -1,7 +1,21 @@
 import { useMemo, useState } from "react";
-import { Lock, Search } from "lucide-react";
+import { ExternalLink, Lock, Search } from "lucide-react";
 
 import { EmptyBanner, HostLink, type HostHealth, type HostRow, rowTint, StatusChip, UnreachableChip, ViewHeader } from "./shared";
+
+// Stack dashboard host per server_stack — the deep-link target for "Manage in
+// stack" (tenant rows are stack-owned; edits/deletes happen there, not here).
+const STACK_DASHBOARD: Record<string, string> = {
+    phalcon: "app.propertyboom.co",
+    laravel: "la-app.propertyboom.co",
+    golang: "go-app.propertyboom.co",
+};
+
+function manageInStackUrl(host: string, stack?: string): string | null {
+    const dash = stack ? STACK_DASHBOARD[stack] : undefined;
+    if (!dash) return null;
+    return `https://${dash}/dashboard/website-hosts?search=${encodeURIComponent(host)}`;
+}
 
 // TenantView renders website_hosts — the stack-owned tenant sites. READ-ONLY here:
 // the stack apps own these rows; the panel only views + monitors drift + health.
@@ -33,7 +47,7 @@ export default function TenantView({ hosts, health }: { hosts: HostRow[]; health
         <div>
             <ViewHeader
                 title="Tenant hosts"
-                subtitle="website_hosts — tenant sites, owned by the stack apps. Read-only here; drift is applied by the global reconcile."
+                subtitle="website_hosts — tenant sites, owned by the stack apps. Read-only here; add/edit/delete via 'Manage in stack'. Drift is applied by the global reconcile."
                 actions={
                     <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground">
                         <Lock className="h-3.5 w-3.5" />
@@ -92,6 +106,7 @@ export default function TenantView({ hosts, health }: { hosts: HostRow[]; health
                                             <th className="px-4 py-3 font-medium">Stack</th>
                                             <th className="px-4 py-3 font-medium">Upstream</th>
                                             <th className="px-4 py-3 font-medium">Status</th>
+                                            <th className="px-4 py-3 text-right font-medium">Manage</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border">
@@ -113,6 +128,22 @@ export default function TenantView({ hosts, health }: { hosts: HostRow[]; health
                                                         <StatusChip status={h.status} />
                                                         <UnreachableChip health={health[h.hostname]} />
                                                     </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-right">
+                                                    {manageInStackUrl(h.hostname, h.stack) ? (
+                                                        <a
+                                                            href={manageInStackUrl(h.hostname, h.stack) as string}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-primary"
+                                                            title={`Open ${h.hostname} in the ${h.stack} dashboard to add/edit/delete (tenant hosts are stack-owned)`}
+                                                        >
+                                                            Manage in stack
+                                                            <ExternalLink className="h-3 w-3" />
+                                                        </a>
+                                                    ) : (
+                                                        <span className="text-[11px] text-muted-foreground/50">—</span>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}

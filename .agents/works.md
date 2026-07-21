@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Tenant "Manage in stack ↗" deep-link (hub ruling: Tenant stays read-only)
+
+- Goal: Owner asked whether to prune vhost + delete website_hosts from server-panel. Hub RULED NO — website_hosts is stack-owned (Model A single writer); server-panel writing/deleting it = two writers = the coupling that was removed, and server-panel lacks the website business logic (primary-domain, UNIQUE(server_stack,host) reuse). The correct delete flow already works (delete in the stack dashboard → KnownHostsFile detects the removal → reconcile removes the vhost). Convenience instead: a per-row deep-link to the stack dashboard.
+- Files changed: `client/.../vhosts/tenant.tsx` — a "Manage" column with a "Manage in stack ↗" link per tenant row → `https://<stack-dashboard>/dashboard/website-hosts?search=<host>` (stack→dashboard: phalcon→app.propertyboom.co, laravel→la-app.propertyboom.co, golang→go-app.propertyboom.co; unknown stack → "—"). The hostname stays a live-site link (the earlier "open to check it serves" affordance is kept). Subtitle updated: "add/edit/delete via 'Manage in stack'".
+- Important decisions: Tenant stays strictly READ-ONLY (no website_hosts write path in server-panel) per the hub ruling — ownership matrix: Apps + Redirects = server-panel-owned (full CRUD); Tenant = stack-owned (read-only + deep-link). Stack→dashboard map hardcoded in the frontend (deployment-specific; matches the hub's given values) — easy to move to config later.
+- Validation: `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-21 - System host Backend field → combobox (container OR host:port)
 
 - Goal (Owner: "follow the hub"): the backend abstraction should honestly cover "container OR host process". The System host backend picker becomes a single combobox — pick a running container (port auto-fills) OR type any host:port (a host-level service like server-panel :2205). Relabel "Upstream" → "Backend". (Also: the Architect's ruling to NOT build a host-services/systemd inventory — noted, nothing built; server-panel-the-host-service is already the pinned cp.propertyweb.co row.)
