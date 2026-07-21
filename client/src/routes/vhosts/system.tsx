@@ -3,11 +3,13 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, Field, FormActions, inputCls, type ManageRow, Modal, Pill, ViewHeader } from "./shared";
+import { EmptyBanner, Field, FormActions, inputCls, type ManageRow, Modal, Pill, type Upstream, ViewHeader } from "./shared";
 
-// SystemView manages platform_hosts — panel-owned reverse proxies. Full CRUD; the
-// changes become live on the next global reconcile.
-export default function SystemView({ rows, stacks, onSaved }: { rows: ManageRow[]; stacks: string[]; onSaved: () => void }) {
+const CUSTOM = "__custom__";
+
+// SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
+// container (not just the code stacks). Full CRUD; live on the next global reconcile.
+export default function SystemView({ rows, upstreams, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
 
     const del = async (row: ManageRow) => {
@@ -35,7 +37,7 @@ export default function SystemView({ rows, stacks, onSaved }: { rows: ManageRow[
                         variant="outline"
                         size="sm"
                         className="gap-1.5"
-                        onClick={() => setEdit({ id: 0, host: "", serverStack: stacks[0] ?? "", target: "", isActive: true, softDeleted: false })}
+                        onClick={() => setEdit({ id: 0, host: "", serverStack: "", target: "", isActive: true, softDeleted: false })}
                     >
                         <Plus className="h-3.5 w-3.5" />
                         Add system host
@@ -51,7 +53,7 @@ export default function SystemView({ rows, stacks, onSaved }: { rows: ManageRow[
                             <thead className="border-b border-border bg-muted/40 text-muted-foreground">
                                 <tr>
                                     <th className="px-4 py-2.5 font-medium">Host</th>
-                                    <th className="px-4 py-2.5 font-medium">Stack</th>
+                                    <th className="px-4 py-2.5 font-medium">Service</th>
                                     <th className="px-4 py-2.5 font-medium">Upstream</th>
                                     <th className="px-4 py-2.5 font-medium">State</th>
                                     <th className="px-4 py-2.5 text-right font-medium">Actions</th>
@@ -88,7 +90,7 @@ export default function SystemView({ rows, stacks, onSaved }: { rows: ManageRow[
             {edit ? (
                 <HostForm
                     row={edit}
-                    stacks={stacks}
+                    upstreams={upstreams}
                     onClose={() => setEdit(null)}
                     onSaved={() => {
                         setEdit(null);
@@ -100,12 +102,16 @@ export default function SystemView({ rows, stacks, onSaved }: { rows: ManageRow[
     );
 }
 
-function HostForm({ row, stacks, onClose, onSaved }: { row: ManageRow; stacks: string[]; onClose: () => void; onSaved: () => void }) {
+function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstreams: Upstream[]; onClose: () => void; onSaved: () => void }) {
     const [host, setHost] = useState(row.host);
-    const [serverStack, setServerStack] = useState(row.serverStack ?? stacks[0] ?? "");
-    const [target, setTarget] = useState(row.target);
+    const matched = upstreams.find((u) => u.target === row.target);
+    const [sel, setSel] = useState(row.target ? (matched ? row.target : CUSTOM) : (upstreams[0]?.target ?? CUSTOM));
+    const [customTarget, setCustomTarget] = useState(matched ? "" : row.target);
     const [isActive, setIsActive] = useState(row.isActive);
     const [saving, setSaving] = useState(false);
+
+    const target = sel === CUSTOM ? customTarget.trim() : sel;
+    const serverStack = sel === CUSTOM ? "custom" : (upstreams.find((u) => u.target === sel)?.name ?? "system");
 
     const save = async () => {
         setSaving(true);
@@ -113,7 +119,7 @@ function HostForm({ row, stacks, onClose, onSaved }: { row: ManageRow; stacks: s
             const res = await fetch("/post/vhost/system", {
                 method: row.id === 0 ? "POST" : "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target: target.trim(), isActive }),
+                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target, isActive }),
             });
             if (!res.ok) {
                 toast.error((await res.text()).trim() || res.statusText);
@@ -132,26 +138,29 @@ function HostForm({ row, stacks, onClose, onSaved }: { row: ManageRow; stacks: s
         <Modal onClose={onClose} title={row.id === 0 ? "Add system host" : "Edit system host"}>
             <div className="space-y-3">
                 <Field label="Hostname">
-                    <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="app.example.com" className={inputCls} autoFocus />
+                    <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="dbs.example.com" className={inputCls} autoFocus />
                 </Field>
-                <Field label="Server stack" hint="Upstream port is derived from the stack — only known stacks are offered.">
-                    <select value={serverStack} onChange={(e) => setServerStack(e.target.value)} className={inputCls}>
-                        {stacks.map((s) => (
-                            <option key={s} value={s}>
-                                {s}
+                <Field label="Upstream" hint="The running container this host reverse-proxies to (synced from this server), or a custom host:port.">
+                    <select value={sel} onChange={(e) => setSel(e.target.value)} className={inputCls}>
+                        {upstreams.map((u) => (
+                            <option key={u.target} value={u.target}>
+                                {u.name} — {u.target}
                             </option>
                         ))}
+                        <option value={CUSTOM}>Custom host:port…</option>
                     </select>
                 </Field>
-                <Field label="Target" hint="Upstream host:port the reverse_proxy dials.">
-                    <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="127.0.0.1:8005" className={inputCls} />
-                </Field>
+                {sel === CUSTOM ? (
+                    <Field label="Custom target" hint="Upstream host:port the reverse_proxy dials.">
+                        <input value={customTarget} onChange={(e) => setCustomTarget(e.target.value)} placeholder="127.0.0.1:9001" className={inputCls} />
+                    </Field>
+                ) : null}
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                     <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
                     Active (rendered to a vhost file)
                 </label>
             </div>
-            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target.trim()} />
+            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target} />
         </Modal>
     );
 }

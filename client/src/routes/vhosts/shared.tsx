@@ -37,10 +37,16 @@ export type ManageRow = {
     softDeleted: boolean;
 };
 
+export type Upstream = {
+    name: string; // container name
+    target: string; // 127.0.0.1:<port>
+};
+
 export type ManageSets = {
     systemHosts: ManageRow[];
     redirects: ManageRow[];
     stacks: string[];
+    upstreams: Upstream[];
 };
 
 export type HostHealth = {
@@ -112,6 +118,7 @@ export function normalizeState(s: VhostState): VhostState {
             systemHosts: arr(s.manage.systemHosts),
             redirects: arr(s.manage.redirects),
             stacks: arr(s.manage.stacks),
+            upstreams: arr(s.manage.upstreams),
         };
     }
     if (!s.health) s.health = {};

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,11 +27,12 @@ import (
 //
 // The host-source Data Source name is the settings key "vhost_data_source".
 type VhostEngineService struct {
-	sources  *DataSourceService
-	settings *SettingsService
-	cfg      caddyconfig.Config
-	engine   *reconcile.Engine
-	health   *HealthProbeService // alert-only reachability probe (read-only), attached post-construction
+	sources    *DataSourceService
+	settings   *SettingsService
+	cfg        caddyconfig.Config
+	engine     *reconcile.Engine
+	health     *HealthProbeService // alert-only reachability probe (read-only), attached post-construction
+	containers *ContainerService   // for the system-host upstream picker (running containers + published ports)
 }
 
 // AttachHealth wires the reachability probe so State can surface it. Set once at
@@ -63,7 +65,87 @@ func (v *VhostEngineService) TenantHosts(ctx context.Context) ([]string, error) 
 func NewVhostEngineService(sources *DataSourceService, settings *SettingsService) *VhostEngineService {
 	cfg := caddyconfig.Load()
 	engine := reconcile.NewEngine(cfg, caddyctl.Adapter{}, caddyctl.NewClient(cfg.CaddyAdminURL))
-	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine}
+	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine, containers: NewContainerService()}
+}
+
+// Upstream is one reverse-proxy target a system host can point at — synced from a
+// running container's published host port. The set is broader than the code
+// stacks: any container (nocodb, phpmyadmin, minio, …) is a valid system upstream.
+type Upstream struct {
+	Name   string `json:"name"`   // container name (display label)
+	Target string `json:"target"` // 127.0.0.1:<published host port>
+}
+
+// containerUpstreams lists the running containers' published host ports as
+// selectable upstreams (deduped by target, sorted). Server-panel is the source of
+// truth for what's runnable here — so the system-host picker stays in sync with the
+// host instead of a hardcoded stack list.
+func (v *VhostEngineService) containerUpstreams() []Upstream {
+	var out []Upstream
+	seen := map[string]bool{}
+	for _, c := range v.containers.ListAll() {
+		if !containerRunning(c) {
+			continue
+		}
+		for _, port := range publishedHostPorts(c.Ports) {
+			target := "127.0.0.1:" + port
+			if seen[target] {
+				continue
+			}
+			seen[target] = true
+			out = append(out, Upstream{Name: c.Name, Target: target})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out
+}
+
+func containerRunning(c Container) bool {
+	return strings.EqualFold(strings.TrimSpace(c.State), "running") ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.Status)), "up")
+}
+
+// publishedHostPorts extracts the distinct host ports from docker/podman port
+// strings like "0.0.0.0:9001->8080/tcp" or "[::]:9001->8080/tcp" (entries without
+// a "->" are container-internal and skipped).
+func publishedHostPorts(ports []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range ports {
+		arrow := strings.Index(p, "->")
+		if arrow < 0 {
+			continue
+		}
+		left := p[:arrow]
+		colon := strings.LastIndex(left, ":")
+		if colon < 0 {
+			continue
+		}
+		port := strings.TrimSpace(left[colon+1:])
+		if port == "" || seen[port] || !isAllDigits(port) {
+			continue
+		}
+		seen[port] = true
+		out = append(out, port)
+	}
+	return out
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 const liveReloadSettingKey = "vhost_live_reload"
@@ -135,6 +217,7 @@ type ManageSets struct {
 	SystemHosts []ManageRow `json:"systemHosts"`
 	Redirects   []ManageRow `json:"redirects"`
 	Stacks      []string    `json:"stacks"`
+	Upstreams   []Upstream  `json:"upstreams"` // running containers a system host can proxy to
 }
 
 // VhostStateResult is the read-only drift view returned to the panel.
@@ -196,7 +279,7 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 // platform_redirect_hosts) into the editable UI shape, carrying primary keys.
 // website_hosts are intentionally excluded — stack-owned, read-only here.
 func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
-	m := &ManageSets{SystemHosts: []ManageRow{}, Redirects: []ManageRow{}, Stacks: v.cfg.Stacks()}
+	m := &ManageSets{SystemHosts: []ManageRow{}, Redirects: []ManageRow{}, Stacks: v.cfg.Stacks(), Upstreams: v.containerUpstreams()}
 	for _, r := range snap.Rows {
 		if r.SoftDeleted {
 			continue

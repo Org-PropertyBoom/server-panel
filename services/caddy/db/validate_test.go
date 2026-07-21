@@ -20,13 +20,30 @@ func TestValidateSystemHost_OK(t *testing.T) {
 	}
 }
 
+func TestValidateSystemHost_AllowsAnyServiceLabel(t *testing.T) {
+	// A system host proxies to ANY container, so server_stack is a free label
+	// (not restricted to the code stacks); empty defaults to "system".
+	in, err := ValidateSystemHost(SystemHostInput{Host: "dbs.cobds.com", ServerStack: "nocodb", Target: "127.0.0.1:9001"}, guard())
+	if err != nil {
+		t.Fatalf("infra service label must be allowed: %v", err)
+	}
+	if in.ServerStack != "nocodb" {
+		t.Errorf("ServerStack = %q, want nocodb", in.ServerStack)
+	}
+	in2, err := ValidateSystemHost(SystemHostInput{Host: "y.com", ServerStack: "", Target: "127.0.0.1:9002"}, guard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in2.ServerStack != "system" {
+		t.Errorf("empty stack should default to system, got %q", in2.ServerStack)
+	}
+}
+
 func TestValidateSystemHost_Rejections(t *testing.T) {
 	g := guard()
 	cases := map[string]SystemHostInput{
 		"empty host":        {Host: "", ServerStack: "phalcon", Target: "127.0.0.1:8002"},
 		"protected domain":  {Host: "app.propertyboom.co", ServerStack: "phalcon", Target: "127.0.0.1:8002"},
-		"empty stack":       {Host: "x.com", ServerStack: "", Target: "127.0.0.1:8002"},
-		"unknown stack":     {Host: "x.com", ServerStack: "perl", Target: "127.0.0.1:8002"},
 		"empty target":      {Host: "x.com", ServerStack: "phalcon", Target: ""},
 		"target not hostpt": {Host: "x.com", ServerStack: "phalcon", Target: "not-a-host-port"},
 		"target is url":     {Host: "x.com", ServerStack: "phalcon", Target: "http://127.0.0.1:8002"},

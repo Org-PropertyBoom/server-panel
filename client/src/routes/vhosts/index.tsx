@@ -196,7 +196,7 @@ function VHostsShell({ active }: { active: Section }) {
                         ) : active === "tenant" ? (
                             <TenantView hosts={tenantHosts} health={state.health ?? {}} />
                         ) : active === "system" ? (
-                            <SystemView rows={manage?.systemHosts ?? []} stacks={manage?.stacks ?? []} onSaved={loadState} />
+                            <SystemView rows={manage?.systemHosts ?? []} upstreams={manage?.upstreams ?? []} onSaved={loadState} />
                         ) : active === "redirects" ? (
                             <RedirectsView rows={manage?.redirects ?? []} onSaved={loadState} />
                         ) : (

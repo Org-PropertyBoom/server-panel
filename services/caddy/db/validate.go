@@ -31,11 +31,11 @@ func ValidateSystemHost(in SystemHostInput, g Guard) (SystemHostInput, error) {
 	if g.IsProtected != nil && g.IsProtected(in.Host) {
 		return in, fmt.Errorf("%q is a protected domain — it is a static Caddyfile block and cannot be managed as a row", in.Host)
 	}
+	// server_stack is a free label for a system host (a service/container name), NOT
+	// restricted to the code stacks — a system host proxies to ANY container's
+	// upstream, not just phalcon/laravel/golang/rust. The upstream is `target`.
 	if in.ServerStack == "" {
-		return in, fmt.Errorf("server_stack is required")
-	}
-	if g.StackKnown != nil && !g.StackKnown(in.ServerStack) {
-		return in, fmt.Errorf("unknown server_stack %q — not in the stack->port map", in.ServerStack)
+		in.ServerStack = "system"
 	}
 	if in.Target == "" {
 		return in, fmt.Errorf("target (upstream host:port) is required")
