@@ -3,6 +3,7 @@ package vhost
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -178,6 +179,36 @@ func OrphanPruneHandler(sessions *services.SessionService, engine *services.Vhos
 		}
 		res, _ := engine.PruneOrphans(r.Context(), names)
 		writeJSON(w, res)
+	})
+}
+
+// GateHandler flips the runtime live-reconcile gate (persisted setting, immediate,
+// no restart). Root-only + authed via postOnly. The coded safety net (first-pass
+// suppression, dashboard assert, validate + backup before reload, drop-guard) is
+// unaffected — this only flips the operational gate; disarm is always safe.
+func GateHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := engine.SetLiveReload(body.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("vhost live-reconcile gate toggled: enabled=%v", body.Enabled)
+		writeJSON(w, map[string]bool{"liveReload": engine.LiveReloadEnabled()})
 	})
 }
 

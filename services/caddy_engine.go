@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,10 +66,31 @@ func NewVhostEngineService(sources *DataSourceService, settings *SettingsService
 	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine}
 }
 
+const liveReloadSettingKey = "vhost_live_reload"
+
 // LiveReloadEnabled reports whether the live reconcile+reload path is switched on.
-// Default OFF — the code ships inert; an operator enables it with CADDY_LIVE_RELOAD=1
-// once the mounts/infra are present (a deliberate, per-host activation).
+// The runtime source of truth is the persisted setting (toggled from the UI, takes
+// effect immediately, no restart). Until it has EVER been set, the value is seeded
+// from the CADDY_LIVE_RELOAD env var — so an install already env-armed stays armed
+// when this ships. Default OFF.
 func (v *VhostEngineService) LiveReloadEnabled() bool {
+	switch v.settings.Get(liveReloadSettingKey, "") {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	return envLiveReloadArmed()
+}
+
+// SetLiveReload persists the runtime gate. After the first toggle the setting is
+// authoritative; the env var only seeds the never-set case. Disarming is always
+// safe (re-inerts the engine; on-disk files stay).
+func (v *VhostEngineService) SetLiveReload(enabled bool) error {
+	return v.settings.Set(liveReloadSettingKey, strconv.FormatBool(enabled))
+}
+
+func envLiveReloadArmed() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CADDY_LIVE_RELOAD"))) {
 	case "1", "true", "yes", "on":
 		return true

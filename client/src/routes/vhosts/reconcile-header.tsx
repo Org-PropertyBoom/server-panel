@@ -12,6 +12,7 @@ export default function ReconcileHeader({
     result,
     onChangeSource,
     onApply,
+    onToggleGate,
     onDismissResult,
 }: {
     state: VhostState;
@@ -21,9 +22,11 @@ export default function ReconcileHeader({
     result: ReconcileResult | null;
     onChangeSource: (name: string) => void;
     onApply: (kind: "reconcile" | "reload") => void;
+    onToggleGate: (enabled: boolean) => void;
     onDismissResult: () => void;
 }) {
     const [confirm, setConfirm] = useState<null | "reconcile" | "reload">(null);
+    const [armConfirm, setArmConfirm] = useState(false);
     const dry = state.dryRun;
     const live = state.liveReload;
     const hostsOnDisk = dry?.files.length ?? 0;
@@ -79,15 +82,16 @@ export default function ReconcileHeader({
                 </div>
             </div>
 
-            {/* live-reload gate banner + optional preview */}
+            {/* live-reload gate toggle + banner + optional preview */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 pb-3">
+                <GateSwitch live={live} onToggle={(v) => (v ? setArmConfirm(true) : onToggleGate(false))} />
                 <span
                     className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
                         live ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
                     }`}
                 >
                     {live ? <ShieldCheck className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
-                    {live ? "Live reconcile armed — validated adapt → reload" : "Live reconcile gated (CADDY_LIVE_RELOAD off) — edits save; no reload until an operator arms it"}
+                    {live ? "Live reconcile armed — validated adapt → reload" : "Live reconcile gated — edits save; no reload until armed"}
                 </span>
                 {pending > 0 ? (
                     <span className="text-[11px] text-muted-foreground">
@@ -117,7 +121,56 @@ export default function ReconcileHeader({
                     }}
                 />
             ) : null}
+
+            {armConfirm ? (
+                <Modal onClose={() => setArmConfirm(false)} title="Arm live reconcile?">
+                    <p className="text-xs text-muted-foreground">
+                        Once armed, <b>Reconcile</b> and <b>Prune</b> will render vhost files, validate with <code>caddy adapt</code>, and reload
+                        Caddy through the admin API. The safety net stays on — first-pass removal suppression, dashboard assert, validate +
+                        backup before every reload, and the drop-guard. You can disarm again at any time (instant, safe).
+                    </p>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setArmConfirm(false)}>
+                            Cancel
+                        </Button>
+                        <Button size="sm" className="gap-2" onClick={() => { setArmConfirm(false); onToggleGate(true); }}>
+                            <ShieldCheck className="h-4 w-4" />
+                            Arm live reconcile
+                        </Button>
+                    </div>
+                </Modal>
+            ) : null}
         </div>
+    );
+}
+
+// GateSwitch is the runtime arm/disarm control. Turning ON is guarded by a confirm
+// (handled by the caller); turning OFF is instant — disarming is always safe.
+function GateSwitch({ live, onToggle }: { live: boolean; onToggle: (enabled: boolean) => void }) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={live}
+            onClick={() => onToggle(!live)}
+            className="inline-flex items-center gap-2 text-[11px] font-semibold"
+            title={live ? "Disarm live reconcile" : "Arm live reconcile"}
+        >
+            <span
+                className={`relative h-4 w-7 rounded-full transition-colors ${
+                    live ? "bg-emerald-500" : "bg-muted-foreground/30"
+                }`}
+            >
+                <span
+                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all ${
+                        live ? "left-3.5" : "left-0.5"
+                    }`}
+                />
+            </span>
+            <span className={live ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                Live reconcile: {live ? "ON" : "OFF"}
+            </span>
+        </button>
     );
 }
 

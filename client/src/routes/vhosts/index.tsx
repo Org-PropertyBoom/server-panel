@@ -115,6 +115,24 @@ function VHostsShell({ active }: { active: Section }) {
         }
     };
 
+    const toggleGate = async (enabled: boolean) => {
+        try {
+            const res = await fetch("/post/vhost/gate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled }),
+            });
+            if (!res.ok) {
+                toast.error(`Could not ${enabled ? "arm" : "disarm"}: ${(await res.text()).trim() || res.statusText}`);
+                return;
+            }
+            toast.success(enabled ? "Live reconcile armed" : "Live reconcile disarmed");
+            await loadState();
+        } catch (err) {
+            toast.error(`Gate toggle failed: ${String(err)}`);
+        }
+    };
+
     const pruneOrphans = async (names: string[]) => {
         setPruning(true);
         try {
@@ -154,6 +172,7 @@ function VHostsShell({ active }: { active: Section }) {
                         result={result}
                         onChangeSource={changeSource}
                         onApply={applyReconcile}
+                        onToggleGate={toggleGate}
                         onDismissResult={() => setResult(null)}
                     />
                 ) : null}

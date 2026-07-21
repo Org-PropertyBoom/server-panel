@@ -23,6 +23,15 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Live-reconcile gate: runtime UI toggle (was env-only) + update cache-bust
+
+- Goal (gate toggle): make arming/disarming the live-reconcile gate a one-click UI switch instead of an env edit + restart, WITHOUT weakening the coded safety net. Ships DISARMED (seeds from CADDY_LIVE_RELOAD which is unset → off), so building it arms nothing.
+- Files changed: `services/caddy_engine.go` — `LiveReloadEnabled()` now reads the persisted setting `vhost_live_reload` (immediate, no restart); until it has ever been set it SEEDS from the CADDY_LIVE_RELOAD env (so an already-env-armed install stays armed); added `SetLiveReload(bool)`. New root-only authed `POST /post/vhost/gate {enabled}` (`GateHandler`, registered in `routes/post/main.go`) writes the setting, logs the toggle, returns the new state. UI: `reconcile-header.tsx` gained a `GateSwitch` in the global header ("Live reconcile: ON/OFF") — arming opens a confirm modal (explains reconcile/prune will write + reload, safety net stays on), disarming is instant; shell `index.tsx` `toggleGate` POSTs + reloads state.
+- Important decisions: the toggle flips ONLY the operational gate — first-pass removal suppression, assertDashboardPresent, validate-before-reload, backup-before-reload, and the drop-guard always apply when armed; disarm is always safe (re-inerts; on-disk files stay). Env stays an optional SEED for the never-set case (a hard env kill-switch override is a deliberate later tightening, not now). Setting is the runtime source of truth after the first toggle. The gate endpoint writes via the engine (not the public settings route), so the key needs no settings-route allowlisting.
+- Also (separate fix, same session): `services/update.go` — the self-updater fetched version.json + binary from GitHub raw/main (Fastly, max-age=300), so a dist push wasn't visible for ~5 min and "Check Update" wrongly said "latest". Added a `_cb` cache-bust query param + no-cache headers so each fetch revalidates against origin — pushes are visible on the next check.
+- Validation: `go test ./services/caddy/...` pass; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; `tsc --noEmit` 0; `npm run build` OK; gofmt clean.
+- Known follow-up: the runtime toggle needs deploy to appear; the cache-bust also needs this one deploy to land (chicken-and-egg — the running old binary is still ~5-min-cached for this update). Parked (awaiting Owner's direct go-ahead): stack reconcile-hook (#1). Optional, on request: hard env kill-switch override; opt-in auto-updater.
+
 ### 2026-07-21 - VHosts health probe — alert-only reachability (DNS + TLS)
 
 - Goal: Add the orthogonal signal reconcile can't give — "is this tenant domain actually pointing at us and serving a valid cert?" — because a domain can expire/mis-point while its DB row is untouched, so reconcile stays happy (green "In sync") on a dead host. ALERT-ONLY: never triggers a write/removal.
