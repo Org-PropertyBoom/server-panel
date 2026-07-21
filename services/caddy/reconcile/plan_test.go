@@ -111,6 +111,39 @@ func TestBuildPlan_RemovesOnlyKnownDisabledWithFile(t *testing.T) {
 	}
 }
 
+func TestBuildPlanWithKnown_DeletedTenantBecomesRemove(t *testing.T) {
+	// A tenant mapping previously desired (knownDesired) and now GONE from the DB
+	// (website_hosts hard-delete) — with a healthy non-empty read — is a REMOVE, not
+	// an orphan, so the deleted site stops serving. A never-seen file stays orphan.
+	snap := db.Snapshot{Rows: []db.Row{
+		{Table: "website_hosts", Host: "stillhere.com", ServerStack: "phalcon", IsActive: true},
+	}}
+	folder := []string{"stillhere.com.caddy", "deleted-tenant.com.caddy", "foreign.com.caddy"}
+	known := map[string]bool{"deleted-tenant.com": true}
+	p := BuildPlanWithKnown(testCfg(), snap, folder, known)
+
+	if len(p.Removes) != 1 || p.Removes[0] != "deleted-tenant.com.caddy" {
+		t.Errorf("Removes = %v, want [deleted-tenant.com.caddy]", p.Removes)
+	}
+	if len(p.Orphans) != 1 || p.Orphans[0] != "foreign.com.caddy" {
+		t.Errorf("Orphans = %v, want [foreign.com.caddy] (never seen backed → stays orphan)", p.Orphans)
+	}
+}
+
+func TestBuildPlanWithKnown_EmptyReadNeverReclassifies(t *testing.T) {
+	// Suspicious empty desired set (DB blip): even a previously-desired host stays a
+	// conservative orphan — never a mass wipe.
+	folder := []string{"deleted-tenant.com.caddy"}
+	known := map[string]bool{"deleted-tenant.com": true}
+	p := BuildPlanWithKnown(testCfg(), db.Snapshot{}, folder, known)
+	if len(p.Removes) != 0 {
+		t.Errorf("empty read must reclassify nothing; Removes = %v", p.Removes)
+	}
+	if len(p.Orphans) != 1 || p.Orphans[0] != "deleted-tenant.com.caddy" {
+		t.Errorf("Orphans = %v, want the file kept as an orphan on an empty read", p.Orphans)
+	}
+}
+
 func TestBuildPlan_DisabledButNoFileIsNotARemove(t *testing.T) {
 	snap := db.Snapshot{Rows: []db.Row{
 		{Table: "website_hosts", Host: "gone.com", ServerStack: "phalcon", IsActive: false},

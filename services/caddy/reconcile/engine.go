@@ -120,7 +120,8 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		return res, errors.New(res.Error)
 	}
 
-	plan := BuildPlan(e.cfg, snap, names)
+	known := e.loadKnownHosts()
+	plan := BuildPlanWithKnown(e.cfg, snap, names, known)
 	res.Orphans = plan.Orphans
 	for _, s := range plan.Skips {
 		res.Skips = append(res.Skips, SkipInfo(s))
@@ -212,6 +213,21 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 	}
 	res.Reloaded = true
 	e.pendingIntentional = nil // consumed — Caddy now reflects these prunes
+
+	// Advance the known-desired baseline: every host we just rendered is now "seen
+	// backed", so if its file later appears without a row it's a deletion (removal),
+	// not an orphan. Union-only (never forgets) so a first-pass-suppressed removal
+	// still applies on the next pass.
+	changed := false
+	for _, w := range plan.Writes {
+		if !known[w.Host] {
+			known[w.Host] = true
+			changed = true
+		}
+	}
+	if changed {
+		e.saveKnownHosts(known)
+	}
 
 	e.firstDone = true
 	res.DurationMS = e.since(start)
@@ -385,6 +401,70 @@ func hostSet(cfgJSON []byte) (map[string]bool, error) {
 	return out, nil
 }
 
+// loadKnownHosts reads the persisted set of hostnames ever seen desired. A missing
+// or unreadable file yields an empty set (safe: no deletion reclassification until
+// we have a baseline).
+func (e *Engine) loadKnownHosts() map[string]bool {
+	out := map[string]bool{}
+	if e.cfg.KnownHostsFile == "" {
+		return out
+	}
+	data, err := os.ReadFile(e.cfg.KnownHostsFile)
+	if err != nil {
+		return out
+	}
+	var hosts []string
+	if json.Unmarshal(data, &hosts) != nil {
+		return out
+	}
+	for _, h := range hosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			out[h] = true
+		}
+	}
+	return out
+}
+
+// saveKnownHosts atomically persists the known-desired baseline (best-effort; a
+// write failure only means deletion detection lags, never a wrong removal).
+func (e *Engine) saveKnownHosts(hosts map[string]bool) {
+	if e.cfg.KnownHostsFile == "" {
+		return
+	}
+	list := make([]string, 0, len(hosts))
+	for h := range hosts {
+		list = append(list, h)
+	}
+	sort.Strings(list)
+	data, err := json.Marshal(list)
+	if err != nil {
+		return
+	}
+	dir := filepath.Dir(e.cfg.KnownHostsFile)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("reconcile: known-hosts dir: %v", err)
+		return
+	}
+	tmp, err := os.CreateTemp(dir, ".known-*")
+	if err != nil {
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := os.Rename(tmpName, e.cfg.KnownHostsFile); err != nil {
+		_ = os.Remove(tmpName)
+		log.Printf("reconcile: known-hosts save: %v", err)
+	}
+}
+
 func (e *Engine) since(start time.Time) int64 {
 	return e.now().Sub(start).Milliseconds()
 }
@@ -482,7 +562,7 @@ func (e *Engine) DryRun(snap db.Snapshot) (DryRunResult, error) {
 		onDisk[f.Name] = f.Contents
 		names = append(names, f.Name)
 	}
-	plan := BuildPlan(e.cfg, snap, names)
+	plan := BuildPlanWithKnown(e.cfg, snap, names, e.loadKnownHosts())
 
 	var wouldWrite []string
 	for _, w := range plan.Writes {

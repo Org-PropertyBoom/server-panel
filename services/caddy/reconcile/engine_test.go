@@ -152,6 +152,36 @@ func TestEngine_FirstPassSuppressesRemoves_ThenApplies(t *testing.T) {
 	}
 }
 
+func TestEngine_DeletedTenantRemovedOnNextPass(t *testing.T) {
+	cfg := engineCfg(t)
+	cfg.KnownHostsFile = filepath.Join(t.TempDir(), "known.json")
+	mkVhosts(t, cfg, nil)
+	fc := &fakeCaddy{}
+	e := NewEngine(cfg, fc, fc)
+
+	// Pass 1: a.com desired → rendered; the known-desired baseline records a.com.
+	snap := db.Snapshot{Rows: []db.Row{{Table: "website_hosts", Host: "a.com", ServerStack: "golang", IsActive: true}}}
+	if _, err := e.Reconcile(context.Background(), snap); err != nil {
+		t.Fatalf("pass 1: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.VhostsDir, "a.com.caddy")); err != nil {
+		t.Fatalf("a.com should be rendered: %v", err)
+	}
+
+	// a.com hard-deleted (gone from the snapshot); b.com keeps the read non-empty.
+	snap2 := db.Snapshot{Rows: []db.Row{{Table: "website_hosts", Host: "b.com", ServerStack: "golang", IsActive: true}}}
+	res, err := e.Reconcile(context.Background(), snap2)
+	if err != nil {
+		t.Fatalf("pass 2: %v (%s)", err, res.Error)
+	}
+	if len(res.Removed) != 1 || res.Removed[0] != "a.com.caddy" {
+		t.Errorf("Removed = %v, want [a.com.caddy] (deleted tenant, not an orphan)", res.Removed)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.VhostsDir, "a.com.caddy")); !os.IsNotExist(err) {
+		t.Error("deleted tenant's file should be gone")
+	}
+}
+
 func TestEngine_AbortOnInvalid_DoesNotReload(t *testing.T) {
 	cfg := engineCfg(t)
 	mkVhosts(t, cfg, nil)

@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - Tenant-deletion removal: deleted website_hosts mapping stops serving (was orphan)
+
+- Goal: website_hosts is LEAN (hard-delete, no is_active/deleted_at), so deleting a tenant mapping left its <host>.caddy file backed by NO row → classified ORPHAN → never auto-pruned → the deleted site KEPT SERVING (a big chunk of the ~70 orphans). Make deletion actually remove the file, safely.
+- Files changed: `plan.go` — new `BuildPlanWithKnown(cfg, snap, folderNames, knownDesired)` (BuildPlan delegates with nil, no test churn); a folder file whose host is in `knownDesired` (previously desired) but absent now, on a HEALTHY read (`len(desired) > 0`), is reclassified from orphan → REMOVE. Empty/failed reads reclassify nothing (anti-mass-wipe). `config.go` — `KnownHostsFile` (default /var/lib/ppt-server-panel/vhost-known-hosts.json, env CADDY_KNOWN_HOSTS_FILE). `engine.go` — `loadKnownHosts`/`saveKnownHosts` (atomic JSON, best-effort); DryRun + Reconcile pass the loaded baseline to BuildPlanWithKnown; after a SUCCESSFUL reload, Reconcile unions the just-rendered hosts into the baseline and persists (union-only, never forgets, survives restarts).
+- Important decisions: the new removals ride ALL existing guards — first-pass suppression (a fresh process suppresses them one pass), dashboard-assert, drop-guard, protected/wildcard exclusion. Union-only baseline means a first-pass-suppressed deletion still applies next pass (never forgotten). Empty-read guard is the key safety: a DB blip returning zero desired hosts removes NOTHING. A host never seen backed stays a conservative orphan. Baseline advances on successful reconcile only (not DryRun).
+- Validation: `go test ./services/caddy/...` pass incl. new tests (plan: deleted-tenant→remove, empty-read→stays-orphan; engine: render→delete→removed-on-next-pass round-trip with persistence); `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0; gofmt clean.
+- Note: the container-strip host task (Owner: HOLD) was NOT done — no stack container config touched.
+
 ### 2026-07-21 - System host upstreams synced from containers (not just the 4 code stacks)
 
 - Goal: a system host (platform_hosts) can proxy to ANY running container (nocodb, phpmyadmin, minio, …), not only the four code stacks — e.g. dbs.cobds.com → a DB-admin container. The upstream picker must be SYNCED from server-panel (which already knows every container + published port), not a hardcoded stack enum. Tenant hosts keep the code-stack mapping (tenant sites only run on phalcon/laravel/golang/rust).

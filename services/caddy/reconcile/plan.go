@@ -56,9 +56,23 @@ type Plan struct {
 // Empty reports whether the plan changes nothing on disk.
 func (p Plan) Empty() bool { return len(p.Writes) == 0 && len(p.Removes) == 0 }
 
-// BuildPlan computes the reconcile plan (pure). folderNames is the set of
-// `*.caddy` filenames currently in the folder (from vhostfs.ListNames).
+// BuildPlan computes the reconcile plan (pure) with no prior-snapshot knowledge —
+// a file with no backing row is always a conservative orphan.
 func BuildPlan(cfg config.Config, snap db.Snapshot, folderNames []string) Plan {
+	return BuildPlanWithKnown(cfg, snap, folderNames, nil)
+}
+
+// BuildPlanWithKnown is BuildPlan plus deletion detection for LEAN tables
+// (website_hosts: hard-delete, no is_active/deleted_at). knownDesired is the set of
+// hostnames that were desired in a PRIOR successful snapshot (persisted across
+// restarts). A file whose host was previously desired but is now absent — with a
+// SUCCESSFUL, NON-EMPTY current read — is a genuine deletion → a REMOVAL, not an
+// orphan; so deleting a tenant mapping actually stops it serving. A file whose host
+// we have NEVER seen backed stays a conservative orphan. Empty/failed reads never
+// reclassify (the anti-mass-wipe guard), and the removal still passes through
+// first-pass suppression + dashboard-assert + drop-guard + protected/wildcard
+// exclusions downstream.
+func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []string, knownDesired map[string]bool) Plan {
 	// Protected files: the dashboard domain + the panel domain (static Caddyfile
 	// blocks the operator owns) are never rendered or pruned as folder files.
 	protectedFiles := map[string]bool{}
@@ -150,10 +164,15 @@ func BuildPlan(cfg config.Config, snap db.Snapshot, folderNames []string) Plan {
 		}
 		removes = append(removes, name)
 	}
-	sort.Strings(removes)
 
-	// Orphans: present on disk, not desired, not a known-disabled row, not
-	// protected. Reported only — never auto-pruned.
+	// A non-empty current desired set means the read is plausibly healthy — only
+	// then may a previously-desired-now-absent file be treated as a deletion. An
+	// empty desired set (suspicious/DB blip) reclassifies nothing.
+	readHealthy := len(desired) > 0
+
+	// Orphans: present on disk, not desired, not a known-disabled row, not protected.
+	// A file whose host was previously desired (knownDesired) but is now absent on a
+	// healthy read is a DELETION → removal; otherwise a conservative orphan.
 	var orphans []string
 	for name := range folder {
 		if _, ok := desired[name]; ok {
@@ -165,8 +184,13 @@ func BuildPlan(cfg config.Config, snap db.Snapshot, folderNames []string) Plan {
 		if protectedFromRemoval(name, protectedFiles) {
 			continue // the dashboard file shouldn't exist, and wildcards are reserved
 		}
+		if readHealthy && knownDesired[render.HostFromFileName(name)] {
+			removes = append(removes, name) // was desired before, deleted now → remove
+			continue
+		}
 		orphans = append(orphans, name)
 	}
+	sort.Strings(removes)
 	sort.Strings(orphans)
 
 	sort.Slice(skips, func(i, j int) bool {

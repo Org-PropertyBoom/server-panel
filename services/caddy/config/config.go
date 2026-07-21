@@ -24,6 +24,11 @@ type Config struct {
 	CaddyAdminURL string
 	// BackupDir holds prior adapted-config snapshots for one-command rollback.
 	BackupDir string
+	// KnownHostsFile persists the set of hostnames ever seen desired, across
+	// restarts. Powers deletion detection for the LEAN website_hosts table: a file
+	// whose host was previously desired but is now absent (on a healthy read) is a
+	// removal, not an orphan.
+	KnownHostsFile string
 	// DashboardDomain is the ABSOLUTE guard: never removed/rendered as a folder
 	// file, pinned as a static Caddyfile block; a reload whose adapted config drops
 	// it is refused.
@@ -46,6 +51,7 @@ func defaults() Config {
 		MainCaddyfile:   "/etc/caddy/Caddyfile",
 		CaddyAdminURL:   "http://localhost:2019",
 		BackupDir:       "/var/lib/ppt-server-panel/caddy-backups",
+		KnownHostsFile:  "/var/lib/ppt-server-panel/vhost-known-hosts.json",
 		DashboardDomain: "app.propertyboom.co",
 		PanelDomain:     "cp.propertyweb.co",
 		StackPorts: map[string]string{
@@ -73,6 +79,9 @@ func Load() Config {
 	}
 	if v := os.Getenv("CADDY_BACKUP_DIR"); v != "" {
 		cfg.BackupDir = v
+	}
+	if v := os.Getenv("CADDY_KNOWN_HOSTS_FILE"); v != "" {
+		cfg.KnownHostsFile = v
 	}
 	if v := os.Getenv("CADDY_DASHBOARD_DOMAIN"); v != "" {
 		cfg.DashboardDomain = v
