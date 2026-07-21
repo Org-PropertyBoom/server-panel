@@ -30,12 +30,13 @@ import (
 )
 
 type Dependencies struct {
-	Auth     *services.AuthService
-	Sessions *services.SessionService
-	Startup  services.StartupConfig
-	Update   *services.UpdateService
-	System   *services.SystemService
-	Settings *services.SettingsService
+	Auth        *services.AuthService
+	Sessions    *services.SessionService
+	Startup     services.StartupConfig
+	Update      *services.UpdateService
+	System      *services.SystemService
+	Settings    *services.SettingsService
+	VhostEngine *services.VhostEngineService
 }
 
 func Register(mux *http.ServeMux, deps Dependencies) {
@@ -73,7 +74,16 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("PUT /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
 	mux.Handle("DELETE /post/datasources", postOnly(deps.Startup, datasources.Handler(deps.Sessions, services.NewDataSourceService())))
 	mux.Handle("POST /post/datasources/test", postOnly(deps.Startup, datasources.TestHandler(deps.Sessions, services.NewDataSourceService())))
-	mux.Handle("GET /post/vhost/state", postOnly(deps.Startup, postvhost.StateHandler(deps.Sessions, deps.Settings)))
+	mux.Handle("GET /post/vhost/state", postOnly(deps.Startup, postvhost.StateHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/reconcile", postOnly(deps.Startup, postvhost.ReconcileHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/reload", postOnly(deps.Startup, postvhost.ReloadHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("PUT /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("DELETE /post/vhost/system", postOnly(deps.Startup, postvhost.SystemHostHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("PUT /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("DELETE /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/orphan/prune", postOnly(deps.Startup, postvhost.OrphanPruneHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))

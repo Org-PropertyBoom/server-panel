@@ -11,14 +11,15 @@ import (
 )
 
 type Dependencies struct {
-	Auth     *services.AuthService
-	ClientFS embed.FS
-	Health   *services.HealthService
-	Sessions *services.SessionService
-	Startup  services.StartupConfig
-	Update   *services.UpdateService
-	System   *services.SystemService
-	Settings *services.SettingsService
+	Auth        *services.AuthService
+	ClientFS    embed.FS
+	Health      *services.HealthService
+	Sessions    *services.SessionService
+	Startup     services.StartupConfig
+	Update      *services.UpdateService
+	System      *services.SystemService
+	Settings    *services.SettingsService
+	VhostEngine *services.VhostEngineService
 }
 
 func Register(mux *http.ServeMux, deps Dependencies) {
@@ -31,12 +32,13 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	})
 
 	post.Register(mux, post.Dependencies{
-		Auth:     deps.Auth,
-		Sessions: deps.Sessions,
-		Startup:  deps.Startup,
-		Update:   deps.Update,
-		System:   deps.System,
-		Settings: deps.Settings,
+		Auth:        deps.Auth,
+		Sessions:    deps.Sessions,
+		Startup:     deps.Startup,
+		Update:      deps.Update,
+		System:      deps.System,
+		Settings:    deps.Settings,
+		VhostEngine: deps.VhostEngine,
 	})
 
 	router.Register(mux, deps.Startup, deps.ClientFS)

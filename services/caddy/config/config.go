@@ -7,6 +7,7 @@ package config
 
 import (
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -105,6 +106,18 @@ func (c Config) ProtectedHosts() []string {
 func (c Config) UpstreamFor(serverStack string) (string, bool) {
 	up, ok := c.StackPorts[strings.ToLower(strings.TrimSpace(serverStack))]
 	return up, ok
+}
+
+// Stacks returns the known server_stack names (sorted) a system host may target.
+// Drives the management UI's stack picker so an operator can only pick a stack
+// whose upstream port is known — never a free-typed guess.
+func (c Config) Stacks() []string {
+	out := make([]string, 0, len(c.StackPorts))
+	for s := range c.StackPorts {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // EncodeFormats returns the normalized (whitespace-collapsed) encode directive,

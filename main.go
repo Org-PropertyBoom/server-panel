@@ -55,15 +55,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	vhostEngine := services.NewVhostEngineService(services.NewDataSourceService(), settings)
+
 	routes.Register(mux, routes.Dependencies{
-		Auth:     auth,
-		ClientFS: clientFS,
-		Health:   services.NewHealthService(startup.Env),
-		Sessions: sessions,
-		Startup:  startup,
-		Update:   updater,
-		System:   services.NewSystemService(),
-		Settings: settings,
+		Auth:        auth,
+		ClientFS:    clientFS,
+		Health:      services.NewHealthService(startup.Env),
+		Sessions:    sessions,
+		Startup:     startup,
+		Update:      updater,
+		System:      services.NewSystemService(),
+		Settings:    settings,
+		VhostEngine: vhostEngine,
 	})
 
 	srv := &http.Server{
