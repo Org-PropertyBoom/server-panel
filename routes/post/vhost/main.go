@@ -229,6 +229,26 @@ func RedirectTargetsHandler(sessions *services.SessionService, engine *services.
 	})
 }
 
+// PinnedRemoveHandler removes a "Pinned · unmanaged" static block from the main
+// Caddyfile (validated + reloaded). GATED; the truthful Result is returned either way.
+func PinnedRemoveHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host string `json:"host"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Host) == "" {
+			http.Error(w, "host is required", http.StatusBadRequest)
+			return
+		}
+		res, _ := engine.RemovePinnedBlock(r.Context(), body.Host)
+		writeJSON(w, res)
+	})
+}
+
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {

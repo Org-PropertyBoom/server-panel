@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { AlertTriangle, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, summarizeError, type Upstream, ViewHeader } from "./shared";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
@@ -12,6 +12,33 @@ import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, ty
 // drift flag vs what the reload actually guards.
 export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
+    const [removeBlock, setRemoveBlock] = useState<PinnedRow | null>(null);
+    const [removing, setRemoving] = useState(false);
+
+    const removePinnedBlock = async (p: PinnedRow) => {
+        setRemoving(true);
+        try {
+            const res = await fetch("/post/vhost/pinned/remove", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ host: p.host }),
+            });
+            const data = await res.json();
+            if (data.error) {
+                toast.error(summarizeError(String(data.error)));
+            } else if (data.reloaded) {
+                toast.success(`Removed ${p.host} from the Caddyfile`);
+            } else {
+                toast.error("Not removed");
+            }
+            setRemoveBlock(null);
+            onSaved();
+        } catch (err) {
+            toast.error(`Remove failed: ${String(err)}`);
+        } finally {
+            setRemoving(false);
+        }
+    };
 
     const del = async (row: ManageRow) => {
         if (!window.confirm(`Disable ${row.host}? It is soft-deleted in the database and removed from Caddy on the next reconcile.`)) return;
@@ -93,7 +120,17 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                         )}
                                     </td>
                                     <td className="px-4 py-2.5 text-right">
-                                        <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block)" />
+                                        {p.drift === "unmanaged" ? (
+                                            <button
+                                                onClick={() => setRemoveBlock(p)}
+                                                className="ml-auto inline-flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                                title="Remove this stale static block from the main Caddyfile"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                        ) : (
+                                            <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground/40" aria-label="Read-only (static Caddyfile block)" />
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -150,6 +187,29 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                         onSaved();
                     }}
                 />
+            ) : null}
+
+            {removeBlock ? (
+                <Modal onClose={() => (removing ? null : setRemoveBlock(null))} title={`Remove ${removeBlock.host} from the Caddyfile?`}>
+                    <p className="text-xs text-muted-foreground">
+                        This is server-panel's only edit to the main Caddyfile. It backs the file up, surgically removes <b>only</b> this host's
+                        static block, re-validates with <code>caddy adapt</code>, asserts every other host + the dashboard/panel domains survive,
+                        then reloads. If anything else would change, it <b>aborts and restores</b>. Gated by live reconcile.
+                    </p>
+                    <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                        {removeBlock.host}
+                        {removeBlock.upstreams && removeBlock.upstreams.length > 0 ? ` → ${removeBlock.upstreams.join(", ")}` : ""}
+                    </p>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setRemoveBlock(null)} disabled={removing}>
+                            Cancel
+                        </Button>
+                        <Button variant="destructive" size="sm" className="gap-2" onClick={() => removePinnedBlock(removeBlock)} disabled={removing}>
+                            {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            Remove block
+                        </Button>
+                    </div>
+                </Modal>
             ) : null}
         </div>
     );

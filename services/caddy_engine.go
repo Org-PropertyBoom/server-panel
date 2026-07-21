@@ -534,6 +534,16 @@ func (v *VhostEngineService) ReloadOnly(ctx context.Context) (reconcile.Result, 
 	return v.engine.ReloadOnly(ctx)
 }
 
+// RemovePinnedBlock removes a "Pinned · unmanaged" static block from the main
+// Caddyfile (validated + diff-asserted + reloaded). server-panel's only write to
+// the operator-owned Caddyfile. GATED by live-reconcile like every write path.
+func (v *VhostEngineService) RemovePinnedBlock(ctx context.Context, host string) (reconcile.Result, error) {
+	if !v.LiveReloadEnabled() {
+		return reconcile.Result{Error: liveGateMsg}, errLiveGate
+	}
+	return v.engine.RemoveStaticBlock(ctx, host)
+}
+
 // SaveSystemHost creates (ID==0) or updates a platform_hosts row. This is a DB
 // write only — the change becomes live on the next Reconcile.
 func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostForm) error {
