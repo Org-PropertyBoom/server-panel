@@ -72,6 +72,7 @@ export type VhostState = {
     manage?: ManageSets;
     health?: Record<string, HostHealth>;
     healthOn?: boolean;
+    protected?: string[];
 };
 
 export type ReconcileResult = {
@@ -122,6 +123,7 @@ export function normalizeState(s: VhostState): VhostState {
         };
     }
     if (!s.health) s.health = {};
+    s.protected = arr(s.protected);
     return s;
 }
 

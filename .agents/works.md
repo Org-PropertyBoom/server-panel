@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-21 - VHosts: pinned Protected-domains strip (read-only)
+
+- Goal: make the protected/pinned domains (cp.propertyweb.co + dashboard) VISIBLE in /vhosts. They're static main-Caddyfile blocks (outside the route model — never rendered/reconciled), so they were invisible despite being the most critical hostnames + already guarded by assertDashboardPresent. Owner chose "strip only" (no health — the probe derives our-server IPs from these domains, so a DNS check on them is circular).
+- Files changed: `services/caddy_engine.go` — `VhostStateResult.Protected []string`, populated in State() from `v.cfg.ProtectedHosts()` (the SAME list reconcile guards — no second copy). `client/.../vhosts/shared.tsx` — `VhostState.protected` + normalizer. `reconcile-header.tsx` — a pinned strip atop the global header (shows on every sub-tab): "Protected" + a 🔒/ShieldCheck chip per domain + the note "static in the main Caddyfile · never rendered/removed · every reconcile refuses a config missing these". Read-only (no edit/delete).
+- Important decisions: purely read-only surfacing of existing config — no engine change. Sourced from config.ProtectedHosts() so it can never drift from what the reconcile actually protects. Health nice-to-have skipped per Owner (circular DNS reference for these domains).
+- Validation: `tsc --noEmit` 0; `npm run build` OK; `GOOS=linux CGO_ENABLED=0 go build ./...` 0; `go vet` 0.
+
 ### 2026-07-21 - Containers page: container→hostnames reverse route view
 
 - Goal: close the route loop both ways — /vhosts shows route→container; now the Containers page shows container→hostnames (which domains route to each container), the Owner's reverse-index ask. (Only this of the two relayed items; the System→Apps rename was NOT selected.)

@@ -234,6 +234,9 @@ type VhostStateResult struct {
 	// to reconcile drift. Empty/absent when the probe is disabled or hasn't run.
 	Health   map[string]caddyhealth.Status `json:"health,omitempty"`
 	HealthOn bool                          `json:"healthOn"`
+	// Protected are the pinned dashboard/panel domains — static Caddyfile blocks,
+	// never rendered/removed as routes, and asserted present on every reload.
+	Protected []string `json:"protected"`
 }
 
 // State resolves the configured host-source Data Source, reads its desired-state
@@ -242,6 +245,7 @@ type VhostStateResult struct {
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), HealthOn: v.health.Enabled()}
 	out.Health = v.health.Snapshot()
+	out.Protected = v.cfg.ProtectedHosts()
 
 	name := v.settings.Get("vhost_data_source", "")
 	if name == "" {
