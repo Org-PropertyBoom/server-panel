@@ -299,6 +299,30 @@ func TestEngine_DropGuard_SkippedWhenLiveUnreadable(t *testing.T) {
 	}
 }
 
+func TestEngine_DropGuard_AllowsOrphanPrune(t *testing.T) {
+	cfg := engineCfg(t)
+	mkVhosts(t, cfg, map[string]string{"orphan.com.caddy": "orphan.com {\n    reverse_proxy 127.0.0.1:8002\n}\n"})
+	fc := &fakeCaddy{}
+	e := NewEngine(cfg, fc, fc)
+	// Seed: establish firstDone with an empty live config (nothing to guard).
+	if _, err := e.Reconcile(context.Background(), db.Snapshot{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Caddy now serves the orphan; the operator prunes it, then reconciles. The
+	// pruned host must be treated as an intentional removal, not an unexpected drop.
+	fc.current = liveConfig("app.propertyboom.co", "orphan.com")
+	if _, err := e.RemoveFile("orphan.com.caddy"); err != nil {
+		t.Fatalf("RemoveFile: %v", err)
+	}
+	res, err := e.Reconcile(context.Background(), db.Snapshot{})
+	if err != nil {
+		t.Fatalf("prune reconcile must be allowed (intentional); err=%v error=%q blocked=%v", err, res.Error, res.BlockedDrops)
+	}
+	if !res.Reloaded {
+		t.Error("expected reload after an orphan prune")
+	}
+}
+
 func TestEngine_ReloadOnly_DropGuardRefuses(t *testing.T) {
 	cfg := engineCfg(t)
 	mkVhosts(t, cfg, nil)

@@ -69,9 +69,10 @@ type Engine struct {
 	adapter  Adapter
 	reloader Reloader
 
-	mu        sync.Mutex // serializes reconciles (one at a time)
-	firstDone bool       // first reconcile completed → removals now permitted
-	now       func() time.Time
+	mu                 sync.Mutex // serializes reconciles (one at a time)
+	firstDone          bool       // first reconcile completed → removals now permitted
+	pendingIntentional []string   // `<host>.caddy` files pruned via RemoveFile, awaiting a reload — the drop-guard treats these as deliberate removals
+	now                func() time.Time
 }
 
 // NewEngine constructs an Engine. Pass nil adapter/reloader for a read-only
@@ -183,9 +184,11 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		return res, err
 	}
 	// Drop-guard: refuse if the new config would drop a host Caddy is serving right
-	// now, unless we intentionally removed it this pass (res.Removed). This is the
-	// automatic form of the manual pre-flight superset check.
-	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, res.Removed); err != nil {
+	// now, unless we intentionally removed it this pass (res.Removed) or pruned it
+	// via RemoveFile (pendingIntentional). This is the automatic form of the manual
+	// pre-flight superset check.
+	intentional := append(append([]string{}, res.Removed...), e.pendingIntentional...)
+	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, intentional); err != nil {
 		res.BlockedDrops = dropped
 		res.Error = err.Error()
 		res.DurationMS = e.since(start)
@@ -208,6 +211,7 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		return res, errors.New(res.Error)
 	}
 	res.Reloaded = true
+	e.pendingIntentional = nil // consumed — Caddy now reflects these prunes
 
 	e.firstDone = true
 	res.DurationMS = e.since(start)
@@ -248,8 +252,9 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 		res.DurationMS = e.since(start)
 		return res, err
 	}
-	// ReloadOnly writes/removes nothing, so it must never drop a live host.
-	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, nil); err != nil {
+	// ReloadOnly writes/removes nothing itself, but must still honor a pending prune
+	// (RemoveFile) as intentional; otherwise it must never drop a live host.
+	if dropped, err := e.assertNoUnexpectedDrops(ctx, adapted, e.pendingIntentional); err != nil {
 		res.BlockedDrops = dropped
 		res.Error = err.Error()
 		res.DurationMS = e.since(start)
@@ -266,6 +271,7 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 		return res, errors.New(res.Error)
 	}
 	res.Reloaded = true
+	e.pendingIntentional = nil // consumed — Caddy now reflects these prunes
 	res.DurationMS = e.since(start)
 	return res, nil
 }
@@ -387,6 +393,11 @@ func (e *Engine) since(start time.Time) int64 {
 // "prune this orphan" action. It REFUSES a protected file (dashboard/panel domain,
 // or a wildcard). It does NOT reconcile; the caller reconciles after so the removal
 // is validated + reloaded. Returns whether a file was removed.
+//
+// A successful removal is recorded as a PENDING INTENTIONAL removal so the next
+// reload's drop-guard treats this host as deliberately dropped (an operator prune),
+// not an accidental disappearance — otherwise the guard would refuse to reload a
+// host the operator just chose to remove.
 func (e *Engine) RemoveFile(name string) (bool, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -398,7 +409,11 @@ func (e *Engine) RemoveFile(name string) (bool, error) {
 	if strings.HasPrefix(name, "wildcard_") {
 		return false, fmt.Errorf("refusing to remove reserved wildcard file %q", name)
 	}
-	return e.dir.Remove(name)
+	removed, err := e.dir.Remove(name)
+	if err == nil && removed {
+		e.pendingIntentional = append(e.pendingIntentional, name)
+	}
+	return removed, err
 }
 
 // FileState is one folder file for the drift view.
