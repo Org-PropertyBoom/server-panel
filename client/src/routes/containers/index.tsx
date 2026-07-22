@@ -52,8 +52,25 @@ type ContainerDetails = {
     ports?: { container: string; host?: string }[];
     mounts?: { type?: string; source?: string; destination?: string; mode?: string; rw: boolean }[];
     networks?: { name: string; ipAddress?: string; gateway?: string; macAddress?: string }[];
+    sizeRw?: number;
+    sizeRootFs?: number;
     raw?: string;
 };
+
+// fmtSize renders a byte count as B/KB/MB/GB; undefined when size wasn't computed
+// (e.g. rootless Podman, whose inspect has no --size).
+function fmtSize(n?: number): string | undefined {
+    if (n === undefined || n === null) return undefined;
+    if (n < 1024) return `${n} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let v = n / 1024;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+        v /= 1024;
+        i++;
+    }
+    return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}
 
 // DetailRow is one label/value line in the details drawer; hidden when empty.
 function DetailRow({ label, value, mono }: { label: string; value?: string | number | null; mono?: boolean }) {
@@ -455,6 +472,8 @@ export default function ContainersRoute() {
                                         <DetailRow label="Image ID" value={details.imageId} mono />
                                         <DetailRow label="Platform" value={details.platform} />
                                         <DetailRow label="Created" value={formatTs(details.created)} />
+                                        <DetailRow label="Size · writable" value={fmtSize(details.sizeRw)} />
+                                        <DetailRow label="Size · total" value={details.sizeRootFs !== undefined ? `${fmtSize(details.sizeRootFs)} (incl. image)` : undefined} />
                                         <DetailRow label="Restart policy" value={details.restartPolicy} />
                                         <DetailRow label="Working dir" value={details.workingDir} mono />
                                         <DetailRow label="User" value={details.user} mono />

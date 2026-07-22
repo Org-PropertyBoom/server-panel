@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-22 - Container size in the details drawer (on-demand, Docker)
+
+- Goal: surface how big a container is. Chose the details drawer (on-demand) over a list column so the list stays fast — size compute makes Docker walk the graph driver.
+- Files changed: `services/containers.go` — `rawInspect` + `ContainerDetails` gained `SizeRw`/`SizeRootFs` (`*int64`, nil when not computed); `InspectAll` now runs `docker inspect --size <id>` for root Docker via `runContainerCommand` with a 30s timeout (the `--size` walk can exceed the 5s list timeout), falling back to plain `inspect` for Podman (no `--size` flag → no size, fine); `parseContainerDetails` copies the two sizes. Frontend `client/src/routes/containers/index.tsx` — `ContainerDetails` type + `fmtSize` (B/KB/MB/GB, undefined when absent) + two Overview rows: "Size · writable" (SizeRw) and "Size · total (incl. image)" (SizeRootFs); both auto-hide (DetailRow) when size wasn't computed.
+- Important decisions: drawer-only per the operator's call ("if on-demand, add in details modal") — no `docker ps --size` on the list. Pointers (`*int64`) distinguish "not computed" (Podman) from a genuine 0. Detached 30s timeout so a big writable layer doesn't 5s-timeout and break the whole drawer.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Drop app.propertyboom.co's special "protected/dashboard" treatment (it's just the phalcon stack's peer route)
 
 - Goal (Owner): app.propertyboom.co is only the phalcon stack's dashboard domain — a PEER to go-app/la-app/rust-app.propertyboom.co, all `platform_hosts` reverse proxies to their stack container. It was hard-coded as `DashboardDomain` (the absolute reload guard + pin-permanent static block), so it showed as "Protected · pinned" and, unlike its peers, did NOT appear in the phalcon container's Routes cell (it wasn't a DB row). Remove the special-casing so it can be a normal Active managed route like the others; keep the panel's own domain as the sole hard invariant.

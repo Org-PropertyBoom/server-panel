@@ -70,6 +70,8 @@ type ContainerDetails struct {
 	Ports         []ContainerPortMap `json:"ports,omitempty"`
 	Mounts        []ContainerMount   `json:"mounts,omitempty"`
 	Networks      []ContainerNetwork `json:"networks,omitempty"`
+	SizeRw        *int64             `json:"sizeRw,omitempty"`     // writable layer bytes (docker --size); nil if not computed
+	SizeRootFs    *int64             `json:"sizeRootFs,omitempty"` // total bytes incl. image layers; nil if not computed
 	Raw           string             `json:"raw,omitempty"`
 }
 
@@ -121,7 +123,9 @@ type rawInspect struct {
 			Status string `json:"Status"`
 		} `json:"Health"`
 	} `json:"State"`
-	RestartCount int `json:"RestartCount"`
+	RestartCount int    `json:"RestartCount"`
+	SizeRw       *int64 `json:"SizeRw"`     // present only with `inspect --size`
+	SizeRootFs   *int64 `json:"SizeRootFs"` // present only with `inspect --size`
 	Config       struct {
 		Image      string            `json:"Image"`
 		Cmd        []string          `json:"Cmd"`
@@ -260,7 +264,16 @@ func (s *ContainerService) InspectAll(engine, owner, id string) (ContainerDetail
 	if !allowedContainerID.MatchString(id) {
 		return ContainerDetails{}, errors.New("invalid container")
 	}
-	output, err := s.runForOwner(engine, owner, "inspect", id)
+	// Docker's `inspect --size` walks the graph driver to compute SizeRw/SizeRootFs,
+	// which can exceed the 5s list timeout — run it detached with a longer budget.
+	// Podman inspect has no --size flag, so it reports no size (fine).
+	var output []byte
+	var err error
+	if engine == "docker" && (owner == "root" || owner == "system") {
+		output, err = runContainerCommand("", 30*time.Second, "docker", "inspect", "--size", id)
+	} else {
+		output, err = s.runForOwner(engine, owner, "inspect", id)
+	}
 	if err != nil {
 		return ContainerDetails{}, err
 	}
@@ -313,6 +326,7 @@ func parseContainerDetails(output []byte, engine, owner string) (ContainerDetail
 	if r.State.Health != nil {
 		d.State.Health = r.State.Health.Status
 	}
+	d.SizeRw, d.SizeRootFs = r.SizeRw, r.SizeRootFs
 	if name := r.HostConfig.RestartPolicy.Name; name != "" {
 		d.RestartPolicy = name
 		if r.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
