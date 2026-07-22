@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
+import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Info, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -22,6 +22,69 @@ type ContainerRecord = {
     routeTenantCount?: number;
     routeTenantStack?: string;
 };
+
+type ContainerDetails = {
+    id: string;
+    name: string;
+    image: string;
+    imageId?: string;
+    created?: string;
+    platform?: string;
+    engine: string;
+    owner: string;
+    command?: string;
+    entrypoint?: string;
+    workingDir?: string;
+    user?: string;
+    restartPolicy?: string;
+    state: {
+        status?: string;
+        running: boolean;
+        exitCode: number;
+        startedAt?: string;
+        finishedAt?: string;
+        health?: string;
+        restartCount?: number;
+    };
+    env?: string[];
+    labels?: Record<string, string>;
+    ports?: { container: string; host?: string }[];
+    mounts?: { type?: string; source?: string; destination?: string; mode?: string; rw: boolean }[];
+    networks?: { name: string; ipAddress?: string; gateway?: string; macAddress?: string }[];
+    raw?: string;
+};
+
+// DetailRow is one label/value line in the details drawer; hidden when empty.
+function DetailRow({ label, value, mono }: { label: string; value?: string | number | null; mono?: boolean }) {
+    if (value === undefined || value === null || value === "") return null;
+    return (
+        <div className="flex gap-3 py-1.5">
+            <span className="w-32 shrink-0 text-muted-foreground">{label}</span>
+            <span className={`min-w-0 flex-1 break-words text-foreground ${mono ? "font-mono text-[11px]" : ""}`}>{value}</span>
+        </div>
+    );
+}
+
+// formatTs renders an inspect timestamp in local time, hiding the empty/zero
+// sentinel Docker uses for unset times ("0001-01-01T00:00:00Z").
+function formatTs(value?: string): string | undefined {
+    if (!value || value.startsWith("0001-01-01")) return undefined;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+}
+
+function DetailSection({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
+    return (
+        <section className="border-t border-border px-5 py-4">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {title}
+                {count !== undefined ? <span className="ml-1.5 text-muted-foreground/60">({count})</span> : null}
+            </h3>
+            {children}
+        </section>
+    );
+}
 
 // RouteCell shows the reverse route view: which hostnames point at this container
 // (App-route hostnames + a tenant-site count), the mirror of the /vhosts view.
@@ -73,6 +136,11 @@ export default function ContainersRoute() {
     const [dockerfileLoading, setDockerfileLoading] = useState(false);
     const [dockerfileSaving, setDockerfileSaving] = useState(false);
     const [dockerfileError, setDockerfileError] = useState("");
+    const [detailsContainer, setDetailsContainer] = useState<ContainerRecord | null>(null);
+    const [details, setDetails] = useState<ContainerDetails | null>(null);
+    const [detailsLoading, setDetailsLoading] = useState(false);
+    const [detailsError, setDetailsError] = useState("");
+    const [showRaw, setShowRaw] = useState(false);
 
     const loadContainers = useCallback(async () => {
         setLoading(true);
@@ -129,6 +197,24 @@ export default function ContainersRoute() {
             setLogsError(logsLoadError instanceof Error ? logsLoadError.message : "Failed to load container logs");
         } finally {
             setLogsLoading(false);
+        }
+    };
+
+    const openDetails = async (container: ContainerRecord) => {
+        setDetailsContainer(container);
+        setDetails(null);
+        setDetailsError("");
+        setShowRaw(false);
+        setDetailsLoading(true);
+        try {
+            const query = new URLSearchParams({ engine: container.engine, id: container.id, owner: container.owner });
+            const response = await fetch(`${Api.current.containers}/inspect?${query.toString()}`, { cache: "no-store" });
+            if (!response.ok) throw new Error((await response.text()) || "Failed to load container details");
+            setDetails((await response.json()) as ContainerDetails);
+        } catch (detailsLoadError) {
+            setDetailsError(detailsLoadError instanceof Error ? detailsLoadError.message : "Failed to load container details");
+        } finally {
+            setDetailsLoading(false);
         }
     };
 
@@ -245,6 +331,9 @@ export default function ContainersRoute() {
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center justify-end gap-1.5">
+                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Details" aria-label={`Inspect ${container.name}`} onClick={() => openDetails(container)}>
+                                                    <Info className="h-3.5 w-3.5" />
+                                                </Button>
                                                 {container.state.toLowerCase() === "running" ? (
                                                     <Button size="icon" variant="outline" className="h-8 w-8" title="Stop" aria-label={`Stop ${container.name}`} disabled={Boolean(actionLoading)} onClick={() => runAction(container, "stop")}>
                                                         {actionLoading.endsWith(":stop") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
@@ -269,6 +358,150 @@ export default function ContainersRoute() {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            ) : null}
+
+            {detailsContainer ? (
+                <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-sm" onClick={() => setDetailsContainer(null)}>
+                    <div
+                        className="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-border bg-card shadow-xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className={`h-2 w-2 shrink-0 rounded-full ${details?.state.running ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                                    <h2 className="truncate text-sm font-semibold text-foreground">{detailsContainer.name || detailsContainer.id.slice(0, 12)}</h2>
+                                    {details?.state.health ? (
+                                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase ${details.state.health === "healthy" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}>
+                                            {details.state.health}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                <code className="mt-1 block break-all text-[11px] text-muted-foreground">{detailsContainer.id}</code>
+                            </div>
+                            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setDetailsContainer(null)} aria-label="Close details">
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-auto text-xs">
+                            {detailsLoading ? (
+                                <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                            ) : detailsError ? (
+                                <div className="m-5 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-destructive">{detailsError.trim()}</div>
+                            ) : details ? (
+                                <>
+                                    <DetailSection title="Overview">
+                                        <DetailRow label="Engine" value={`${details.engine} · ${details.owner}`} />
+                                        <DetailRow label="Image" value={details.image} mono />
+                                        <DetailRow label="Image ID" value={details.imageId} mono />
+                                        <DetailRow label="Platform" value={details.platform} />
+                                        <DetailRow label="Created" value={formatTs(details.created)} />
+                                        <DetailRow label="Restart policy" value={details.restartPolicy} />
+                                        <DetailRow label="Working dir" value={details.workingDir} mono />
+                                        <DetailRow label="User" value={details.user} mono />
+                                        <DetailRow label="Command" value={details.command} mono />
+                                        <DetailRow label="Entrypoint" value={details.entrypoint} mono />
+                                    </DetailSection>
+
+                                    <DetailSection title="State">
+                                        <DetailRow label="Status" value={details.state.status} />
+                                        <DetailRow label="Running" value={details.state.running ? "yes" : "no"} />
+                                        <DetailRow label="Health" value={details.state.health} />
+                                        <DetailRow label="Exit code" value={details.state.running ? undefined : details.state.exitCode} />
+                                        <DetailRow label="Restarts" value={details.state.restartCount} />
+                                        <DetailRow label="Started" value={formatTs(details.state.startedAt)} />
+                                        <DetailRow label="Finished" value={details.state.running ? undefined : formatTs(details.state.finishedAt)} />
+                                    </DetailSection>
+
+                                    {details.ports && details.ports.length > 0 ? (
+                                        <DetailSection title="Ports" count={details.ports.length}>
+                                            <div className="space-y-1 font-mono text-[11px]">
+                                                {details.ports.map((p, i) => (
+                                                    <div key={`${p.container}-${i}`} className="flex items-center gap-2 text-foreground">
+                                                        <span>{p.container}</span>
+                                                        {p.host ? <span className="text-muted-foreground">← {p.host}</span> : <span className="text-muted-foreground/60">not published</span>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </DetailSection>
+                                    ) : null}
+
+                                    {details.networks && details.networks.length > 0 ? (
+                                        <DetailSection title="Networks" count={details.networks.length}>
+                                            <div className="space-y-2">
+                                                {details.networks.map((n) => (
+                                                    <div key={n.name} className="rounded border border-border bg-muted/30 px-3 py-2">
+                                                        <p className="font-medium text-foreground">{n.name}</p>
+                                                        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                                                            {n.ipAddress || "—"}{n.gateway ? ` · gw ${n.gateway}` : ""}{n.macAddress ? ` · ${n.macAddress}` : ""}
+                                                        </p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </DetailSection>
+                                    ) : null}
+
+                                    {details.mounts && details.mounts.length > 0 ? (
+                                        <DetailSection title="Mounts" count={details.mounts.length}>
+                                            <div className="space-y-1.5 font-mono text-[11px]">
+                                                {details.mounts.map((m, i) => (
+                                                    <div key={`${m.destination}-${i}`} className="text-foreground">
+                                                        <span className="break-all">{m.source || m.type}</span>
+                                                        <span className="text-muted-foreground"> → {m.destination}</span>
+                                                        <span className="text-muted-foreground/70"> {m.rw ? "rw" : "ro"}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </DetailSection>
+                                    ) : null}
+
+                                    {details.env && details.env.length > 0 ? (
+                                        <DetailSection title="Environment" count={details.env.length}>
+                                            <p className="mb-2 text-[11px] text-amber-600 dark:text-amber-400">May contain secrets — visible to anyone with panel access.</p>
+                                            <div className="space-y-0.5 font-mono text-[11px] text-foreground">
+                                                {details.env.map((e, i) => {
+                                                    const eq = e.indexOf("=");
+                                                    const k = eq >= 0 ? e.slice(0, eq) : e;
+                                                    const v = eq >= 0 ? e.slice(eq + 1) : "";
+                                                    return (
+                                                        <div key={`${k}-${i}`} className="break-all">
+                                                            <span className="text-sky-600 dark:text-sky-400">{k}</span>
+                                                            {eq >= 0 ? <span className="text-muted-foreground">={v}</span> : null}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </DetailSection>
+                                    ) : null}
+
+                                    {details.labels && Object.keys(details.labels).length > 0 ? (
+                                        <DetailSection title="Labels" count={Object.keys(details.labels).length}>
+                                            <div className="space-y-0.5 font-mono text-[11px] text-foreground">
+                                                {Object.entries(details.labels).map(([k, v]) => (
+                                                    <div key={k} className="break-all">
+                                                        <span className="text-sky-600 dark:text-sky-400">{k}</span>
+                                                        <span className="text-muted-foreground">: {v}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </DetailSection>
+                                    ) : null}
+
+                                    {details.raw ? (
+                                        <DetailSection title="Raw inspect">
+                                            <Button variant="outline" size="sm" className="mb-2" onClick={() => setShowRaw((v) => !v)}>
+                                                {showRaw ? "Hide" : "Show"} raw JSON
+                                            </Button>
+                                            {showRaw ? (
+                                                <pre className="max-h-96 overflow-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{details.raw}</pre>
+                                            ) : null}
+                                        </DetailSection>
+                                    ) : null}
+                                </>
+                            ) : null}
+                        </div>
                     </div>
                 </div>
             ) : null}

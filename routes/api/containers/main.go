@@ -53,6 +53,22 @@ func UserDockerfileHandler(sessions *services.SessionService, containers *servic
 	})
 }
 
+func UserInspectHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requestSession(r, sessions)
+		if !ok {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		details, err := containers.InspectCurrentUser(session.Username, r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, details)
+	})
+}
+
 func UserActionHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, ok := requestSession(r, sessions)

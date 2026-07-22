@@ -108,6 +108,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("GET /api/containers", public(containersroute.UserHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("POST /api/containers/action", public(containersroute.UserActionHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("GET /api/containers/logs", public(containersroute.UserLogsHandler(deps.Sessions, services.NewContainerService())))
+	mux.Handle("GET /api/containers/inspect", public(containersroute.UserInspectHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("GET /api/containers/dockerfile", public(containersroute.UserDockerfileHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("PUT /api/containers/dockerfile", public(containersroute.UserDockerfileHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("GET /api/vhost", public(vhostroute.Handler(deps.Sessions, services.NewVHostService())))

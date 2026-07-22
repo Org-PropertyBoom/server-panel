@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,115 @@ type Container struct {
 	RouteHosts       []string `json:"routeHosts,omitempty"`       // App-route hostnames (platform_hosts) pointing here
 	RouteTenantCount int      `json:"routeTenantCount,omitempty"` // tenant sites (website_hosts) via this container's stack
 	RouteTenantStack string   `json:"routeTenantStack,omitempty"` // the stack name backing those tenants
+}
+
+// ContainerDetails is a curated view of `<engine> inspect <id>` — the fields worth
+// showing in a details drawer, plus the pretty-printed raw JSON for a raw view.
+type ContainerDetails struct {
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Image         string             `json:"image"`
+	ImageID       string             `json:"imageId,omitempty"`
+	Created       string             `json:"created,omitempty"`
+	Platform      string             `json:"platform,omitempty"`
+	Engine        string             `json:"engine"`
+	Owner         string             `json:"owner"`
+	Command       string             `json:"command,omitempty"`
+	Entrypoint    string             `json:"entrypoint,omitempty"`
+	WorkingDir    string             `json:"workingDir,omitempty"`
+	User          string             `json:"user,omitempty"`
+	RestartPolicy string             `json:"restartPolicy,omitempty"`
+	State         ContainerState     `json:"state"`
+	Env           []string           `json:"env,omitempty"`
+	Labels        map[string]string  `json:"labels,omitempty"`
+	Ports         []ContainerPortMap `json:"ports,omitempty"`
+	Mounts        []ContainerMount   `json:"mounts,omitempty"`
+	Networks      []ContainerNetwork `json:"networks,omitempty"`
+	Raw           string             `json:"raw,omitempty"`
+}
+
+type ContainerState struct {
+	Status       string `json:"status,omitempty"`
+	Running      bool   `json:"running"`
+	ExitCode     int    `json:"exitCode"`
+	StartedAt    string `json:"startedAt,omitempty"`
+	FinishedAt   string `json:"finishedAt,omitempty"`
+	Health       string `json:"health,omitempty"`
+	RestartCount int    `json:"restartCount,omitempty"`
+}
+
+type ContainerPortMap struct {
+	Container string `json:"container"`      // e.g. "80/tcp"
+	Host      string `json:"host,omitempty"` // e.g. "0.0.0.0:8004"; "" = unpublished
+}
+
+type ContainerMount struct {
+	Type        string `json:"type,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Destination string `json:"destination,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	RW          bool   `json:"rw"`
+}
+
+type ContainerNetwork struct {
+	Name       string `json:"name"`
+	IPAddress  string `json:"ipAddress,omitempty"`
+	Gateway    string `json:"gateway,omitempty"`
+	MacAddress string `json:"macAddress,omitempty"`
+}
+
+// rawInspect maps the subset of the docker/podman inspect JSON we surface. Both
+// engines follow the Docker schema for these fields.
+type rawInspect struct {
+	Id       string `json:"Id"`
+	Name     string `json:"Name"`
+	Created  string `json:"Created"`
+	Platform string `json:"Platform"`
+	Image    string `json:"Image"`
+	State    struct {
+		Status     string `json:"Status"`
+		Running    bool   `json:"Running"`
+		ExitCode   int    `json:"ExitCode"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
+		Health     *struct {
+			Status string `json:"Status"`
+		} `json:"Health"`
+	} `json:"State"`
+	RestartCount int `json:"RestartCount"`
+	Config       struct {
+		Image      string            `json:"Image"`
+		Cmd        []string          `json:"Cmd"`
+		Entrypoint []string          `json:"Entrypoint"`
+		WorkingDir string            `json:"WorkingDir"`
+		User       string            `json:"User"`
+		Env        []string          `json:"Env"`
+		Labels     map[string]string `json:"Labels"`
+	} `json:"Config"`
+	HostConfig struct {
+		RestartPolicy struct {
+			Name              string `json:"Name"`
+			MaximumRetryCount int    `json:"MaximumRetryCount"`
+		} `json:"RestartPolicy"`
+	} `json:"HostConfig"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+		Mode        string `json:"Mode"`
+		RW          bool   `json:"RW"`
+	} `json:"Mounts"`
+	NetworkSettings struct {
+		Ports map[string][]struct {
+			HostIp   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"Ports"`
+		Networks map[string]struct {
+			IPAddress  string `json:"IPAddress"`
+			Gateway    string `json:"Gateway"`
+			MacAddress string `json:"MacAddress"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
 }
 
 type containerCommandRunner interface {
@@ -142,6 +252,108 @@ func (s *ContainerService) LogsCurrentUser(username, id string) (string, error) 
 	}
 	output, err := s.runner.Run("podman", "logs", "--tail", "200", id)
 	return string(output), err
+}
+
+// InspectAll returns curated `<engine> inspect` details for a root-visible
+// container (Docker as root, or a user's rootless Podman container).
+func (s *ContainerService) InspectAll(engine, owner, id string) (ContainerDetails, error) {
+	if !allowedContainerID.MatchString(id) {
+		return ContainerDetails{}, errors.New("invalid container")
+	}
+	output, err := s.runForOwner(engine, owner, "inspect", id)
+	if err != nil {
+		return ContainerDetails{}, err
+	}
+	return parseContainerDetails(output, engine, owner)
+}
+
+// InspectCurrentUser returns curated inspect details for one of the calling user's
+// own rootless Podman containers.
+func (s *ContainerService) InspectCurrentUser(username, id string) (ContainerDetails, error) {
+	if !isCurrentUser(username) || !allowedContainerID.MatchString(id) {
+		return ContainerDetails{}, errors.New("invalid container")
+	}
+	output, err := s.runner.Run("podman", "inspect", id)
+	if err != nil {
+		return ContainerDetails{}, err
+	}
+	return parseContainerDetails(output, "podman", username)
+}
+
+func parseContainerDetails(output []byte, engine, owner string) (ContainerDetails, error) {
+	var arr []rawInspect
+	if err := json.Unmarshal(output, &arr); err != nil || len(arr) == 0 {
+		return ContainerDetails{}, errors.New("could not read container details")
+	}
+	r := arr[0]
+	d := ContainerDetails{
+		ID:         r.Id,
+		Name:       strings.TrimPrefix(r.Name, "/"),
+		Image:      firstNonEmpty(r.Config.Image, r.Image),
+		ImageID:    r.Image,
+		Created:    r.Created,
+		Platform:   r.Platform,
+		Engine:     engine,
+		Owner:      owner,
+		Command:    strings.TrimSpace(strings.Join(r.Config.Cmd, " ")),
+		Entrypoint: strings.TrimSpace(strings.Join(r.Config.Entrypoint, " ")),
+		WorkingDir: r.Config.WorkingDir,
+		User:       r.Config.User,
+		Env:        r.Config.Env,
+		Labels:     r.Config.Labels,
+		State: ContainerState{
+			Status:       r.State.Status,
+			Running:      r.State.Running,
+			ExitCode:     r.State.ExitCode,
+			StartedAt:    r.State.StartedAt,
+			FinishedAt:   r.State.FinishedAt,
+			RestartCount: r.RestartCount,
+		},
+	}
+	if r.State.Health != nil {
+		d.State.Health = r.State.Health.Status
+	}
+	if name := r.HostConfig.RestartPolicy.Name; name != "" {
+		d.RestartPolicy = name
+		if r.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
+			d.RestartPolicy = fmt.Sprintf("%s (max %d)", name, r.HostConfig.RestartPolicy.MaximumRetryCount)
+		}
+	}
+	for portKey, bindings := range r.NetworkSettings.Ports {
+		if len(bindings) == 0 {
+			d.Ports = append(d.Ports, ContainerPortMap{Container: portKey})
+			continue
+		}
+		for _, b := range bindings {
+			host := b.HostPort
+			if b.HostIp != "" {
+				host = b.HostIp + ":" + b.HostPort
+			}
+			d.Ports = append(d.Ports, ContainerPortMap{Container: portKey, Host: host})
+		}
+	}
+	sort.Slice(d.Ports, func(i, j int) bool { return d.Ports[i].Container < d.Ports[j].Container })
+	for _, m := range r.Mounts {
+		d.Mounts = append(d.Mounts, ContainerMount{Type: m.Type, Source: m.Source, Destination: m.Destination, Mode: m.Mode, RW: m.RW})
+	}
+	for name, net := range r.NetworkSettings.Networks {
+		d.Networks = append(d.Networks, ContainerNetwork{Name: name, IPAddress: net.IPAddress, Gateway: net.Gateway, MacAddress: net.MacAddress})
+	}
+	sort.Slice(d.Networks, func(i, j int) bool { return d.Networks[i].Name < d.Networks[j].Name })
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, output, "", "  ") == nil {
+		d.Raw = pretty.String()
+	}
+	return d, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *ContainerService) DockerfileAll(engine, owner, id string) (ContainerDockerfile, error) {

@@ -60,6 +60,22 @@ func DockerfileHandler(sessions *services.SessionService, containers *services.C
 	})
 }
 
+func InspectHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		details, err := containers.InspectAll(r.URL.Query().Get("engine"), r.URL.Query().Get("owner"), r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(details)
+	})
+}
+
 func ActionHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validSession(r, sessions) {
