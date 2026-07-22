@@ -356,6 +356,159 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// ContainerCreateSpec is the `docker run` form: image is required; everything
+// else optional. Values are validated and passed as separate exec args (no shell).
+type ContainerCreateSpec struct {
+	Image   string   `json:"image"`
+	Name    string   `json:"name"`
+	Ports   []string `json:"ports"`   // "host:container" or "host:container/proto"
+	Env     []string `json:"env"`     // "KEY=VALUE"
+	Volumes []string `json:"volumes"` // "src:dst" or "src:dst:ro"
+	Restart string   `json:"restart"` // no | always | unless-stopped | on-failure
+}
+
+var (
+	allowedComposeService = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	allowedImageRef       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$`)
+	allowedPortMapping    = regexp.MustCompile(`^(\d{1,5}:)?\d{1,5}(/(tcp|udp))?$`)
+	allowedEnvKey         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	allowedRestartPolicy  = map[string]bool{"no": true, "always": true, "unless-stopped": true, "on-failure": true}
+)
+
+// runContainerCommand runs a long-lived container command (image build / pull),
+// well beyond the 5s list timeout, optionally in a working directory. It uses a
+// detached context so a client disconnect doesn't abort a build mid-flight.
+func runContainerCommand(dir string, timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	return cmd.CombinedOutput()
+}
+
+// RebuildAll rebuilds + recreates a Docker Compose-managed root container from its
+// (possibly just-edited) Dockerfile: `docker compose up -d --build --no-deps
+// <service>` in the container's compose working dir. Compose only recreates the
+// service on a successful build, so a bad Dockerfile leaves the running container
+// untouched. Returns the combined build log. Not supported for non-compose or
+// rootless Podman containers.
+func (s *ContainerService) RebuildAll(engine, owner, id string) (string, error) {
+	if engine != "docker" || (owner != "root" && owner != "system") {
+		return "", errors.New("rebuild is only supported for root Docker containers")
+	}
+	if !allowedContainerID.MatchString(id) {
+		return "", errors.New("invalid container")
+	}
+	output, err := s.runForOwner(engine, owner, "inspect", id)
+	if err != nil {
+		return "", err
+	}
+	var arr []rawInspect
+	if json.Unmarshal(output, &arr) != nil || len(arr) == 0 {
+		return "", errors.New("could not read container details")
+	}
+	labels := arr[0].Config.Labels
+	workingDir := strings.TrimSpace(labels["com.docker.compose.project.working_dir"])
+	service := strings.TrimSpace(labels["com.docker.compose.service"])
+	if workingDir == "" || service == "" {
+		return "", errors.New("rebuild needs a Docker Compose-managed container (compose labels missing) — recreate it from its stack instead")
+	}
+	if !allowedComposeService.MatchString(service) {
+		return "", errors.New("invalid compose service name")
+	}
+	if !filepath.IsAbs(workingDir) {
+		return "", errors.New("invalid compose working directory")
+	}
+	args := []string{"compose"}
+	for _, cf := range composeConfigFiles(labels["com.docker.compose.project.config_files"], workingDir) {
+		args = append(args, "-f", cf)
+	}
+	args = append(args, "up", "-d", "--build", "--no-deps", service)
+	out, err := runContainerCommand(workingDir, 10*time.Minute, "docker", args...)
+	return string(out), err
+}
+
+// composeConfigFiles resolves the compose project's config-file label (comma-
+// separated, possibly relative to the working dir) into absolute paths. Empty
+// label → nil, letting compose use its default file resolution in the working dir.
+func composeConfigFiles(label, workingDir string) []string {
+	label = strings.TrimSpace(label)
+	if label == "" || label == "<nil>" {
+		return nil
+	}
+	var files []string
+	for _, part := range strings.Split(label, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !filepath.IsAbs(part) {
+			part = filepath.Join(workingDir, part)
+		}
+		files = append(files, part)
+	}
+	return files
+}
+
+// CreateContainer runs a new detached Docker container (`docker run -d`). Root
+// Docker only. Every field is validated and passed as a discrete exec arg so
+// there's no shell to inject into. Returns the run output (new container id on
+// success, or the error output on failure).
+func (s *ContainerService) CreateContainer(spec ContainerCreateSpec) (string, error) {
+	image := strings.TrimSpace(spec.Image)
+	if image == "" || strings.HasPrefix(image, "-") || !allowedImageRef.MatchString(image) {
+		return "", errors.New("a valid image is required")
+	}
+	args := []string{"run", "-d"}
+	if name := strings.TrimSpace(spec.Name); name != "" {
+		if !allowedContainerID.MatchString(name) {
+			return "", errors.New("invalid container name")
+		}
+		args = append(args, "--name", name)
+	}
+	restart := strings.TrimSpace(spec.Restart)
+	if restart == "" {
+		restart = "unless-stopped"
+	}
+	if !allowedRestartPolicy[restart] {
+		return "", errors.New("invalid restart policy")
+	}
+	args = append(args, "--restart", restart)
+	for _, p := range spec.Ports {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		if !allowedPortMapping.MatchString(p) {
+			return "", fmt.Errorf("invalid port mapping %q (use host:container)", p)
+		}
+		args = append(args, "-p", p)
+	}
+	for _, e := range spec.Env {
+		if e = strings.TrimSpace(e); e == "" {
+			continue
+		}
+		eq := strings.IndexByte(e, '=')
+		if eq <= 0 || !allowedEnvKey.MatchString(e[:eq]) {
+			return "", fmt.Errorf("invalid environment variable %q (use KEY=VALUE)", e)
+		}
+		args = append(args, "-e", e)
+	}
+	for _, v := range spec.Volumes {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		if strings.HasPrefix(v, "-") || !strings.Contains(v, ":") {
+			return "", fmt.Errorf("invalid volume %q (use src:dst)", v)
+		}
+		args = append(args, "-v", v)
+	}
+	args = append(args, image)
+	out, err := runContainerCommand("", 5*time.Minute, "docker", args...)
+	return string(out), err
+}
+
 func (s *ContainerService) DockerfileAll(engine, owner, id string) (ContainerDockerfile, error) {
 	path, err := s.containerDockerfilePath(engine, owner, id)
 	if err != nil {

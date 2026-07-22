@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Info, Loader2, Play, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
+import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
 
 import { toast } from "sonner";
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
 import Api from "_utils/api";
+import { runtime } from "runtime";
 
 type ContainerRecord = {
     id: string;
@@ -141,6 +142,9 @@ export default function ContainersRoute() {
     const [detailsLoading, setDetailsLoading] = useState(false);
     const [detailsError, setDetailsError] = useState("");
     const [showRaw, setShowRaw] = useState(false);
+    const [rebuilding, setRebuilding] = useState(false);
+    const [rebuildLog, setRebuildLog] = useState("");
+    const [createOpen, setCreateOpen] = useState(false);
 
     const loadContainers = useCallback(async () => {
         setLoading(true);
@@ -229,6 +233,7 @@ export default function ContainersRoute() {
         setDockerfileContent("");
         setDockerfilePath("");
         setDockerfileError("");
+        setRebuildLog("");
         setDockerfileLoading(true);
         try {
             const response = await fetch(`${Api.current.containers}/dockerfile?${dockerfileQuery(container)}`, { cache: "no-store" });
@@ -243,17 +248,22 @@ export default function ContainersRoute() {
         }
     };
 
+    const putDockerfile = async (): Promise<boolean> => {
+        if (!dockerfileContainer) return false;
+        const response = await fetch(`${Api.current.containers}/dockerfile?${dockerfileQuery(dockerfileContainer)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: dockerfileContent }),
+        });
+        if (!response.ok) throw new Error((await response.text()) || "Failed to save Dockerfile");
+        return true;
+    };
+
     const saveDockerfile = async () => {
-        if (!dockerfileContainer) return;
         setDockerfileSaving(true);
         setDockerfileError("");
         try {
-            const response = await fetch(`${Api.current.containers}/dockerfile?${dockerfileQuery(dockerfileContainer)}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content: dockerfileContent }),
-            });
-            if (!response.ok) throw new Error((await response.text()) || "Failed to save Dockerfile");
+            await putDockerfile();
             toast.success("Dockerfile saved");
             setDockerfileContainer(null);
         } catch (dockerfileSaveError) {
@@ -263,16 +273,63 @@ export default function ContainersRoute() {
         }
     };
 
+    // saveAndRebuild writes the Dockerfile then runs `docker compose up -d --build
+    // --no-deps <service>`. Compose only recreates the container on a successful
+    // build, so a bad edit leaves the running one untouched. The build log streams
+    // back into the modal.
+    const saveAndRebuild = async () => {
+        if (!dockerfileContainer) return;
+        setDockerfileError("");
+        setRebuildLog("");
+        setDockerfileSaving(true);
+        try {
+            await putDockerfile();
+        } catch (saveError) {
+            setDockerfileError(saveError instanceof Error ? saveError.message : "Failed to save Dockerfile");
+            setDockerfileSaving(false);
+            return;
+        }
+        setDockerfileSaving(false);
+        setRebuilding(true);
+        try {
+            const response = await fetch(`${Api.current.containers}/rebuild`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ engine: dockerfileContainer.engine, id: dockerfileContainer.id, owner: dockerfileContainer.owner }),
+            });
+            const data: { output?: string; error?: string } = await response.json();
+            setRebuildLog(data.output || "");
+            if (data.error) {
+                toast.error(data.error);
+            } else {
+                toast.success(`${dockerfileContainer.name || "Container"} rebuilt`);
+                await loadContainers();
+            }
+        } catch (rebuildError) {
+            toast.error(rebuildError instanceof Error ? rebuildError.message : "Rebuild failed");
+        } finally {
+            setRebuilding(false);
+        }
+    };
+
     return (
         <DashboardLayout
             title="Containers"
             description="View Docker system containers and isolated rootless Podman containers."
             wide
             actions={
-                <Button variant="outline" size="sm" className="gap-2" onClick={loadContainers} disabled={loading}>
-                    <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-                    Refresh
-                </Button>
+                <div className="flex items-center gap-2">
+                    {runtime.isRoot ? (
+                        <Button size="sm" className="gap-2" onClick={() => setCreateOpen(true)}>
+                            <Plus className="h-4 w-4" />
+                            New container
+                        </Button>
+                    ) : null}
+                    <Button variant="outline" size="sm" className="gap-2" onClick={loadContainers} disabled={loading}>
+                        <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                        Refresh
+                    </Button>
+                </div>
             }
         >
             {error ? (
@@ -556,19 +613,151 @@ export default function ContainersRoute() {
                                 <textarea value={dockerfileContent} onChange={(event) => setDockerfileContent(event.target.value)} disabled={!dockerfilePath} spellCheck={false} className="h-full w-full resize-none bg-transparent p-5 font-mono text-xs leading-6 text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50" aria-label="Dockerfile content" />
                             )}
                         </div>
+                        {rebuildLog || rebuilding ? (
+                            <div className="border-t border-border bg-zinc-950">
+                                <div className="flex items-center gap-2 px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                                    {rebuilding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Hammer className="h-3 w-3" />}
+                                    {rebuilding ? "Rebuilding…" : "Build log"}
+                                </div>
+                                <pre className="max-h-56 overflow-auto px-5 pb-3 font-mono text-[11px] leading-5 text-zinc-200">{rebuildLog || "Running docker compose up --build…"}</pre>
+                            </div>
+                        ) : null}
                         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
-                            <p className="text-xs text-muted-foreground">Saving does not rebuild the image or recreate the container.</p>
+                            <p className="text-xs text-muted-foreground">
+                                {dockerfileContainer.engine === "docker" ? "Rebuild runs compose up --build; the container is recreated only if the build succeeds." : "Saving does not rebuild the image or recreate the container."}
+                            </p>
                             <div className="flex gap-2">
-                                <Button variant="outline" size="sm" onClick={() => setDockerfileContainer(null)} disabled={dockerfileSaving}>Cancel</Button>
-                                <Button size="sm" className="gap-2" onClick={saveDockerfile} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving}>
-                                    {dockerfileSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                                <Button variant="outline" size="sm" onClick={() => setDockerfileContainer(null)} disabled={dockerfileSaving || rebuilding}>Cancel</Button>
+                                <Button variant="outline" size="sm" className="gap-2" onClick={saveDockerfile} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving || rebuilding}>
+                                    {dockerfileSaving && !rebuilding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                                     Save
                                 </Button>
+                                {dockerfileContainer.engine === "docker" ? (
+                                    <Button size="sm" className="gap-2" onClick={saveAndRebuild} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving || rebuilding}>
+                                        {rebuilding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}
+                                        Save &amp; rebuild
+                                    </Button>
+                                ) : null}
                             </div>
                         </div>
                     </div>
                 </div>
             ) : null}
+
+            {createOpen ? (
+                <CreateContainerModal
+                    onClose={() => setCreateOpen(false)}
+                    onCreated={() => {
+                        setCreateOpen(false);
+                        loadContainers();
+                    }}
+                />
+            ) : null}
         </DashboardLayout>
+    );
+}
+
+// CreateContainerModal is the `docker run -d` form (root only). Multi-value fields
+// (ports/env/volumes) are entered one-per-line and split before sending.
+function CreateContainerModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+    const [image, setImage] = useState("");
+    const [name, setName] = useState("");
+    const [ports, setPorts] = useState("");
+    const [env, setEnv] = useState("");
+    const [volumes, setVolumes] = useState("");
+    const [restart, setRestart] = useState("unless-stopped");
+    const [creating, setCreating] = useState(false);
+    const [output, setOutput] = useState("");
+
+    const lines = (value: string) => value.split("\n").map((l) => l.trim()).filter(Boolean);
+
+    const create = async () => {
+        setCreating(true);
+        setOutput("");
+        try {
+            const response = await fetch(`${Api.current.containers}/create`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image: image.trim(),
+                    name: name.trim(),
+                    ports: lines(ports),
+                    env: lines(env),
+                    volumes: lines(volumes),
+                    restart,
+                }),
+            });
+            const data: { output?: string; error?: string } = await response.json();
+            if (data.error) {
+                setOutput(data.output || "");
+                toast.error(data.error);
+                return;
+            }
+            toast.success(`${name.trim() || "Container"} created`);
+            onCreated();
+        } catch (createError) {
+            toast.error(createError instanceof Error ? createError.message : "Failed to create container");
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (creating ? null : onClose())}>
+            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                    <div>
+                        <h2 className="text-sm font-semibold text-foreground">New container</h2>
+                        <p className="mt-0.5 text-xs text-muted-foreground">Runs <code>docker run -d</code> as root. For stack apps, use their deploy pipeline instead.</p>
+                    </div>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} disabled={creating} aria-label="Close">
+                        <X className="h-4 w-4" />
+                    </Button>
+                </div>
+                <div className="min-h-0 flex-1 space-y-4 overflow-auto px-5 py-4 text-xs">
+                    <label className="block">
+                        <span className="mb-1 block font-medium text-foreground">Image <span className="text-destructive">*</span></span>
+                        <input value={image} onChange={(e) => setImage(e.target.value)} placeholder="nocodb/nocodb:latest" autoFocus className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
+                    </label>
+                    <label className="block">
+                        <span className="mb-1 block font-medium text-foreground">Name</span>
+                        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="optional — auto-generated if empty" className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
+                    </label>
+                    <div className="grid grid-cols-2 gap-4">
+                        <label className="block">
+                            <span className="mb-1 block font-medium text-foreground">Ports</span>
+                            <textarea value={ports} onChange={(e) => setPorts(e.target.value)} rows={3} placeholder={"one per line\n9001:8080"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
+                            <span className="mt-1 block text-[11px] text-muted-foreground">host:container</span>
+                        </label>
+                        <label className="block">
+                            <span className="mb-1 block font-medium text-foreground">Volumes</span>
+                            <textarea value={volumes} onChange={(e) => setVolumes(e.target.value)} rows={3} placeholder={"one per line\n/data/nocodb:/usr/app/data"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
+                            <span className="mt-1 block text-[11px] text-muted-foreground">src:dst[:ro]</span>
+                        </label>
+                    </div>
+                    <label className="block">
+                        <span className="mb-1 block font-medium text-foreground">Environment</span>
+                        <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={3} placeholder={"one per line\nKEY=VALUE"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
+                    </label>
+                    <label className="block">
+                        <span className="mb-1 block font-medium text-foreground">Restart policy</span>
+                        <select value={restart} onChange={(e) => setRestart(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 outline-none focus:border-primary">
+                            <option value="unless-stopped">unless-stopped</option>
+                            <option value="always">always</option>
+                            <option value="on-failure">on-failure</option>
+                            <option value="no">no</option>
+                        </select>
+                    </label>
+                    {output ? <pre className="max-h-40 overflow-auto rounded-md border border-destructive/30 bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-red-300">{output}</pre> : null}
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+                    <Button variant="outline" size="sm" onClick={onClose} disabled={creating}>Cancel</Button>
+                    <Button size="sm" className="gap-2" onClick={create} disabled={creating || !image.trim()}>
+                        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        Create
+                    </Button>
+                </div>
+            </div>
+        </div>
     );
 }
