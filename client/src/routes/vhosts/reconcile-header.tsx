@@ -140,6 +140,32 @@ export default function ReconcileHeader({
     );
 }
 
+// ReconcileHeaderSkeleton mirrors the header's two-row layout + exact paddings so
+// the first load doesn't shift the page vertically when real data arrives.
+export function ReconcileHeaderSkeleton() {
+    return (
+        <div className="border-b border-border bg-card/40" aria-hidden>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-4">
+                {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="flex flex-col gap-0.5">
+                        <div className="h-7 w-8 animate-pulse rounded bg-muted" />
+                        <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                    </div>
+                ))}
+                <span className="flex-1" />
+                <div className="h-6 w-16 animate-pulse rounded-full bg-muted" />
+                <div className="h-8 w-40 animate-pulse rounded-md bg-muted" />
+                <div className="h-8 w-28 animate-pulse rounded-md bg-muted" />
+                <div className="h-8 w-32 animate-pulse rounded-md bg-muted" />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-6 pb-3">
+                <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+                <div className="h-4 w-72 animate-pulse rounded bg-muted" />
+            </div>
+        </div>
+    );
+}
+
 // GateSwitch is the runtime arm/disarm control. Turning ON is guarded by a confirm
 // (handled by the caller); turning OFF is instant — disarming is always safe.
 function GateSwitch({ live, onToggle }: { live: boolean; onToggle: (enabled: boolean) => void }) {

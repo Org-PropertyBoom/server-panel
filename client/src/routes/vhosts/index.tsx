@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import DashboardLayout from "_layouts/dashboard";
 import { runtime } from "../../runtime";
-import ReconcileHeader from "./reconcile-header";
+import ReconcileHeader, { ReconcileHeaderSkeleton } from "./reconcile-header";
 import VHostsSidebar from "./sidebar";
 import TenantView from "./tenant";
 import SystemView from "./system";
@@ -143,7 +143,9 @@ function VHostsShell({ active }: { active: Section }) {
                         onToggleGate={toggleGate}
                         onDismissResult={() => setResult(null)}
                     />
-                ) : null}
+                ) : (
+                    <ReconcileHeaderSkeleton />
+                )}
 
                 <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[220px_1fr]">
                     <VHostsSidebar
