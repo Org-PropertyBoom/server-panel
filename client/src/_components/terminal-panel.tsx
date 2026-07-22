@@ -9,12 +9,85 @@ import { runtime } from "runtime";
 import { useTerminal } from "_contexts/terminal";
 
 const terminalTitle = `${shortOSName(runtime.osName)} - Root`;
+
+const PANEL_HEIGHT_KEY = "terminal_panel_height";
+const MIN_PANEL_HEIGHT = 140;
+const DEFAULT_PANEL_HEIGHT = 320;
+
+// clampPanelHeight keeps the panel between a usable minimum and "leave room for the
+// header/content" maximum, re-evaluated against the live viewport.
+function clampPanelHeight(h: number): number {
+    const max = Math.max(MIN_PANEL_HEIGHT, window.innerHeight - 120);
+    return Math.min(Math.max(h, MIN_PANEL_HEIGHT), max);
+}
+
 export default function TerminalPanel() {
     const { activeTabId, tabs, closePanel, closeTab, duplicateActiveTab, setActiveTabId } = useTerminal();
     const colorMode = useResolvedColorMode();
+    const [height, setHeight] = useState<number>(() => {
+        const saved = Number(localStorage.getItem(PANEL_HEIGHT_KEY));
+        return saved && !Number.isNaN(saved) ? clampPanelHeight(saved) : DEFAULT_PANEL_HEIGHT;
+    });
+    const [dragging, setDragging] = useState(false);
+
+    // Re-clamp if the window shrinks so the panel never eats the whole viewport.
+    useEffect(() => {
+        const onResize = () => setHeight((h) => clampPanelHeight(h));
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+
+    // Drag the top edge to resize (VS Code / EC2-console style). Dragging UP grows
+    // the panel; moves are rAF-throttled into a resize event so the active xterm
+    // FitAddon re-fits live without thrash. A full-screen overlay during the drag
+    // keeps the resize cursor steady and stops the terminal canvas / page from
+    // stealing the pointer or selecting text. Persisted on release.
+    const startResize = (e: React.PointerEvent) => {
+        e.preventDefault();
+        setDragging(true);
+        const startY = e.clientY;
+        const startH = height;
+        let latest = startH;
+        let raf = 0;
+        const onMove = (ev: PointerEvent) => {
+            latest = clampPanelHeight(startH + (startY - ev.clientY));
+            setHeight(latest);
+            if (!raf) {
+                raf = requestAnimationFrame(() => {
+                    raf = 0;
+                    window.dispatchEvent(new Event("resize"));
+                });
+            }
+        };
+        const onUp = () => {
+            setDragging(false);
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            if (raf) cancelAnimationFrame(raf);
+            window.dispatchEvent(new Event("resize"));
+            localStorage.setItem(PANEL_HEIGHT_KEY, String(latest));
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+    };
+
+    const resetHeight = () => {
+        setHeight(DEFAULT_PANEL_HEIGHT);
+        localStorage.setItem(PANEL_HEIGHT_KEY, String(DEFAULT_PANEL_HEIGHT));
+        window.dispatchEvent(new Event("resize"));
+    };
 
     return (
-        <div className="z-30 flex h-[320px] w-full flex-col border-t border-border bg-background text-foreground">
+        <div style={{ height }} className="relative z-30 flex w-full flex-col border-t border-border bg-background text-foreground">
+            {dragging ? <div className="fixed inset-0 z-[60] cursor-ns-resize" /> : null}
+            <div
+                onPointerDown={startResize}
+                onDoubleClick={resetHeight}
+                title="Drag to resize · double-click to reset"
+                className="group absolute inset-x-0 top-0 z-40 flex h-2 -translate-y-1/2 cursor-ns-resize items-center"
+            >
+                <div className={`h-0.5 w-full transition-colors ${dragging ? "bg-primary" : "bg-transparent group-hover:bg-primary/50"}`} />
+            </div>
             <div className="flex h-9 items-center justify-between border-b border-border bg-muted/40 select-none">
                 <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
                     <div className="flex h-9 items-center border-r border-border px-3 text-xs font-semibold text-muted-foreground">
