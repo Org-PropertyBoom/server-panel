@@ -29,7 +29,7 @@ func (f *fakeCaddy) Adapt(caddyfile []byte, filename string) ([]byte, []string, 
 		return nil, nil, f.adaptErr
 	}
 	if f.adaptNoDash {
-		// Simulate the outage signature: adapted config missing the dashboard domain.
+		// Simulate the outage signature: adapted config missing the protected domain.
 		return []byte(`{"apps":{"http":{"servers":{"srv0":{"routes":[]}}}}}________`), nil, nil
 	}
 	return []byte(`{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"host":["app.propertyboom.co"]}]}]}}}}}`), nil, nil
@@ -62,11 +62,11 @@ func engineCfg(t *testing.T) config.Config {
 		t.Fatal(err)
 	}
 	return config.Config{
-		DashboardDomain: "app.propertyboom.co",
-		VhostsDir:       filepath.Join(dir, "vhosts"),
-		MainCaddyfile:   main,
-		BackupDir:       filepath.Join(dir, "backups"),
-		StackPorts:      map[string]string{"phalcon": "127.0.0.1:8002", "golang": "127.0.0.1:8005"},
+		PanelDomain:   "app.propertyboom.co", // the protected/canary host in these tests (matches fakeCaddy's adapt output)
+		VhostsDir:     filepath.Join(dir, "vhosts"),
+		MainCaddyfile: main,
+		BackupDir:     filepath.Join(dir, "backups"),
+		StackPorts:    map[string]string{"phalcon": "127.0.0.1:8002", "golang": "127.0.0.1:8005"},
 	}
 }
 
@@ -209,7 +209,7 @@ func TestEngine_AbortOnInvalid_DoesNotReload(t *testing.T) {
 	}
 }
 
-func TestEngine_RefusesReloadIfDashboardDomainMissing(t *testing.T) {
+func TestEngine_RefusesReloadIfProtectedDomainMissing(t *testing.T) {
 	cfg := engineCfg(t)
 	mkVhosts(t, cfg, nil)
 	fc := &fakeCaddy{adaptNoDash: true}
@@ -217,17 +217,17 @@ func TestEngine_RefusesReloadIfDashboardDomainMissing(t *testing.T) {
 
 	res, err := e.Reconcile(context.Background(), db.Snapshot{})
 	if err == nil {
-		t.Fatal("must refuse to reload when the dashboard domain is absent from adapted output")
+		t.Fatal("must refuse to reload when the protected domain is absent from adapted output")
 	}
 	if res.Reloaded || fc.loads != 0 {
 		t.Errorf("must NOT reload; reloaded=%v loads=%d", res.Reloaded, fc.loads)
 	}
 	if res.Error == "" {
-		t.Error("Error should explain the missing-dashboard-domain refusal")
+		t.Error("Error should explain the missing-protected-domain refusal")
 	}
 }
 
-func TestEngine_ReloadOnly_RefusesIfDashboardMissing(t *testing.T) {
+func TestEngine_ReloadOnly_RefusesIfProtectedMissing(t *testing.T) {
 	cfg := engineCfg(t)
 	mkVhosts(t, cfg, nil)
 	fc := &fakeCaddy{adaptNoDash: true}
@@ -376,10 +376,9 @@ func TestDryRun_ReportsDriftAndOrphans(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		VhostsDir:       dir,
-		DashboardDomain: "app.propertyboom.co",
-		PanelDomain:     "cp.propertyweb.co",
-		StackPorts:      map[string]string{"golang": "127.0.0.1:8005"},
+		VhostsDir:   dir,
+		PanelDomain: "cp.propertyweb.co",
+		StackPorts:  map[string]string{"golang": "127.0.0.1:8005"},
 	}
 	e := NewEngine(cfg, nil, nil)
 
@@ -416,9 +415,9 @@ func TestDryRun_InSyncWhenFolderMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{
-		VhostsDir:       dir,
-		DashboardDomain: "app.propertyboom.co",
-		StackPorts:      map[string]string{"golang": "127.0.0.1:8005"},
+		VhostsDir:   dir,
+		PanelDomain: "cp.propertyweb.co",
+		StackPorts:  map[string]string{"golang": "127.0.0.1:8005"},
 	}
 	e := NewEngine(cfg, nil, nil)
 	snap := db.Snapshot{Rows: []db.Row{{Table: "website_hosts", Host: "tenant.com", ServerStack: "golang", IsActive: true}}}
@@ -457,11 +456,8 @@ func TestRenderedHosts_ListsFolderHostnames(t *testing.T) {
 
 func TestRemoveFile_RefusesProtectedAndWildcard(t *testing.T) {
 	dir := t.TempDir()
-	cfg := config.Config{VhostsDir: dir, DashboardDomain: "app.propertyboom.co", PanelDomain: "cp.propertyweb.co"}
+	cfg := config.Config{VhostsDir: dir, PanelDomain: "cp.propertyweb.co"}
 	e := NewEngine(cfg, nil, nil)
-	if _, err := e.RemoveFile("app.propertyboom.co.caddy"); err == nil {
-		t.Error("must refuse to remove the dashboard-domain file")
-	}
 	if _, err := e.RemoveFile("cp.propertyweb.co.caddy"); err == nil {
 		t.Error("must refuse to remove the panel-domain file")
 	}

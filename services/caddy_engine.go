@@ -301,11 +301,8 @@ func (v *VhostEngineService) protectedRows() ([]PinnedRow, string) {
 	guardedRole := map[string]string{}
 	for _, h := range v.cfg.ProtectedHosts() {
 		role := "Protected"
-		switch {
-		case strings.EqualFold(h, v.cfg.PanelDomain):
+		if strings.EqualFold(h, v.cfg.PanelDomain) {
 			role = "Panel"
-		case strings.EqualFold(h, v.cfg.DashboardDomain):
-			role = "Dashboard"
 		}
 		guardedRole[strings.ToLower(strings.TrimSpace(h))] = role
 	}

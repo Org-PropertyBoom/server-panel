@@ -120,7 +120,7 @@ func (e *Engine) UnpinStaticBlock(ctx context.Context, host string) (Result, str
 		return res, "", errors.New(res.Error)
 	}
 	if reason := e.protectedReason(host); reason != "" {
-		res.Error = "refusing to unpin — " + reason + " (the panel/dashboard's own domain must stay pinned)"
+		res.Error = "refusing to unpin — " + reason + " (the panel's own domain must stay pinned)"
 		res.DurationMS = e.since(start)
 		return res, "", errors.New(res.Error)
 	}
@@ -228,7 +228,7 @@ func (e *Engine) validateAndReload(ctx context.Context, edited []byte, hostsBefo
 		res.DurationMS = e.since(start)
 		return *res, false
 	}
-	if derr := e.assertDashboardPresent(adaptedAfter); derr != nil {
+	if derr := e.assertProtectedPresent(adaptedAfter); derr != nil {
 		restore()
 		res.Error = derr.Error()
 		res.DurationMS = e.since(start)

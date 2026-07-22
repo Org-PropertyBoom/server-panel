@@ -16,9 +16,8 @@ type Config struct {
 	// VhostsDir is the flat folder the engine SOLELY owns; it renders every
 	// <host>.caddy here. Root-only on the host (750 server:server).
 	VhostsDir string
-	// MainCaddyfile is the existing main Caddyfile the engine adapts (static
-	// dashboard block + `import <VhostsDir>/*`). Adapted in-process/as-root; never
-	// rewritten.
+	// MainCaddyfile is the existing main Caddyfile the engine adapts (static panel
+	// block + `import <VhostsDir>/*`). Adapted in-process/as-root; never rewritten.
 	MainCaddyfile string
 	// CaddyAdminURL is the Caddy admin API base; reload = POST adapted JSON to /load.
 	CaddyAdminURL string
@@ -29,12 +28,11 @@ type Config struct {
 	// whose host was previously desired but is now absent (on a healthy read) is a
 	// removal, not an orphan.
 	KnownHostsFile string
-	// DashboardDomain is the ABSOLUTE guard: never removed/rendered as a folder
-	// file, pinned as a static Caddyfile block; a reload whose adapted config drops
-	// it is refused.
-	DashboardDomain string
-	// PanelDomain is server-panel's own public host — also protected so the panel
-	// never renders/prunes its own front door.
+	// PanelDomain is server-panel's own public host — the ABSOLUTE guard: never
+	// removed/rendered as a folder file, and a reload whose adapted config drops it
+	// is refused (losing it locks the operator out of the panel itself). It's the
+	// sole protected domain; stack dashboard domains (app./go-app./la-app./
+	// rust-app.propertyboom.co) are ordinary managed routes, not special-cased.
 	PanelDomain string
 	// StackPorts maps website_hosts.server_stack -> upstream host:port (website_hosts
 	// has no port column). An unknown stack is skipped, never guessed.
@@ -47,13 +45,12 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
-		VhostsDir:       "/home/server/.caddy",
-		MainCaddyfile:   "/etc/caddy/Caddyfile",
-		CaddyAdminURL:   "http://localhost:2019",
-		BackupDir:       "/var/lib/ppt-server-panel/caddy-backups",
-		KnownHostsFile:  "/var/lib/ppt-server-panel/vhost-known-hosts.json",
-		DashboardDomain: "app.propertyboom.co",
-		PanelDomain:     "cp.propertyweb.co",
+		VhostsDir:      "/home/server/.caddy",
+		MainCaddyfile:  "/etc/caddy/Caddyfile",
+		CaddyAdminURL:  "http://localhost:2019",
+		BackupDir:      "/var/lib/ppt-server-panel/caddy-backups",
+		KnownHostsFile: "/var/lib/ppt-server-panel/vhost-known-hosts.json",
+		PanelDomain:    "cp.propertyweb.co",
 		StackPorts: map[string]string{
 			// From design-templates/docs/stack-deploy-ports.md (host:port so the
 			// renderer never guesses the host half either).
@@ -83,9 +80,6 @@ func Load() Config {
 	if v := os.Getenv("CADDY_KNOWN_HOSTS_FILE"); v != "" {
 		cfg.KnownHostsFile = v
 	}
-	if v := os.Getenv("CADDY_DASHBOARD_DOMAIN"); v != "" {
-		cfg.DashboardDomain = v
-	}
 	if v := os.Getenv("CADDY_PANEL_DOMAIN"); v != "" {
 		cfg.PanelDomain = v
 	}
@@ -95,14 +89,11 @@ func Load() Config {
 	return cfg
 }
 
-// ProtectedHosts returns the hosts that must never be rendered or pruned as
-// folder files — the dashboard domain and (if set) the panel domain. Both are
-// static Caddyfile blocks the operator owns.
+// ProtectedHosts returns the hosts that must never be rendered or pruned as folder
+// files and must survive every reload — just the panel's own domain, a static
+// Caddyfile block the operator owns. Stack dashboard domains are ordinary routes.
 func (c Config) ProtectedHosts() []string {
-	out := make([]string, 0, 2)
-	if h := strings.ToLower(strings.TrimSpace(c.DashboardDomain)); h != "" {
-		out = append(out, h)
-	}
+	out := make([]string, 0, 1)
 	if h := strings.ToLower(strings.TrimSpace(c.PanelDomain)); h != "" {
 		out = append(out, h)
 	}

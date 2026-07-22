@@ -178,7 +178,7 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		return res, errors.New(res.Error)
 	}
 	res.AdaptWarnings = warnings
-	if err := e.assertDashboardPresent(adapted); err != nil {
+	if err := e.assertProtectedPresent(adapted); err != nil {
 		res.Error = err.Error()
 		res.DurationMS = e.since(start)
 		e.firstDone = true
@@ -263,7 +263,7 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 		res.DurationMS = e.since(start)
 		return res, errors.New(res.Error)
 	}
-	if err := e.assertDashboardPresent(adapted); err != nil {
+	if err := e.assertProtectedPresent(adapted); err != nil {
 		res.Error = err.Error()
 		res.DurationMS = e.since(start)
 		return res, err
@@ -292,18 +292,21 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// assertDashboardPresent refuses to reload any adapted config that does not
-// contain the dashboard domain — the 2026-07-11 outage signature (the adapted
-// config collapsed because the import read nothing). Inverted here into a hard
-// invariant: the dashboard domain is a STATIC block in the main Caddyfile, so it
-// must ALWAYS survive adapt; if it doesn't, the main Caddyfile itself is broken.
-func (e *Engine) assertDashboardPresent(adapted []byte) error {
-	dash := strings.ToLower(strings.TrimSpace(e.cfg.DashboardDomain))
-	if dash == "" {
-		return nil
-	}
-	if !bytes.Contains(bytes.ToLower(adapted), []byte(dash)) {
-		return fmt.Errorf("validate: adapted config is missing the dashboard domain %q — REFUSING to reload (the main Caddyfile's static block is broken; this is the outage signature)", dash)
+// assertProtectedPresent refuses to reload any adapted config missing a protected
+// host — the panel's own domain, a STATIC block in the main Caddyfile that must
+// ALWAYS survive adapt. Absence is the 2026-07-11 outage signature (the adapted
+// config collapsed because an import read nothing); losing the panel domain also
+// locks the operator out. Empty protected set → no-op.
+func (e *Engine) assertProtectedPresent(adapted []byte) error {
+	low := bytes.ToLower(adapted)
+	for _, h := range e.cfg.ProtectedHosts() {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" {
+			continue
+		}
+		if !bytes.Contains(low, []byte(h)) {
+			return fmt.Errorf("validate: adapted config is missing the protected domain %q — REFUSING to reload (its static block in the main Caddyfile is broken; this is the outage signature)", h)
+		}
 	}
 	return nil
 }
@@ -318,7 +321,7 @@ func (e *Engine) assertDashboardPresent(adapted []byte) error {
 //
 // If the current live config can't be read or parsed, the check is SKIPPED (a
 // warning is logged) rather than blocking — it is an extra guard layered on top of
-// assertDashboardPresent, never a new way to wedge reloads.
+// assertProtectedPresent, never a new way to wedge reloads.
 func (e *Engine) assertNoUnexpectedDrops(ctx context.Context, adapted []byte, intentionalRemovals []string) ([]string, error) {
 	live, err := e.reloader.CurrentConfig(ctx)
 	if err != nil {

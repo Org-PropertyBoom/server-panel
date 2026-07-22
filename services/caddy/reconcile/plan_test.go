@@ -10,7 +10,7 @@ import (
 
 func testCfg() config.Config {
 	return config.Config{
-		DashboardDomain: "app.propertyboom.co",
+		PanelDomain: "cp.propertyweb.co",
 		StackPorts: map[string]string{
 			"phalcon": "127.0.0.1:8002",
 			"laravel": "127.0.0.1:8004",
@@ -68,20 +68,35 @@ func TestBuildPlan_UnknownStackSkippedNeverGuessed(t *testing.T) {
 	}
 }
 
-func TestBuildPlan_DashboardDomainNeverAFile(t *testing.T) {
+func TestBuildPlan_PanelDomainNeverAFile(t *testing.T) {
+	// The panel domain is the sole protected host — never rendered/removed/orphaned.
+	snap := db.Snapshot{Rows: []db.Row{
+		{Table: "platform_hosts", Host: "cp.propertyweb.co", ServerStack: "system", Target: "127.0.0.1:2205", IsActive: true},
+	}}
+	p := BuildPlan(testCfg(), snap, []string{"cp.propertyweb.co.caddy"})
+
+	if len(p.Writes) != 0 {
+		t.Errorf("panel domain must never be rendered to a file; got %v", names(p.Writes))
+	}
+	if len(p.Removes) != 0 {
+		t.Errorf("panel domain file must never be removed; got %v", p.Removes)
+	}
+	if len(p.Orphans) != 0 {
+		t.Errorf("panel file must not be reported as an orphan (it's protected); got %v", p.Orphans)
+	}
+}
+
+func TestBuildPlan_StackDashboardDomainRendersLikeAPeer(t *testing.T) {
+	// app.propertyboom.co is just the phalcon stack's dashboard domain — a peer to
+	// go-app/la-app/rust-app — NOT protected, so a platform_hosts row for it renders
+	// to a folder file exactly like the others.
 	snap := db.Snapshot{Rows: []db.Row{
 		{Table: "platform_hosts", Host: "app.propertyboom.co", ServerStack: "phalcon", Target: "127.0.0.1:8002", IsActive: true},
 	}}
-	p := BuildPlan(testCfg(), snap, []string{"app.propertyboom.co.caddy"})
+	p := BuildPlan(testCfg(), snap, nil)
 
-	if len(p.Writes) != 0 {
-		t.Errorf("dashboard domain must never be rendered to a file; got %v", names(p.Writes))
-	}
-	if len(p.Removes) != 0 {
-		t.Errorf("dashboard domain file must never be removed; got %v", p.Removes)
-	}
-	if len(p.Orphans) != 0 {
-		t.Errorf("dashboard file must not be reported as an orphan (it's protected); got %v", p.Orphans)
+	if len(p.Writes) != 1 || p.Writes[0].Name != "app.propertyboom.co.caddy" {
+		t.Fatalf("stack dashboard domain must render like a peer; got %v", names(p.Writes))
 	}
 }
 

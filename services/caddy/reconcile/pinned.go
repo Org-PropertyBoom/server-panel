@@ -19,7 +19,7 @@ type PinnedHost struct {
 // PinnedFromCaddyfile adapts the main Caddyfile and returns the hosts that are NOT
 // folder routes (i.e. the real hand-written static blocks), each with its
 // reverse_proxy dial upstream(s). This is DISPLAY/DRIFT ground truth — it does NOT
-// feed the reload invariant (assertDashboardPresent stays an external config
+// feed the reload invariant (assertProtectedPresent stays an external config
 // declaration, never derived from the file it validates).
 func (e *Engine) PinnedFromCaddyfile() ([]PinnedHost, error) {
 	if e.adapter == nil {

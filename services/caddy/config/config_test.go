@@ -5,25 +5,21 @@ import (
 	"testing"
 )
 
-func TestProtectedHostsIncludesPanelDomain(t *testing.T) {
-	c := Config{DashboardDomain: "app.propertyboom.co", PanelDomain: "cp.propertyweb.co"}
-	got := c.ProtectedHosts()
-	want := map[string]bool{"app.propertyboom.co": true, "cp.propertyweb.co": true}
-	if len(got) != 2 {
-		t.Fatalf("ProtectedHosts = %v, want 2 entries", got)
-	}
-	for _, h := range got {
-		if !want[h] {
-			t.Errorf("unexpected protected host %q", h)
-		}
+func TestProtectedHostsIsPanelDomainOnly(t *testing.T) {
+	// The panel's own domain is the SOLE protected host; stack dashboard domains
+	// (app./go-app./la-app./rust-app.propertyboom.co) are ordinary managed routes.
+	got := Config{PanelDomain: "cp.propertyweb.co"}.ProtectedHosts()
+	if len(got) != 1 || got[0] != "cp.propertyweb.co" {
+		t.Fatalf("ProtectedHosts = %v, want [cp.propertyweb.co]", got)
 	}
 }
 
 func TestProtectedHostsLowercasesAndSkipsEmpty(t *testing.T) {
-	c := Config{DashboardDomain: "  APP.propertyboom.co ", PanelDomain: ""}
-	got := c.ProtectedHosts()
-	if len(got) != 1 || got[0] != "app.propertyboom.co" {
-		t.Fatalf("ProtectedHosts = %v, want [app.propertyboom.co]", got)
+	if got := (Config{PanelDomain: "  CP.propertyweb.co "}).ProtectedHosts(); len(got) != 1 || got[0] != "cp.propertyweb.co" {
+		t.Fatalf("ProtectedHosts = %v, want [cp.propertyweb.co]", got)
+	}
+	if got := (Config{PanelDomain: ""}).ProtectedHosts(); len(got) != 0 {
+		t.Fatalf("empty panel domain → no protected hosts, got %v", got)
 	}
 }
 
