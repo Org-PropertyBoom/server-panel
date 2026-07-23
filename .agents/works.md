@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-22 - Cost-attribution panel on the dashboard (fixed vs variable + per-container egress)
+
+- Goal (Owner): roughly attribute the EC2 bill — is it storage or data transfer, and which container. Added a compact cost panel below the container-stats panel.
+- Files changed: `client/src/_components/container-stats.tsx` — extracted `useContainerStats(interval)` hook + exported `ContainerStat`/`fmtBytes`; `ContainerStatsPanel` now takes `{stats, error}` props instead of self-fetching (so stats + cost panels share ONE `docker stats` poller — a second would double the ~1-2s CPU-sample load). New `client/src/_components/cost-attribution.tsx` — `CostAttributionPanel`: operator enters compute $/mo, storage $/mo, egress GB/mo, egress $/GB (persisted in localStorage `cost_model`); renders the fixed-vs-variable split (stacked bar: Compute/Storage/Data-transfer with $ + %), and a per-container **egress share** ranking. `client/src/routes/root/index.tsx` — calls the shared hook once, passes `stats` to both panels.
+- Important decisions: honest cost model — compute + storage are FIXED (you rent the whole box / provisioned EBS), so NOT per-container attributable; only **egress** is variable + roughly attributable. Per-container egress share is computed from `netTx` **deltas between polls** (EWMA-smoothed) — not the cumulative counter — so a container restart resetting its counter doesn't skew the split (negative delta → skip tick). Prominent caveat in the UI: docker tx includes internal traffic (DB/cache/inter-container) that AWS doesn't bill → reconcile against CloudWatch NetworkOut. Disk size deliberately excluded (fixed on provisioned volume; not a per-container bill driver). Frontend-only — no backend/settings plumbing; the rates are per-operator localStorage.
+- Validation: `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Live container stats panel on the System overview dashboard
 
 - Goal (Owner): show more container stats on the dashboard home — RAM consumption, data transfer, storage/IO. Added a live per-container panel below the four system cards.

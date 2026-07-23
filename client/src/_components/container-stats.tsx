@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Boxes } from "lucide-react";
 
-type ContainerStat = {
+export type ContainerStat = {
     id: string;
     name: string;
     cpuPerc: number;
@@ -15,11 +15,10 @@ type ContainerStat = {
     pids: number;
 };
 
-// ContainerStatsPanel shows live per-container resource usage (docker stats) below
-// the system cards. Root-only surface (the endpoint is /post/*). It polls on a
-// slightly longer interval than the system cards because `docker stats` samples CPU
-// over ~1-2s per call.
-export default function ContainerStatsPanel() {
+// useContainerStats polls the root-only /post/containers/stats endpoint. Lifted to a
+// hook so the stats + cost panels share ONE poller (each `docker stats` call samples
+// CPU ~1-2s, so a second independent poller would double that load).
+export function useContainerStats(intervalMs = 8000): { stats: ContainerStat[] | null; error: boolean } {
     const [stats, setStats] = useState<ContainerStat[] | null>(null);
     const [error, setError] = useState(false);
 
@@ -39,13 +38,19 @@ export default function ContainerStatsPanel() {
             }
         };
         load();
-        const interval = window.setInterval(load, 8000);
+        const interval = window.setInterval(load, intervalMs);
         return () => {
             active = false;
             window.clearInterval(interval);
         };
-    }, []);
+    }, [intervalMs]);
 
+    return { stats, error };
+}
+
+// ContainerStatsPanel shows live per-container resource usage (docker stats) below
+// the system cards. Root-only surface. Data comes from the shared hook via props.
+export default function ContainerStatsPanel({ stats, error }: { stats: ContainerStat[] | null; error: boolean }) {
     const running = stats?.length ?? 0;
     const totalMem = stats?.reduce((a, s) => a + s.memUsed, 0) ?? 0;
     const totalCpu = stats?.reduce((a, s) => a + s.cpuPerc, 0) ?? 0;
@@ -127,7 +132,7 @@ export default function ContainerStatsPanel() {
     );
 }
 
-function fmtBytes(bytes: number) {
+export function fmtBytes(bytes: number) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
     const units = ["B", "KB", "MB", "GB", "TB"];
     const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
