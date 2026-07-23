@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-22 - Mask secret-looking env vars in the container details drawer
+
+- Goal (Server Architect, security-UX): the container detail's ENVIRONMENT section printed every env var in plaintext incl. secrets (DB_PASSWORD, STRIPE_WEBHOOK_SECRET, API keys) — anyone with panel access could read every credential. Mask secret-looking values by default.
+- Files changed: `client/src/routes/containers/index.tsx` — `SECRET_NEEDLES` = `["PASS","SECRET","TOKEN","KEY","PWD","CREDENTIAL","DSN","PRIVATE"]` (mirrors go-actions' `app/services/container.go` scrub list for platform consistency; case-insensitive substring on the KEY); `isSecretKey`; new `EnvRow` component — secret keys render the value as `••••••••` (click to reveal, with a "hide" toggle), non-secret keys (APP_ENV, DB_HOST, DB_PORT, …) stay visible. Softened the section note from the alarming "May contain secrets — visible to anyone with panel access" to "Secret-looking values are masked — click ••• to reveal."
+- Important decisions: frontend-only masking — the value still travels in the inspect JSON (required for click-to-reveal, which the architect wanted), so this stops casual/shoulder-surf plaintext exposure, not a determined devtools user (who, as a root panel operator, could `docker inspect` from the terminal anyway). Scoped to the READ-ONLY container env display (the named exposure). Did NOT mask the Dockerfile/config file EDITORS — masking editable content is counterproductive (you can't edit what you can't see); there is no separate read-only `.env` preview surface today.
+- Validation: `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Container size in the details drawer (on-demand, Docker)
 
 - Goal: surface how big a container is. Chose the details drawer (on-demand) over a list column so the list stays fast — size compute makes Docker walk the graph driver.

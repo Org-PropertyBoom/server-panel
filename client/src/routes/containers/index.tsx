@@ -72,6 +72,54 @@ function fmtSize(n?: number): string | undefined {
     return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
+// SECRET_NEEDLES matches env var NAMES whose value is likely a credential. Mirrors
+// go-actions' scrub list (app/services/container.go) so redaction is consistent
+// across the platform. Case-insensitive substring match.
+const SECRET_NEEDLES = ["PASS", "SECRET", "TOKEN", "KEY", "PWD", "CREDENTIAL", "DSN", "PRIVATE"];
+
+function isSecretKey(key: string): boolean {
+    const k = key.toUpperCase();
+    return SECRET_NEEDLES.some((n) => k.includes(n));
+}
+
+// EnvRow renders one `KEY=VALUE` env line. Secret-looking values are masked by
+// default (click to reveal) so credentials aren't exposed in plaintext to anyone
+// with panel access.
+function EnvRow({ entry }: { entry: string }) {
+    const eq = entry.indexOf("=");
+    const k = eq >= 0 ? entry.slice(0, eq) : entry;
+    const v = eq >= 0 ? entry.slice(eq + 1) : "";
+    const secret = eq >= 0 && v !== "" && isSecretKey(k);
+    const [revealed, setRevealed] = useState(false);
+    return (
+        <div className="break-all">
+            <span className="text-sky-600 dark:text-sky-400">{k}</span>
+            {eq < 0 ? null : secret && !revealed ? (
+                <>
+                    <span className="text-muted-foreground">=</span>
+                    <button
+                        type="button"
+                        onClick={() => setRevealed(true)}
+                        className="ml-0.5 rounded bg-muted px-1.5 text-muted-foreground hover:text-foreground"
+                        title="Click to reveal"
+                    >
+                        ••••••••
+                    </button>
+                </>
+            ) : (
+                <span className="text-muted-foreground">
+                    ={v}
+                    {secret ? (
+                        <button type="button" onClick={() => setRevealed(false)} className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/50 hover:text-foreground">
+                            hide
+                        </button>
+                    ) : null}
+                </span>
+            )}
+        </div>
+    );
+}
+
 // DetailRow is one label/value line in the details drawer; hidden when empty.
 function DetailRow({ label, value, mono }: { label: string; value?: string | number | null; mono?: boolean }) {
     if (value === undefined || value === null || value === "") return null;
@@ -535,19 +583,11 @@ export default function ContainersRoute() {
 
                                     {details.env && details.env.length > 0 ? (
                                         <DetailSection title="Environment" count={details.env.length}>
-                                            <p className="mb-2 text-[11px] text-amber-600 dark:text-amber-400">May contain secrets — visible to anyone with panel access.</p>
+                                            <p className="mb-2 text-[11px] text-muted-foreground">Secret-looking values are masked — click <span className="font-mono">••••••••</span> to reveal.</p>
                                             <div className="space-y-0.5 font-mono text-[11px] text-foreground">
-                                                {details.env.map((e, i) => {
-                                                    const eq = e.indexOf("=");
-                                                    const k = eq >= 0 ? e.slice(0, eq) : e;
-                                                    const v = eq >= 0 ? e.slice(eq + 1) : "";
-                                                    return (
-                                                        <div key={`${k}-${i}`} className="break-all">
-                                                            <span className="text-sky-600 dark:text-sky-400">{k}</span>
-                                                            {eq >= 0 ? <span className="text-muted-foreground">={v}</span> : null}
-                                                        </div>
-                                                    );
-                                                })}
+                                                {details.env.map((e, i) => (
+                                                    <EnvRow key={`${e.slice(0, e.indexOf("=") + 1)}-${i}`} entry={e} />
+                                                ))}
                                             </div>
                                         </DetailSection>
                                     ) : null}
