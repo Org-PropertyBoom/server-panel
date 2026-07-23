@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-22 - Live container stats panel on the System overview dashboard
+
+- Goal (Owner): show more container stats on the dashboard home — RAM consumption, data transfer, storage/IO. Added a live per-container panel below the four system cards.
+- Files changed: `services/containers.go` — `ContainerStat` + `Stats()` running `docker stats --no-stream --no-trunc --format {{json .}}` (root Docker) via `runContainerCommand` with a 20s timeout (stats samples CPU over ~1-2s); parse helpers `parsePercent`, `parseSizePair`, `parseDockerSize` (handles docker's MIXED units — binary KiB/MiB/GiB for mem, SI kB/MB/GB for net/block); sorted by MemUsed desc; added `strconv` import. `routes/post/containers/main.go` `StatsHandler` + `GET /post/containers/stats`. New `client/src/_components/container-stats.tsx` — `ContainerStatsPanel` polling every 8s: table (Container / CPU + bar / Memory used+limit+% / Network ↓rx ↑tx / Block r/w / PIDs) sorted heaviest-first, with a header summary (N running · total RAM · total CPU), skeleton + error + empty states. Wired into `client/src/routes/root/index.tsx` (root page only → naturally root-gated).
+- Important decisions: live docker-stats metrics only (CPU/RAM/Net/Block-IO) — NOT disk footprint (SizeRw), because that needs `docker ps --size`/`inspect --size` which walks the fs and is too slow to poll; size stays on-demand in the inspect drawer (already built). 8s poll (vs the system cards' 5s) since each `docker stats` call takes ~1-2s. Root-only (docker); the panel simply isn't rendered on the user-mode page.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Mask secret-looking env vars in the container details drawer
 
 - Goal (Server Architect, security-UX): the container detail's ENVIRONMENT section printed every env var in plaintext incl. secrets (DB_PASSWORD, STRIPE_WEBHOOK_SECRET, API keys) — anyone with panel access could read every credential. Mask secret-looking values by default.

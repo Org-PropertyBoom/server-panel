@@ -127,6 +127,23 @@ func CreateHandler(sessions *services.SessionService, containers *services.Conta
 	})
 }
 
+// StatsHandler returns live per-container CPU/mem/net/block-IO (docker stats).
+func StatsHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		stats, err := containers.Stats()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"containers": stats})
+	})
+}
+
 func ActionHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validSession(r, sessions) {

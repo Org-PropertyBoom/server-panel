@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -368,6 +369,116 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// ContainerStat is one container's live resource usage from `docker stats`.
+type ContainerStat struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	CPUPerc    float64 `json:"cpuPerc"`
+	MemUsed    int64   `json:"memUsed"`
+	MemLimit   int64   `json:"memLimit"`
+	MemPerc    float64 `json:"memPerc"`
+	NetRx      int64   `json:"netRx"`
+	NetTx      int64   `json:"netTx"`
+	BlockRead  int64   `json:"blockRead"`
+	BlockWrite int64   `json:"blockWrite"`
+	PIDs       int     `json:"pids"`
+}
+
+// Stats returns live per-container CPU/memory/network/block-IO from a single
+// `docker stats --no-stream` snapshot (root Docker). It samples CPU over a short
+// interval so it takes ~1-2s — run detached with a generous timeout.
+func (s *ContainerService) Stats() ([]ContainerStat, error) {
+	out, err := runContainerCommand("", 20*time.Second, "docker", "stats", "--no-stream", "--no-trunc", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var result []ContainerStat
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var raw struct {
+			ID       string `json:"ID"`
+			Name     string `json:"Name"`
+			CPUPerc  string `json:"CPUPerc"`
+			MemUsage string `json:"MemUsage"`
+			MemPerc  string `json:"MemPerc"`
+			NetIO    string `json:"NetIO"`
+			BlockIO  string `json:"BlockIO"`
+			PIDs     string `json:"PIDs"`
+		}
+		if json.Unmarshal([]byte(line), &raw) != nil {
+			continue
+		}
+		st := ContainerStat{
+			ID:      raw.ID,
+			Name:    raw.Name,
+			CPUPerc: parsePercent(raw.CPUPerc),
+			MemPerc: parsePercent(raw.MemPerc),
+		}
+		st.MemUsed, st.MemLimit = parseSizePair(raw.MemUsage)
+		st.NetRx, st.NetTx = parseSizePair(raw.NetIO)
+		st.BlockRead, st.BlockWrite = parseSizePair(raw.BlockIO)
+		if n, err := strconv.Atoi(strings.TrimSpace(raw.PIDs)); err == nil {
+			st.PIDs = n
+		}
+		result = append(result, st)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].MemUsed > result[j].MemUsed })
+	return result, nil
+}
+
+// parsePercent parses docker's "12.34%" → 12.34.
+func parsePercent(s string) float64 {
+	n, _ := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%")), 64)
+	return n
+}
+
+// parseSizePair splits docker's "1.2GiB / 7.6GiB" (or "1.2kB / 0B") into two byte
+// counts.
+func parseSizePair(s string) (int64, int64) {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 {
+		return parseDockerSize(s), 0
+	}
+	return parseDockerSize(parts[0]), parseDockerSize(parts[1])
+}
+
+// parseDockerSize converts a docker size token to bytes, handling both binary
+// (KiB/MiB/GiB/TiB) and SI (kB/MB/GB/TB) units docker mixes across fields.
+func parseDockerSize(s string) int64 {
+	s = strings.TrimSpace(s)
+	i := 0
+	for i < len(s) && (s[i] == '.' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	num, err := strconv.ParseFloat(s[:i], 64)
+	if err != nil {
+		return 0
+	}
+	switch strings.ToLower(strings.TrimSpace(s[i:])) {
+	case "b", "":
+		return int64(num)
+	case "kb":
+		return int64(num * 1e3)
+	case "mb":
+		return int64(num * 1e6)
+	case "gb":
+		return int64(num * 1e9)
+	case "tb":
+		return int64(num * 1e12)
+	case "kib":
+		return int64(num * 1024)
+	case "mib":
+		return int64(num * 1024 * 1024)
+	case "gib":
+		return int64(num * 1024 * 1024 * 1024)
+	case "tib":
+		return int64(num * 1024 * 1024 * 1024 * 1024)
+	}
+	return int64(num)
 }
 
 // ContainerCreateSpec is the `docker run` form: image is required; everything
