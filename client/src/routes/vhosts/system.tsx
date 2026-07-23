@@ -312,6 +312,20 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
     );
 }
 
+// vhostFileName mirrors render.FileName: "<host>.caddy", with "*.x" → "wildcard_x.caddy".
+function vhostFileName(host: string): string {
+    const h = host.trim().toLowerCase();
+    if (!h) return "<host>.caddy";
+    return h.startsWith("*.") ? `wildcard_${h.slice(2)}.caddy` : `${h}.caddy`;
+}
+
+// renderedVhost mirrors the engine's system-host render (render.proxySnippet): a
+// bare `reverse_proxy` block. Global encode/security-header policy, if enabled, is
+// applied at render time and not shown here.
+function renderedVhost(host: string, target: string): string {
+    return `${host.trim() || "<host>"} {\n    reverse_proxy ${target.trim() || "<backend>"}\n}\n`;
+}
+
 function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstreams: Upstream[]; onClose: () => void; onSaved: () => void }) {
     const [host, setHost] = useState(row.host);
     const [target, setTarget] = useState(row.target);
@@ -397,6 +411,16 @@ function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstre
                     <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
                     Active (rendered to a vhost file)
                 </label>
+                <div>
+                    <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">Rendered vhost</span>
+                        <code className="text-[11px] text-muted-foreground">{vhostFileName(host)}</code>
+                    </div>
+                    <pre className="overflow-x-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{renderedVhost(host, target)}</pre>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                        Generated from the fields above — the reconcile engine writes exactly this. Read-only (the DB row is the source of truth; editing the file directly would be overwritten).
+                    </p>
+                </div>
             </div>
             <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={!host.trim() || !target.trim()} />
         </Modal>
