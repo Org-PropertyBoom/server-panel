@@ -35,6 +35,7 @@ export type ManageRow = {
     code?: number;
     isActive: boolean;
     softDeleted: boolean;
+    headers?: Record<string, string>; // system hosts only: panel-local response headers
 };
 
 export type Upstream = {

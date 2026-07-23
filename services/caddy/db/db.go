@@ -41,6 +41,10 @@ type Snapshot struct {
 	ReadAt        time.Time      // when the snapshot was taken (caller-stamped)
 	Sources       map[string]int // table -> row count read, for reporting
 	MissingTables []string       // tables absent (pre-migration) — read as zero rows, not fatal
+	// ResponseHeaders is per-system-host response headers (host -> name->value),
+	// injected by the caller from server-panel's OWN store — NOT read from the shared
+	// pc-owned schema. Rendered into the system host's Caddy block. nil = none.
+	ResponseHeaders map[string]map[string]string
 }
 
 // DB is a thin read-only handle to the shared propertyteam MySQL.

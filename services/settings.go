@@ -50,6 +50,16 @@ func NewSettingsService() (*SettingsService, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Per-system-host response headers (panel-local render config — NOT the shared
+	// pc-owned platform_hosts schema). host -> JSON map of header name->value.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vhost_response_headers (
+		host TEXT PRIMARY KEY,
+		headers TEXT NOT NULL DEFAULT '{}',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	for oldKey, newKey := range map[string]string{
 		"app_name": "general_app_name", "color_mode": "general_color_mode", "header_apps": "apps_header",
 	} {

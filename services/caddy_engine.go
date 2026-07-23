@@ -182,11 +182,12 @@ func envLiveReloadArmed() bool {
 
 // SystemHostForm / RedirectForm are the management-UI create/update payloads.
 type SystemHostForm struct {
-	ID          int64  `json:"id"`
-	Host        string `json:"host"`
-	ServerStack string `json:"serverStack"`
-	Target      string `json:"target"`
-	IsActive    bool   `json:"isActive"`
+	ID          int64             `json:"id"`
+	Host        string            `json:"host"`
+	ServerStack string            `json:"serverStack"`
+	Target      string            `json:"target"`
+	IsActive    bool              `json:"isActive"`
+	Headers     map[string]string `json:"headers,omitempty"` // panel-local response headers (System hosts only)
 }
 
 type RedirectForm struct {
@@ -202,13 +203,14 @@ type RedirectForm struct {
 // key so edit/delete can target it. website_hosts are NOT included — they are
 // stack-owned and read-only here.
 type ManageRow struct {
-	ID          int64  `json:"id"`
-	Host        string `json:"host"`
-	ServerStack string `json:"serverStack,omitempty"`
-	Target      string `json:"target"`
-	Code        int    `json:"code,omitempty"`
-	IsActive    bool   `json:"isActive"`
-	SoftDeleted bool   `json:"softDeleted"`
+	ID          int64             `json:"id"`
+	Host        string            `json:"host"`
+	ServerStack string            `json:"serverStack,omitempty"`
+	Target      string            `json:"target"`
+	Code        int               `json:"code,omitempty"`
+	IsActive    bool              `json:"isActive"`
+	SoftDeleted bool              `json:"softDeleted"`
+	Headers     map[string]string `json:"headers,omitempty"` // system hosts only: panel-local response headers
 }
 
 // ManageSets is the editable slice of desired state: the panel-owned system hosts
@@ -282,6 +284,7 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 		return out
 	}
 	snap.ReadAt = time.Now()
+	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // so dry-run render matches what reconcile will write
 
 	dry, err := v.engine.DryRun(snap)
 	if err != nil {
@@ -359,6 +362,7 @@ func sortPinned(rows []PinnedRow) {
 // website_hosts are intentionally excluded — stack-owned, read-only here.
 func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 	m := &ManageSets{SystemHosts: []ManageRow{}, Redirects: []ManageRow{}, Stacks: v.cfg.Stacks(), Upstreams: v.containerUpstreams()}
+	headers, _ := v.settings.AllVhostHeaders() // panel-local; nil on error → no headers shown
 	for _, r := range snap.Rows {
 		if r.SoftDeleted {
 			continue
@@ -368,6 +372,7 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 			m.SystemHosts = append(m.SystemHosts, ManageRow{
 				ID: r.ID, Host: r.Host, ServerStack: r.ServerStack, Target: r.Target,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
+				Headers: headers[strings.ToLower(strings.TrimSpace(r.Host))],
 			})
 		case "platform_redirect_hosts":
 			m.Redirects = append(m.Redirects, ManageRow{
@@ -520,6 +525,7 @@ func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, e
 		return reconcile.Result{Error: friendlyDBError(err)}, err
 	}
 	snap.ReadAt = time.Now()
+	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // panel-local; rendered into system host blocks
 	return v.engine.Reconcile(ctx, snap)
 }
 
@@ -613,9 +619,15 @@ func (v *VhostEngineService) UnpinRoute(ctx context.Context, host string) (recon
 	return res, nil
 }
 
-// SaveSystemHost creates (ID==0) or updates a platform_hosts row. This is a DB
-// write only — the change becomes live on the next Reconcile.
+// SaveSystemHost creates (ID==0) or updates a platform_hosts row, and persists its
+// panel-local response headers (server-panel's own store, keyed by host). The row +
+// headers become live on the next Reconcile. Headers are validated up front so a bad
+// value rejects the whole save before any write.
 func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostForm) error {
+	cleanHeaders, herr := SanitizeHeaders(f.Headers)
+	if herr != nil {
+		return herr
+	}
 	in, err := caddydb.ValidateSystemHost(caddydb.SystemHostInput{
 		Host: f.Host, ServerStack: f.ServerStack, Target: f.Target, IsActive: f.IsActive,
 	}, v.guard())
@@ -627,11 +639,26 @@ func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostFor
 		return err
 	}
 	defer conn.Close()
+	var oldHost string
+	if f.ID != 0 {
+		oldHost, _ = conn.SystemHostByID(ctx, f.ID)
+	}
 	if f.ID == 0 {
 		_, err = conn.CreateSystemHost(ctx, in)
+	} else {
+		err = conn.UpdateSystemHost(ctx, f.ID, in)
+	}
+	if err != nil {
 		return err
 	}
-	return conn.UpdateSystemHost(ctx, f.ID, in)
+	if herr := v.settings.SetVhostHeaders(in.Host, cleanHeaders); herr != nil {
+		return herr
+	}
+	// On a host rename, drop the old key so stale headers don't linger.
+	if oldHost != "" && normalizeHostKey(oldHost) != normalizeHostKey(in.Host) {
+		_ = v.settings.DeleteVhostHeaders(oldHost)
+	}
+	return nil
 }
 
 // SaveRedirect creates (ID==0) or updates a platform_redirect_hosts row.

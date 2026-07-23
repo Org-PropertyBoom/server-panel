@@ -49,6 +49,16 @@ func (d *DB) CreateSystemHost(ctx context.Context, in SystemHostInput) (int64, e
 	return res.LastInsertId()
 }
 
+// SystemHostByID returns the host of a platform_hosts row by id (for detecting a
+// rename so panel-local per-host config can follow it). Empty string if not found.
+func (d *DB) SystemHostByID(ctx context.Context, id int64) (string, error) {
+	var host string
+	if err := d.sql.QueryRowContext(ctx, "SELECT host FROM platform_hosts WHERE id = ?", id).Scan(&host); err != nil {
+		return "", err
+	}
+	return host, nil
+}
+
 // UpdateSystemHost updates a non-deleted platform_hosts row by id.
 func (d *DB) UpdateSystemHost(ctx context.Context, id int64, in SystemHostInput) error {
 	const q = `UPDATE platform_hosts SET host=?, server_stack=?, target=?, is_active=?, updated_at=NOW()

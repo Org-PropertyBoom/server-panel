@@ -114,7 +114,7 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 			continue
 		}
 
-		h, reason := toHost(cfg, r)
+		h, reason := toHost(cfg, r, snap.ResponseHeaders[host])
 		if reason != "" {
 			skips = append(skips, Skip{r.Table, host, reason})
 			continue
@@ -205,7 +205,7 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 
 // toHost maps a DB row to a renderable Host, or returns a non-empty reason why it
 // cannot be rendered (which becomes a Skip).
-func toHost(cfg config.Config, r db.Row) (render.Host, string) {
+func toHost(cfg config.Config, r db.Row, headers map[string]string) (render.Host, string) {
 	host := strings.ToLower(strings.TrimSpace(r.Host))
 	switch r.Table {
 	case "website_hosts":
@@ -220,7 +220,7 @@ func toHost(cfg config.Config, r db.Row) (render.Host, string) {
 		if strings.TrimSpace(r.Target) == "" {
 			return render.Host{}, "platform_hosts row has an empty target upstream"
 		}
-		return render.Host{Host: host, Kind: render.KindSystem, Target: r.Target, Encode: cfg.EncodeFormats()}, ""
+		return render.Host{Host: host, Kind: render.KindSystem, Target: r.Target, Encode: cfg.EncodeFormats(), HeaderBlock: render.HeaderDirectives(headers)}, ""
 	case "platform_redirect_hosts":
 		if strings.TrimSpace(r.Target) == "" {
 			return render.Host{}, "platform_redirect_hosts row has an empty target URL"

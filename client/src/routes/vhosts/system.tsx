@@ -319,11 +319,16 @@ function vhostFileName(host: string): string {
     return h.startsWith("*.") ? `wildcard_${h.slice(2)}.caddy` : `${h}.caddy`;
 }
 
-// renderedVhost mirrors the engine's system-host render (render.proxySnippet): a
-// bare `reverse_proxy` block. Global encode/security-header policy, if enabled, is
-// applied at render time and not shown here.
-function renderedVhost(host: string, target: string): string {
-    return `${host.trim() || "<host>"} {\n    reverse_proxy ${target.trim() || "<backend>"}\n}\n`;
+// renderedVhost mirrors the engine's system-host render (render.HeaderDirectives +
+// proxySnippet): configured response headers (sorted, quoted) before reverse_proxy.
+// Global encode/security-header policy, if enabled, is applied at render and not shown.
+function renderedVhost(host: string, target: string, headers: { name: string; value: string }[]): string {
+    const lines = headers
+        .filter((h) => h.name.trim())
+        .map((h) => `    header ${h.name.trim()} "${h.value}"`)
+        .sort();
+    lines.push(`    reverse_proxy ${target.trim() || "<backend>"}`);
+    return `${host.trim() || "<host>"} {\n${lines.join("\n")}\n}\n`;
 }
 
 function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstreams: Upstream[]; onClose: () => void; onSaved: () => void }) {
@@ -332,6 +337,13 @@ function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstre
     const [isActive, setIsActive] = useState(row.isActive);
     const [saving, setSaving] = useState(false);
     const [showSuggest, setShowSuggest] = useState(false);
+    const [headerRows, setHeaderRows] = useState<{ name: string; value: string }[]>(
+        Object.entries(row.headers ?? {}).map(([name, value]) => ({ name, value })),
+    );
+
+    const updateHeader = (i: number, key: "name" | "value", val: string) =>
+        setHeaderRows((rows) => rows.map((r, j) => (j === i ? { ...r, [key]: val } : r)));
+    const removeHeader = (i: number) => setHeaderRows((rows) => rows.filter((_, j) => j !== i));
 
     // Backend combobox: type a host:port OR pick a running container (port auto-fills).
     const q = target.toLowerCase().trim();
@@ -347,10 +359,15 @@ function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstre
             // host-level backend like server-panel :2205). platform_hosts.target takes
             // any host:port; server_stack is just a label here.
             const serverStack = upstreams.find((u) => u.target === t)?.name ?? "custom";
+            const headers: Record<string, string> = {};
+            for (const h of headerRows) {
+                const n = h.name.trim();
+                if (n) headers[n] = h.value;
+            }
             const res = await fetch("/post/vhost/system", {
                 method: row.id === 0 ? "POST" : "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target: t, isActive }),
+                body: JSON.stringify({ id: row.id, host: host.trim(), serverStack, target: t, isActive, headers }),
             });
             if (!res.ok) {
                 toast.error((await res.text()).trim() || res.statusText);
@@ -412,11 +429,32 @@ function HostForm({ row, upstreams, onClose, onSaved }: { row: ManageRow; upstre
                     Active (rendered to a vhost file)
                 </label>
                 <div>
+                    <span className="mb-1 block text-xs font-medium text-foreground">Response headers</span>
+                    <p className="mb-2 text-[11px] text-muted-foreground">
+                        Set on every response, including reverse_proxy 404/502. e.g. <code>X-Robots-Tag: noindex</code>. Names: letters, digits, hyphens.
+                    </p>
+                    <div className="space-y-1.5">
+                        {headerRows.map((h, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                                <input value={h.name} onChange={(e) => updateHeader(i, "name", e.target.value)} placeholder="X-Robots-Tag" className={`${inputCls} flex-1 font-mono`} autoComplete="off" />
+                                <span className="text-muted-foreground">:</span>
+                                <input value={h.value} onChange={(e) => updateHeader(i, "value", e.target.value)} placeholder="noindex" className={`${inputCls} flex-1 font-mono`} autoComplete="off" />
+                                <button type="button" onClick={() => removeHeader(i)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Remove header">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    <button type="button" onClick={() => setHeaderRows([...headerRows, { name: "", value: "" }])} className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                        <Plus className="h-3 w-3" /> Add header
+                    </button>
+                </div>
+                <div>
                     <div className="mb-1 flex items-center justify-between">
                         <span className="text-xs font-medium text-foreground">Rendered vhost</span>
                         <code className="text-[11px] text-muted-foreground">{vhostFileName(host)}</code>
                     </div>
-                    <pre className="overflow-x-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{renderedVhost(host, target)}</pre>
+                    <pre className="overflow-x-auto rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{renderedVhost(host, target, headerRows)}</pre>
                     <p className="mt-1 text-[11px] text-muted-foreground">
                         Generated from the fields above — the reconcile engine writes exactly this. Read-only (the DB row is the source of truth; editing the file directly would be overwritten).
                     </p>
