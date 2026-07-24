@@ -77,13 +77,17 @@ type ContainerDetails struct {
 }
 
 type ContainerState struct {
-	Status       string `json:"status,omitempty"`
-	Running      bool   `json:"running"`
-	ExitCode     int    `json:"exitCode"`
-	StartedAt    string `json:"startedAt,omitempty"`
-	FinishedAt   string `json:"finishedAt,omitempty"`
-	Health       string `json:"health,omitempty"`
-	RestartCount int    `json:"restartCount,omitempty"`
+	Status              string `json:"status,omitempty"`
+	Running             bool   `json:"running"`
+	ExitCode            int    `json:"exitCode"`
+	StartedAt           string `json:"startedAt,omitempty"`
+	FinishedAt          string `json:"finishedAt,omitempty"`
+	Health              string `json:"health,omitempty"`
+	HealthTest          string `json:"healthTest,omitempty"`          // the HEALTHCHECK command
+	HealthFailingStreak int    `json:"healthFailingStreak,omitempty"` // consecutive failures
+	HealthLastExit      int    `json:"healthLastExit,omitempty"`      // last probe exit code
+	HealthLastOutput    string `json:"healthLastOutput,omitempty"`    // last probe output (the reason)
+	RestartCount        int    `json:"restartCount,omitempty"`
 }
 
 type ContainerPortMap struct {
@@ -121,20 +125,28 @@ type rawInspect struct {
 		StartedAt  string `json:"StartedAt"`
 		FinishedAt string `json:"FinishedAt"`
 		Health     *struct {
-			Status string `json:"Status"`
+			Status        string `json:"Status"`
+			FailingStreak int    `json:"FailingStreak"`
+			Log           []struct {
+				ExitCode int    `json:"ExitCode"`
+				Output   string `json:"Output"`
+			} `json:"Log"`
 		} `json:"Health"`
 	} `json:"State"`
 	RestartCount int    `json:"RestartCount"`
 	SizeRw       *int64 `json:"SizeRw"`     // present only with `inspect --size`
 	SizeRootFs   *int64 `json:"SizeRootFs"` // present only with `inspect --size`
 	Config       struct {
-		Image      string            `json:"Image"`
-		Cmd        []string          `json:"Cmd"`
-		Entrypoint []string          `json:"Entrypoint"`
-		WorkingDir string            `json:"WorkingDir"`
-		User       string            `json:"User"`
-		Env        []string          `json:"Env"`
-		Labels     map[string]string `json:"Labels"`
+		Image       string            `json:"Image"`
+		Cmd         []string          `json:"Cmd"`
+		Entrypoint  []string          `json:"Entrypoint"`
+		WorkingDir  string            `json:"WorkingDir"`
+		User        string            `json:"User"`
+		Env         []string          `json:"Env"`
+		Labels      map[string]string `json:"Labels"`
+		Healthcheck *struct {
+			Test []string `json:"Test"`
+		} `json:"Healthcheck"`
 	} `json:"Config"`
 	HostConfig struct {
 		RestartPolicy struct {
@@ -326,6 +338,22 @@ func parseContainerDetails(output []byte, engine, owner string) (ContainerDetail
 	}
 	if r.State.Health != nil {
 		d.State.Health = r.State.Health.Status
+		d.State.HealthFailingStreak = r.State.Health.FailingStreak
+		if n := len(r.State.Health.Log); n > 0 {
+			last := r.State.Health.Log[n-1]
+			d.State.HealthLastExit = last.ExitCode
+			d.State.HealthLastOutput = strings.TrimSpace(last.Output)
+		}
+	}
+	if hc := r.Config.Healthcheck; hc != nil && len(hc.Test) > 0 && hc.Test[0] != "NONE" {
+		switch hc.Test[0] {
+		case "CMD-SHELL":
+			d.State.HealthTest = strings.Join(hc.Test[1:], " ")
+		case "CMD":
+			d.State.HealthTest = strings.Join(hc.Test[1:], " ")
+		default:
+			d.State.HealthTest = strings.Join(hc.Test, " ")
+		}
 	}
 	d.SizeRw, d.SizeRootFs = r.SizeRw, r.SizeRootFs
 	if name := r.HostConfig.RestartPolicy.Name; name != "" {

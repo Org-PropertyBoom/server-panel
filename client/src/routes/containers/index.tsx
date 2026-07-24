@@ -45,6 +45,10 @@ type ContainerDetails = {
         startedAt?: string;
         finishedAt?: string;
         health?: string;
+        healthTest?: string;
+        healthFailingStreak?: number;
+        healthLastExit?: number;
+        healthLastOutput?: string;
         restartCount?: number;
     };
     env?: string[];
@@ -563,6 +567,22 @@ export default function ContainersRoute() {
                                         <DetailRow label="Started" value={formatTs(details.state.startedAt)} />
                                         <DetailRow label="Finished" value={details.state.running ? undefined : formatTs(details.state.finishedAt)} />
                                     </DetailSection>
+
+                                    {details.state.health ? (
+                                        <DetailSection title="Health check">
+                                            <DetailRow label="Status" value={details.state.health} />
+                                            <DetailRow label="Failing streak" value={details.state.healthFailingStreak} />
+                                            <DetailRow label="Probe" value={details.state.healthTest} mono />
+                                            {details.state.healthLastOutput || details.state.health !== "healthy" ? (
+                                                <div className="mt-2">
+                                                    <p className="text-muted-foreground">
+                                                        Last check{details.state.healthLastExit !== undefined ? ` · exit ${details.state.healthLastExit}` : ""}
+                                                    </p>
+                                                    <pre className="mt-1 max-h-40 overflow-auto rounded border border-border bg-zinc-950 p-2 font-mono text-[11px] leading-5 text-zinc-200">{details.state.healthLastOutput || "(the probe produced no output)"}</pre>
+                                                </div>
+                                            ) : null}
+                                        </DetailSection>
+                                    ) : null}
 
                                     {details.ports && details.ports.length > 0 ? (
                                         <DetailSection title="Ports" count={details.ports.length}>
