@@ -57,6 +57,7 @@ export default function FilesRoute() {
     const [contentError, setContentError] = useState<string | null>(null);
     const [fileMeta, setFileMeta] = useState<FileMeta | null>(null);
     const [showDetails, setShowDetails] = useState(true);
+    const [revealTarget, setRevealTarget] = useState("");
 
     // Initialize root / home directory
     const initExplorer = async () => {
@@ -155,16 +156,13 @@ export default function FilesRoute() {
         setFileMeta((m) => (m ? { ...m, modified: new Date().toISOString(), lines: content ? content.split("\n").length : 0 } : m));
     };
 
-    // revealInTree expands every ancestor folder from the root down to the file's
-    // parent (fetching children as needed) so the file node renders + highlights —
-    // the VS Code "reveal active file" behavior, needed when opening via search.
-    const revealInTree = async (filePath: string) => {
-        const lastSlash = filePath.lastIndexOf("/");
-        const parent = lastSlash > 0 ? filePath.slice(0, lastSlash) : "/";
+    // expandPath opens every folder from the root down to targetDir (fetching
+    // children as needed). Optionally records a node to scroll into view.
+    const expandPath = async (targetDir: string, scrollTo?: string) => {
         const base = homePath || "/";
-        if (!parent.startsWith(base)) return;
+        if (!targetDir.startsWith(base)) return;
         const ancestors: string[] = [base];
-        const rel = parent.slice(base === "/" ? 0 : base.length).split("/").filter(Boolean);
+        const rel = targetDir.slice(base === "/" ? 0 : base.length).split("/").filter(Boolean);
         let cur = base === "/" ? "" : base;
         for (const seg of rel) {
             cur = `${cur}/${seg}`;
@@ -180,7 +178,17 @@ export default function FilesRoute() {
         }
         setExpanded(nextExpanded);
         setOpenPaths(nextOpen);
+        if (scrollTo) setRevealTarget(scrollTo);
     };
+
+    // revealInTree expands down to the file's parent so the file node renders +
+    // highlights (VS Code "reveal active file"); navigateToFolder jumps to a
+    // breadcrumb folder and scrolls to it.
+    const revealInTree = (filePath: string) => {
+        const i = filePath.lastIndexOf("/");
+        return expandPath(i > 0 ? filePath.slice(0, i) : "/");
+    };
+    const navigateToFolder = (dirPath: string) => expandPath(dirPath, dirPath);
 
     // Open a file directly by path (from quick-search): reveal it in the tree, then load it.
     const openFileByPath = async (path: string, name: string) => {
@@ -244,6 +252,7 @@ export default function FilesRoute() {
                                 expanded={expanded}
                                 openPaths={openPaths}
                                 onToggle={handleToggleExpand}
+                                revealPath={revealTarget}
                             />
                         ) : null}
                     </div>
@@ -266,6 +275,7 @@ export default function FilesRoute() {
                             onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
                             onToggleDetails={selectedFile ? () => setShowDetails((v) => !v) : undefined}
                             detailsOpen={showDetails}
+                            onNavigate={navigateToFolder}
                         />
                     </div>
                 </div>
@@ -485,6 +495,7 @@ interface DirectoryTreeNodeProps {
     expanded: Record<string, FileItem[]>;
     openPaths: Record<string, boolean>;
     onToggle: (path: string) => Promise<void>;
+    revealPath: string;
 }
 
 function DirectoryTreeNode({
@@ -497,16 +508,17 @@ function DirectoryTreeNode({
     expanded,
     openPaths,
     onToggle,
+    revealPath,
 }: DirectoryTreeNodeProps) {
     const isExpanded = openPaths[path] || false;
     const isSelected = selectedPath === path;
     const children = expanded[path] || [];
     const nodeRef = useRef<HTMLDivElement>(null);
 
-    // Scroll the active file into view when it's revealed/selected (VS Code-like).
+    // Scroll into view when this node is the active file or a breadcrumb reveal target.
     useEffect(() => {
-        if (isSelected) nodeRef.current?.scrollIntoView({ block: "nearest" });
-    }, [isSelected]);
+        if (isSelected || path === revealPath) nodeRef.current?.scrollIntoView({ block: "nearest" });
+    }, [isSelected, revealPath, path]);
 
     const handleToggle = async (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -566,6 +578,7 @@ function DirectoryTreeNode({
                             expanded={expanded}
                             openPaths={openPaths}
                             onToggle={onToggle}
+                            revealPath={revealPath}
                         />
                     ))}
                 </div>

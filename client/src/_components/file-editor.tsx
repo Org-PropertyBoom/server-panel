@@ -15,6 +15,7 @@ interface FileEditorProps {
     onSave?: (content: string) => Promise<void>;
     onToggleDetails?: () => void;
     detailsOpen?: boolean;
+    onNavigate?: (path: string) => void;
     placeholderTitle?: string;
     placeholderDescription?: string;
 }
@@ -40,6 +41,7 @@ export default function FileEditor({
     onSave,
     onToggleDetails,
     detailsOpen = false,
+    onNavigate,
     placeholderTitle = "Ppt Server Panel Editor",
     placeholderDescription = "Select a configuration file or script from the directory tree sidebar to view or edit its contents.",
 }: FileEditorProps) {
@@ -126,15 +128,30 @@ export default function FileEditor({
                 ) : null}
             </div>
 
-            {/* Breadcrumb (VS Code-style path) */}
+            {/* Breadcrumb (VS Code-style path) — folder segments jump/reveal in the tree */}
             {filePath ? (
                 <div className="flex items-center gap-0.5 overflow-x-auto whitespace-nowrap border-b border-slate-800 bg-slate-900/40 px-3 py-1 text-[11px] text-slate-400 select-none">
-                    {filePath.split("/").filter(Boolean).map((seg, i, arr) => (
-                        <span key={i} className="flex items-center gap-0.5">
-                            {i > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" /> : null}
-                            <span className={i === arr.length - 1 ? "text-slate-200" : ""}>{seg}</span>
-                        </span>
-                    ))}
+                    {filePath.split("/").filter(Boolean).map((seg, i, arr) => {
+                        const isLast = i === arr.length - 1;
+                        const cumulative = "/" + arr.slice(0, i + 1).join("/");
+                        return (
+                            <span key={i} className="flex items-center gap-0.5">
+                                {i > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" /> : null}
+                                {isLast || !onNavigate ? (
+                                    <span className={isLast ? "text-slate-200" : ""}>{seg}</span>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => onNavigate(cumulative)}
+                                        className="rounded px-0.5 hover:bg-slate-800 hover:text-slate-200"
+                                        title={`Reveal ${cumulative} in the explorer`}
+                                    >
+                                        {seg}
+                                    </button>
+                                )}
+                            </span>
+                        );
+                    })}
                 </div>
             ) : null}
 
