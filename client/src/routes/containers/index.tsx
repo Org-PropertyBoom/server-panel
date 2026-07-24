@@ -384,7 +384,8 @@ export default function ContainersRoute() {
                 body: JSON.stringify({ engine: dockerfileContainer.engine, id: dockerfileContainer.id, owner: dockerfileContainer.owner }),
             });
             const data: { output?: string; error?: string } = await response.json();
-            setRebuildLog(data.output || "");
+            const log = data.output || "";
+            setRebuildLog(data.error ? `${log}${log ? "\n\n" : ""}✗ ${data.error}` : log);
             setRebuildStatus({ startedAt, finishedAt: Date.now(), ok: !data.error });
             if (data.error) {
                 toast.error(data.error);

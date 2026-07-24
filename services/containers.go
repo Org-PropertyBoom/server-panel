@@ -500,9 +500,23 @@ var (
 	allowedRestartPolicy  = map[string]bool{"no": true, "always": true, "unless-stopped": true, "on-failure": true}
 )
 
+// buildTimeout is the ceiling for an image build/rebuild. Defaults to 30m (a
+// from-scratch build of a heavy image — apt + compiled extensions — easily exceeds
+// 10m); override with CONTAINER_BUILD_TIMEOUT (whole minutes).
+func buildTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("CONTAINER_BUILD_TIMEOUT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Minute
+		}
+	}
+	return 30 * time.Minute
+}
+
 // runContainerCommand runs a long-lived container command (image build / pull),
 // well beyond the 5s list timeout, optionally in a working directory. It uses a
-// detached context so a client disconnect doesn't abort a build mid-flight.
+// detached context so a client disconnect doesn't abort a build mid-flight. On the
+// timeout it returns whatever output was produced plus a CLEAR timed-out error
+// (rather than a cryptic "signal: killed").
 func runContainerCommand(dir string, timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -510,7 +524,11 @@ func runContainerCommand(dir string, timeout time.Duration, name string, args ..
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("timed out after %s — the build was still running when it was stopped. Raise CONTAINER_BUILD_TIMEOUT (minutes) in the root env if this build legitimately needs longer", timeout)
+	}
+	return out, err
 }
 
 // RebuildAll rebuilds + recreates a Docker Compose-managed root container from its
@@ -551,7 +569,7 @@ func (s *ContainerService) RebuildAll(engine, owner, id string) (string, error) 
 		args = append(args, "-f", cf)
 	}
 	args = append(args, "up", "-d", "--build", "--no-deps", service)
-	out, err := runContainerCommand(workingDir, 10*time.Minute, "docker", args...)
+	out, err := runContainerCommand(workingDir, buildTimeout(), "docker", args...)
 	return string(out), err
 }
 
