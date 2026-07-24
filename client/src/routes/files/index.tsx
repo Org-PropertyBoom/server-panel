@@ -54,6 +54,8 @@ export default function FilesRoute() {
     const [fileSize, setFileSize] = useState<number>(0);
     const [isContentLoading, setIsContentLoading] = useState(false);
     const [contentError, setContentError] = useState<string | null>(null);
+    const [fileMeta, setFileMeta] = useState<FileMeta | null>(null);
+    const [showDetails, setShowDetails] = useState(true);
 
     // Initialize root / home directory
     const initExplorer = async () => {
@@ -130,6 +132,7 @@ export default function FilesRoute() {
                 setFileContent(data.content || "");
                 setIsBinary(data.isBinary || false);
                 setFileSize(data.size || 0);
+                setFileMeta({ modified: data.modified, mode: data.mode, owner: data.owner, group: data.group, lines: data.lines });
             } catch (err: any) {
                 setContentError(err.message || "Failed to read file");
             } finally {
@@ -148,6 +151,7 @@ export default function FilesRoute() {
         if (!response.ok) throw new Error((await response.text()).trim() || "Failed to save file");
         setFileContent(content);
         setFileSize(new Blob([content]).size);
+        setFileMeta((m) => (m ? { ...m, modified: new Date().toISOString(), lines: content ? content.split("\n").length : 0 } : m));
     };
 
     useEffect(() => {
@@ -168,7 +172,7 @@ export default function FilesRoute() {
             description="Manage and edit configuration files exactly like VSCode."
             fullWidth={true}
         >
-            <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] overflow-hidden h-full w-full bg-background">
+            <div className={`grid grid-cols-1 overflow-hidden h-full w-full bg-background ${showDetails && selectedFile ? "md:grid-cols-[280px_1fr_280px]" : "md:grid-cols-[280px_1fr]"}`}>
                 {/* 1. Left Explorer Sidebar (VSCode Explorer Style) */}
                 <aside className="border-r border-border bg-card/60 flex flex-col h-full overflow-hidden select-none">
                     <div className="flex h-10 items-center justify-between px-3 border-b border-border bg-muted/20">
@@ -223,9 +227,93 @@ export default function FilesRoute() {
                     onClose={() => setSelectedFile(null)}
                     canEdit={runtime.isRoot}
                     onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
+                    onToggleDetails={selectedFile ? () => setShowDetails((v) => !v) : undefined}
+                    detailsOpen={showDetails}
                 />
+
+                {showDetails && selectedFile && !contentError ? (
+                    <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} />
+                ) : null}
             </div>
         </DashboardLayout>
+    );
+}
+
+interface FileMeta {
+    modified?: string;
+    mode?: string;
+    owner?: string;
+    group?: string;
+    lines?: number;
+}
+
+function fmtFileBytes(bytes: number) {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function relativeTime(iso?: string): string | undefined {
+    if (!iso) return undefined;
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return undefined;
+    const s = Math.round((Date.now() - then) / 1000);
+    if (s < 5) return "just now";
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    if (d < 30) return `${d}d ago`;
+    return new Date(iso).toLocaleDateString();
+}
+
+// FileDetailsPanel is the right-hand metadata pane (VS Code-style): type, size,
+// timestamps, permissions, owner, line count, and the full path.
+function FileDetailsPanel({ file, size, isBinary, meta, onClose }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void }) {
+    const rows: { label: string; value?: string; sub?: string; mono?: boolean }[] = [
+        { label: "Type", value: isBinary ? "Binary" : "Text file" },
+        { label: "Size", value: fmtFileBytes(size), sub: `${size.toLocaleString()} bytes` },
+        { label: "Modified", value: relativeTime(meta?.modified), sub: meta?.modified ? new Date(meta.modified).toLocaleString() : undefined },
+        { label: "Permissions", value: meta?.mode, mono: true },
+        { label: "Owner", value: meta?.owner ? `${meta.owner}:${meta.group ?? ""}` : undefined, mono: true },
+        { label: "Lines", value: !isBinary && meta?.lines ? meta.lines.toLocaleString() : undefined },
+    ];
+    return (
+        <aside className="border-l border-border bg-card/60 flex flex-col h-full overflow-hidden select-none">
+            <div className="flex h-10 items-center justify-between px-3 border-b border-border bg-muted/20">
+                <span className="text-xs font-semibold text-muted-foreground">Details</span>
+                <button onClick={onClose} title="Hide details" className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                    <X className="h-3.5 w-3.5" />
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 text-xs">
+                <div className="mb-4 flex items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium text-foreground" title={file.name}>{file.name}</span>
+                </div>
+                <dl className="space-y-3">
+                    {rows.map((r) =>
+                        r.value ? (
+                            <div key={r.label}>
+                                <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{r.label}</dt>
+                                <dd className={`mt-0.5 text-foreground ${r.mono ? "font-mono text-[11px]" : ""}`}>
+                                    {r.value}
+                                    {r.sub ? <span className="ml-1.5 text-muted-foreground">· {r.sub}</span> : null}
+                                </dd>
+                            </div>
+                        ) : null,
+                    )}
+                    <div>
+                        <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">Path</dt>
+                        <dd className="mt-0.5 break-all font-mono text-[11px] text-foreground">{file.path}</dd>
+                    </div>
+                </dl>
+            </div>
+        </aside>
     );
 }
 

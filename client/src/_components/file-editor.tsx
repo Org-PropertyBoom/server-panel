@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileText, X, Loader2, AlertCircle, FolderOpen, Pencil, Save } from "lucide-react";
+import { FileText, X, Loader2, AlertCircle, FolderOpen, Pencil, Save, Info } from "lucide-react";
 import { toast } from "sonner";
 
 interface FileEditorProps {
@@ -13,6 +13,8 @@ interface FileEditorProps {
     onClose?: () => void;
     canEdit?: boolean;
     onSave?: (content: string) => Promise<void>;
+    onToggleDetails?: () => void;
+    detailsOpen?: boolean;
     placeholderTitle?: string;
     placeholderDescription?: string;
 }
@@ -36,6 +38,8 @@ export default function FileEditor({
     onClose,
     canEdit = false,
     onSave,
+    onToggleDetails,
+    detailsOpen = false,
     placeholderTitle = "Ppt Server Panel Editor",
     placeholderDescription = "Select a configuration file or script from the directory tree sidebar to view or edit its contents.",
 }: FileEditorProps) {
@@ -115,6 +119,11 @@ export default function FileEditor({
                     </div>
                 ) : null}
                 <div className="px-4 text-[10px] text-slate-500 font-mono">{formatBytes(fileSize)}</div>
+                {onToggleDetails ? (
+                    <button onClick={onToggleDetails} title={detailsOpen ? "Hide details" : "Show details"} className={`mr-2 rounded p-1 transition-colors ${detailsOpen ? "bg-slate-800 text-slate-200" : "text-slate-500 hover:bg-slate-800 hover:text-slate-200"}`}>
+                        <Info className="h-3.5 w-3.5" />
+                    </button>
+                ) : null}
             </div>
 
             {/* Editor Content Area */}

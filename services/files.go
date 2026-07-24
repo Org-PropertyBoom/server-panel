@@ -169,9 +169,14 @@ func ListDirectory(requestedPath string, homeDir string, isRoot bool) (Directory
 }
 
 type FileContent struct {
-	Content  string `json:"content"`
-	Size     int64  `json:"size"`
-	IsBinary bool   `json:"isBinary"`
+	Content  string    `json:"content"`
+	Size     int64     `json:"size"`
+	IsBinary bool      `json:"isBinary"`
+	Modified time.Time `json:"modified"`
+	Mode     string    `json:"mode"`            // e.g. "-rw-r--r--"
+	Owner    string    `json:"owner,omitempty"` // Linux only
+	Group    string    `json:"group,omitempty"` // Linux only
+	Lines    int       `json:"lines,omitempty"` // text files only
 }
 
 func GetFileContent(filePath string, homeDir string, isRoot bool) (FileContent, error) {
@@ -193,6 +198,15 @@ func GetFileContent(filePath string, homeDir string, isRoot bool) (FileContent, 
 		return FileContent{}, errors.New("cannot read a directory")
 	}
 
+	owner, group := fileOwnerGroup(stat)
+	meta := FileContent{
+		Size:     stat.Size(),
+		Modified: stat.ModTime(),
+		Mode:     stat.Mode().String(),
+		Owner:    owner,
+		Group:    group,
+	}
+
 	// Check if binary by reading first 512 bytes
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -203,19 +217,11 @@ func GetFileContent(filePath string, homeDir string, isRoot bool) (FileContent, 
 	buffer := make([]byte, 512)
 	n, _ := file.Read(buffer)
 
-	isBinary := false
 	for i := 0; i < n; i++ {
 		if buffer[i] == 0 {
-			isBinary = true
-			break
+			meta.IsBinary = true
+			return meta, nil
 		}
-	}
-
-	if isBinary {
-		return FileContent{
-			Size:     stat.Size(),
-			IsBinary: true,
-		}, nil
 	}
 
 	// Read entire file (limit to 2MB)
@@ -229,10 +235,9 @@ func GetFileContent(filePath string, homeDir string, isRoot bool) (FileContent, 
 	if len(content) > limit {
 		content = content[:limit] + "\n... [truncated, file too large] ..."
 	}
-
-	return FileContent{
-		Content:  content,
-		Size:     stat.Size(),
-		IsBinary: false,
-	}, nil
+	meta.Content = content
+	if len(content) > 0 {
+		meta.Lines = strings.Count(content, "\n") + 1
+	}
+	return meta, nil
 }
