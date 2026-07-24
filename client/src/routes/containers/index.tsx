@@ -551,7 +551,6 @@ export default function ContainersRoute() {
                                         <DetailRow label="Platform" value={details.platform} />
                                         <DetailRow label="Created" value={formatTs(details.created)} />
                                         <DetailRow label="Image · pull size" value={details.imageSize !== undefined ? `${fmtSize(details.imageSize)} compressed` : undefined} />
-                                        <DetailRow label="On disk (unique)" value={details.sizeRootFs !== undefined ? fmtSize(details.sizeRootFs) : undefined} />
                                         <DetailRow label="Writable layer" value={fmtSize(details.sizeRw)} />
                                         <DetailRow label="Restart policy" value={details.restartPolicy} />
                                         <DetailRow label="Working dir" value={details.workingDir} mono />
