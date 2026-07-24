@@ -58,6 +58,7 @@ type ContainerDetails = {
     networks?: { name: string; ipAddress?: string; gateway?: string; macAddress?: string }[];
     sizeRw?: number;
     sizeRootFs?: number;
+    imageSize?: number;
     raw?: string;
 };
 
@@ -549,8 +550,9 @@ export default function ContainersRoute() {
                                         <DetailRow label="Image ID" value={details.imageId} mono />
                                         <DetailRow label="Platform" value={details.platform} />
                                         <DetailRow label="Created" value={formatTs(details.created)} />
-                                        <DetailRow label="Size · writable" value={fmtSize(details.sizeRw)} />
-                                        <DetailRow label="Size · total" value={details.sizeRootFs !== undefined ? `${fmtSize(details.sizeRootFs)} (incl. image)` : undefined} />
+                                        <DetailRow label="Image size" value={details.imageSize !== undefined ? `${fmtSize(details.imageSize)} unpacked` : undefined} />
+                                        <DetailRow label="Writable layer" value={fmtSize(details.sizeRw)} />
+                                        <DetailRow label="On disk (unique)" value={details.sizeRootFs !== undefined ? fmtSize(details.sizeRootFs) : undefined} />
                                         <DetailRow label="Restart policy" value={details.restartPolicy} />
                                         <DetailRow label="Working dir" value={details.workingDir} mono />
                                         <DetailRow label="User" value={details.user} mono />

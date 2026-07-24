@@ -72,7 +72,8 @@ type ContainerDetails struct {
 	Mounts        []ContainerMount   `json:"mounts,omitempty"`
 	Networks      []ContainerNetwork `json:"networks,omitempty"`
 	SizeRw        *int64             `json:"sizeRw,omitempty"`     // writable layer bytes (docker --size); nil if not computed
-	SizeRootFs    *int64             `json:"sizeRootFs,omitempty"` // total bytes incl. image layers; nil if not computed
+	SizeRootFs    *int64             `json:"sizeRootFs,omitempty"` // container rootfs bytes (snapshotter; dedups shared layers)
+	ImageSize     *int64             `json:"imageSize,omitempty"`  // the image's own size (matches `docker images` disk usage)
 	Raw           string             `json:"raw,omitempty"`
 }
 
@@ -290,7 +291,20 @@ func (s *ContainerService) InspectAll(engine, owner, id string) (ContainerDetail
 	if err != nil {
 		return ContainerDetails{}, err
 	}
-	return parseContainerDetails(output, engine, owner)
+	details, perr := parseContainerDetails(output, engine, owner)
+	if perr != nil {
+		return details, perr
+	}
+	// The container inspect gives writable + rootfs sizes but not the image's own
+	// size — fetch that separately so the panel matches `docker images`.
+	if engine == "docker" && details.ImageID != "" {
+		if out, e := runContainerCommand("", 10*time.Second, "docker", "image", "inspect", details.ImageID, "--format", "{{.Size}}"); e == nil {
+			if n, pe := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); pe == nil && n > 0 {
+				details.ImageSize = &n
+			}
+		}
+	}
+	return details, nil
 }
 
 // InspectCurrentUser returns curated inspect details for one of the calling user's
