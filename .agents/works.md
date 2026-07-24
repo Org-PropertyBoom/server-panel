@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-22 - Make the Files editor writable (root), with confirm + auto-backup + deny-list
+
+- Goal (Owner): the Files explorer was read-only; make files editable with a safety guard. Key reframing surfaced to the Owner: root mode already has an unjailed root TERMINAL (full fs write), so an editor grants NO new privilege — the real risk is ACCIDENTAL damage, so backup + confirm matter more than re-auth (which only guards session-hijack, not typos). Owner picked: confirm modal (+ always-on backup + deny-list).
+- Files changed: `services/files.go` — `WriteFileContent(path, content, homeDir, isRoot)`: refuses `ErrProtectedPath` deny-list (`/etc/shadow|gshadow|passwd|group|sudoers|fstab`, and trees `/boot /dev /proc /sys /etc/ssh /etc/sudoers.d`), rejects binary (NUL) + oversized (>2MB), edits EXISTING regular files only (no create/traversal onto new paths), backs up prior contents to `<file>.bak-<UTC ts>` (best-effort, same mode), then atomic temp+rename preserving perms; standard users still home-jailed. `routes/post/files/main.go` — PUT branch {path, content} → WriteFileContent, 403 on access-denied/protected, 400 else. `routes/post/main.go` — registered `PUT /post/files` (post-only, root). Frontend `_components/file-editor.tsx` — was a read-only <pre> viewer; now: read-only by default with an Edit button (root, non-binary), edit mode = textarea + Save/Cancel + a dirty dot, Save → confirm modal (shows path + that a .bak is written) → PUT; toasts. `routes/files/index.tsx` — `saveFile` PUT + passes `canEdit={runtime.isRoot}` + `onSave`.
+- Important decisions: root-only editing (PUT only on /post/files; /api user-mode has no PUT → canEdit false there). Confirm modal + auto-backup as the guards (NOT re-auth — deliberately, since it doesn't protect against the actual accidental-edit risk and adds friction; the session is already root-authenticated). Deny-list is server-side (defense-in-depth), refused with a clear message. Edit-existing-only (Lstat must succeed) prevents using the editor to create arbitrary new files/paths.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `go vet` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Per-host response headers for System hosts (panel-local; e.g. X-Robots-Tag: noindex)
 
 - Goal (hub/Server Architect): add per-host response headers to panel-managed System hosts — immediate need is `X-Robots-Tag: noindex` on media.propertyweb.co (openinary CDN) so crawlers stop re-crawling stale image URLs (Caddy `header` sets it on ALL responses incl. reverse_proxy 404/502, the crawler case). Also broadly useful (security/CDN headers).

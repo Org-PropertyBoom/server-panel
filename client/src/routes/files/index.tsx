@@ -138,6 +138,18 @@ export default function FilesRoute() {
         }
     };
 
+    // Save edits back to the file (root only). Backend backs up + writes atomically.
+    const saveFile = async (path: string, content: string) => {
+        const response = await fetch(apiEndpoint, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, content }),
+        });
+        if (!response.ok) throw new Error((await response.text()).trim() || "Failed to save file");
+        setFileContent(content);
+        setFileSize(new Blob([content]).size);
+    };
+
     useEffect(() => {
         initExplorer();
     }, []);
@@ -209,6 +221,8 @@ export default function FilesRoute() {
                     isLoading={isContentLoading}
                     error={contentError}
                     onClose={() => setSelectedFile(null)}
+                    canEdit={runtime.isRoot}
+                    onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
                 />
             </div>
         </DashboardLayout>

@@ -28,6 +28,30 @@ func Handler(sessions *services.SessionService) http.Handler {
 		// Root mode exposes the full filesystem and starts the explorer at /.
 		homeDir := "/"
 
+		if r.Method == http.MethodPut {
+			var body struct {
+				Path    string `json:"path"`
+				Content string `json:"content"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body.Path == "" {
+				http.Error(w, "path and content are required", http.StatusBadRequest)
+				return
+			}
+			if err := services.WriteFileContent(body.Path, body.Content, homeDir, true); err != nil {
+				switch {
+				case errors.Is(err, services.ErrAccessDenied):
+					http.Error(w, "access denied", http.StatusForbidden)
+				case errors.Is(err, services.ErrProtectedPath):
+					http.Error(w, err.Error(), http.StatusForbidden)
+				default:
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+
 		if isContent {
 			content, err := services.GetFileContent(requestedPath, homeDir, true)
 			if err != nil {
