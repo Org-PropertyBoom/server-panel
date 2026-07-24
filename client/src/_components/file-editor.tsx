@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileText, X, Loader2, AlertCircle, FolderOpen, Pencil, Save, Info } from "lucide-react";
+import { FileText, X, Loader2, AlertCircle, FolderOpen, Pencil, Save, Info, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 interface FileEditorProps {
@@ -125,6 +125,18 @@ export default function FileEditor({
                     </button>
                 ) : null}
             </div>
+
+            {/* Breadcrumb (VS Code-style path) */}
+            {filePath ? (
+                <div className="flex items-center gap-0.5 overflow-x-auto whitespace-nowrap border-b border-slate-800 bg-slate-900/40 px-3 py-1 text-[11px] text-slate-400 select-none">
+                    {filePath.split("/").filter(Boolean).map((seg, i, arr) => (
+                        <span key={i} className="flex items-center gap-0.5">
+                            {i > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-slate-600" /> : null}
+                            <span className={i === arr.length - 1 ? "text-slate-200" : ""}>{seg}</span>
+                        </span>
+                    ))}
+                </div>
+            ) : null}
 
             {/* Editor Content Area */}
             <div className="flex-1 overflow-hidden relative">

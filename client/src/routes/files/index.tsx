@@ -155,8 +155,36 @@ export default function FilesRoute() {
         setFileMeta((m) => (m ? { ...m, modified: new Date().toISOString(), lines: content ? content.split("\n").length : 0 } : m));
     };
 
-    // Open a file directly by path (from quick-search), reusing the tree-select flow.
-    const openFileByPath = (path: string, name: string) => {
+    // revealInTree expands every ancestor folder from the root down to the file's
+    // parent (fetching children as needed) so the file node renders + highlights —
+    // the VS Code "reveal active file" behavior, needed when opening via search.
+    const revealInTree = async (filePath: string) => {
+        const lastSlash = filePath.lastIndexOf("/");
+        const parent = lastSlash > 0 ? filePath.slice(0, lastSlash) : "/";
+        const base = homePath || "/";
+        if (!parent.startsWith(base)) return;
+        const ancestors: string[] = [base];
+        const rel = parent.slice(base === "/" ? 0 : base.length).split("/").filter(Boolean);
+        let cur = base === "/" ? "" : base;
+        for (const seg of rel) {
+            cur = `${cur}/${seg}`;
+            ancestors.push(cur);
+        }
+        const nextExpanded = { ...expanded };
+        const nextOpen = { ...openPaths };
+        for (const dir of ancestors) {
+            if (!nextExpanded[dir]) {
+                nextExpanded[dir] = await fetchFolderContents(dir);
+            }
+            nextOpen[dir] = true;
+        }
+        setExpanded(nextExpanded);
+        setOpenPaths(nextOpen);
+    };
+
+    // Open a file directly by path (from quick-search): reveal it in the tree, then load it.
+    const openFileByPath = async (path: string, name: string) => {
+        await revealInTree(path);
         handleSelectNode({ name, path, isDir: false, size: 0, modTime: "" });
     };
 
@@ -473,6 +501,12 @@ function DirectoryTreeNode({
     const isExpanded = openPaths[path] || false;
     const isSelected = selectedPath === path;
     const children = expanded[path] || [];
+    const nodeRef = useRef<HTMLDivElement>(null);
+
+    // Scroll the active file into view when it's revealed/selected (VS Code-like).
+    useEffect(() => {
+        if (isSelected) nodeRef.current?.scrollIntoView({ block: "nearest" });
+    }, [isSelected]);
 
     const handleToggle = async (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -488,6 +522,7 @@ function DirectoryTreeNode({
     return (
         <div className="select-none">
             <div
+                ref={nodeRef}
                 className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
                     isSelected ? "bg-primary/10 text-primary font-medium" : "text-foreground/90"
                 }`}
