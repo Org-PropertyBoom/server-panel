@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-24 - File details panel (VS Code-style) + clear rebuild status banner
+
+- Two UX fixes the Owner flagged from screenshots.
+- (1) REBUILD STATUS (`client/src/routes/containers/index.tsx`): the rebuild request is synchronous (whole compose log arrives at once on completion), but the modal only showed "Rebuilding…/Build log" with no terminal state — unclear if it finished/succeeded. Added a status banner: amber "Rebuilding…" with a LIVE elapsed timer (1s tick) while running, then green "Build succeeded" / red "Build failed" with finish time + duration (`fmtClock`/`fmtDuration`); banner+log persist in the modal after the build. (Note: in-modal only — resets on reopen; persistent "last build" badge per container would need server-side storage — offered, not built.)
+- (2) FILE DETAILS PANEL (`services/files.go` + `client/src/routes/files/index.tsx` + `_components/file-editor.tsx`): the Files editor had no metadata. `GetFileContent` now also returns modified/mode/owner/group/lines; owner/group resolved via a Linux-tagged `fileOwnerGroup` helper (`files_owner_linux.go` using syscall.Stat_t → user.LookupId/LookupGroupId) with a `!linux` no-op stub (`files_owner_other.go`) so cross-compile stays clean (real target is GOOS=linux; Windows `go build ./services` still fails ONLY on the pre-existing system.go Statfs, not this). Frontend: a right-hand Details pane (3rd grid column `[280px_1fr_280px]`) showing type, size (human+bytes), modified (relative+absolute), permissions, owner:group, lines, full path; toggled by an info button in the editor tab bar; updates modified/lines optimistically on save.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `go vet` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-22 - Make the Files editor writable (root), with confirm + auto-backup + deny-list
 
 - Goal (Owner): the Files explorer was read-only; make files editable with a safety guard. Key reframing surfaced to the Owner: root mode already has an unjailed root TERMINAL (full fs write), so an editor grants NO new privilege — the real risk is ACCIDENTAL damage, so backup + confirm matter more than re-auth (which only guards session-hijack, not typos). Owner picked: confirm modal (+ always-on backup + deny-list).
