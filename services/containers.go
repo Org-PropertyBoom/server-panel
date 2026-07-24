@@ -73,7 +73,7 @@ type ContainerDetails struct {
 	Networks      []ContainerNetwork `json:"networks,omitempty"`
 	SizeRw        *int64             `json:"sizeRw,omitempty"`     // writable layer bytes (docker --size); nil if not computed
 	SizeRootFs    *int64             `json:"sizeRootFs,omitempty"` // container rootfs bytes (snapshotter; dedups shared layers)
-	ImageSize     *int64             `json:"imageSize,omitempty"`  // the image's own size (matches `docker images` disk usage)
+	ImageSize     *int64             `json:"imageSize,omitempty"`  // image `.Size` — compressed content/pull size on the containerd store (matches `docker images` CONTENT SIZE)
 	Raw           string             `json:"raw,omitempty"`
 }
 
@@ -296,7 +296,8 @@ func (s *ContainerService) InspectAll(engine, owner, id string) (ContainerDetail
 		return details, perr
 	}
 	// The container inspect gives writable + rootfs sizes but not the image's own
-	// size — fetch that separately so the panel matches `docker images`.
+	// size — fetch `.Size` (the compressed content/pull size on the containerd
+	// store) so the panel can show the transfer footprint.
 	if engine == "docker" && details.ImageID != "" {
 		if out, e := runContainerCommand("", 10*time.Second, "docker", "image", "inspect", details.ImageID, "--format", "{{.Size}}"); e == nil {
 			if n, pe := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); pe == nil && n > 0 {
