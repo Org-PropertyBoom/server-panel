@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     Folder,
     File,
@@ -13,6 +13,7 @@ import {
     Loader2,
     AlertCircle,
     RefreshCw,
+    Search,
     X,
     FolderOpen,
 } from "lucide-react";
@@ -154,6 +155,11 @@ export default function FilesRoute() {
         setFileMeta((m) => (m ? { ...m, modified: new Date().toISOString(), lines: content ? content.split("\n").length : 0 } : m));
     };
 
+    // Open a file directly by path (from quick-search), reusing the tree-select flow.
+    const openFileByPath = (path: string, name: string) => {
+        handleSelectNode({ name, path, isDir: false, size: 0, modTime: "" });
+    };
+
     useEffect(() => {
         initExplorer();
     }, []);
@@ -215,27 +221,150 @@ export default function FilesRoute() {
                     </div>
                 </aside>
 
-                {/* 2. Right Editor Pane (VSCode Tab/Editor Style) */}
-                <FileEditor
-                    fileName={selectedFile?.name || ""}
-                    filePath={selectedFile?.path || ""}
-                    fileSize={fileSize}
-                    content={fileContent}
-                    isBinary={isBinary}
-                    isLoading={isContentLoading}
-                    error={contentError}
-                    onClose={() => setSelectedFile(null)}
-                    canEdit={runtime.isRoot}
-                    onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
-                    onToggleDetails={selectedFile ? () => setShowDetails((v) => !v) : undefined}
-                    detailsOpen={showDetails}
-                />
+                {/* 2. Center: quick-search bar + editor pane (VSCode Tab/Editor Style) */}
+                <div className="flex flex-col overflow-hidden min-w-0">
+                    <FileSearch onOpen={openFileByPath} />
+                    <div className="flex-1 min-h-0">
+                        <FileEditor
+                            fileName={selectedFile?.name || ""}
+                            filePath={selectedFile?.path || ""}
+                            fileSize={fileSize}
+                            content={fileContent}
+                            isBinary={isBinary}
+                            isLoading={isContentLoading}
+                            error={contentError}
+                            onClose={() => setSelectedFile(null)}
+                            canEdit={runtime.isRoot}
+                            onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
+                            onToggleDetails={selectedFile ? () => setShowDetails((v) => !v) : undefined}
+                            detailsOpen={showDetails}
+                        />
+                    </div>
+                </div>
 
                 {showDetails && selectedFile && !contentError ? (
                     <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} />
                 ) : null}
             </div>
         </DashboardLayout>
+    );
+}
+
+function parentDir(path: string): string {
+    const i = path.lastIndexOf("/");
+    return i <= 0 ? "/" : path.slice(0, i);
+}
+
+// FileSearch is the VS Code-style quick-open: type a name, get ranked suggestions
+// from a bounded server-side walk; ↑/↓ + Enter (or click) opens. Ctrl/Cmd+P focuses.
+function FileSearch({ onOpen }: { onOpen: (path: string, name: string) => void }) {
+    const [q, setQ] = useState("");
+    const [results, setResults] = useState<FileItem[]>([]);
+    const [open, setOpen] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [active, setActive] = useState(0);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+                e.preventDefault();
+                inputRef.current?.focus();
+                inputRef.current?.select();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
+
+    useEffect(() => {
+        const query = q.trim();
+        if (query.length < 2) {
+            setResults([]);
+            setOpen(false);
+            return;
+        }
+        setLoading(true);
+        const t = window.setTimeout(async () => {
+            try {
+                const res = await fetch(`${apiEndpoint}?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+                const data = await res.json();
+                setResults(data.items || []);
+                setActive(0);
+                setOpen(true);
+            } catch {
+                setResults([]);
+            } finally {
+                setLoading(false);
+            }
+        }, 250);
+        return () => window.clearTimeout(t);
+    }, [q]);
+
+    const choose = (item: FileItem) => {
+        onOpen(item.path, item.name);
+        setQ("");
+        setResults([]);
+        setOpen(false);
+    };
+
+    const onKeyDown = (e: React.KeyboardEvent) => {
+        if (!open || results.length === 0) return;
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, results.length - 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (results[active]) choose(results[active]);
+        } else if (e.key === "Escape") {
+            setOpen(false);
+        }
+    };
+
+    return (
+        <div className="relative shrink-0 border-b border-border bg-card/40 px-3 py-2">
+            <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                    ref={inputRef}
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    onFocus={() => results.length > 0 && setOpen(true)}
+                    onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+                    placeholder="Search files by name…   Ctrl+P"
+                    className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-8 text-xs outline-none focus:border-primary"
+                    spellCheck={false}
+                    autoComplete="off"
+                />
+                {loading ? <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" /> : null}
+            </div>
+            {open && results.length > 0 ? (
+                <ul className="absolute left-3 right-3 z-20 mt-1 max-h-80 overflow-auto rounded-md border border-border bg-card shadow-xl">
+                    {results.map((r, i) => (
+                        <li key={r.path}>
+                            <button
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); choose(r); }}
+                                onMouseEnter={() => setActive(i)}
+                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${i === active ? "bg-primary/10" : "hover:bg-muted/60"}`}
+                            >
+                                <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                <span className="shrink-0 font-medium text-foreground">{r.name}</span>
+                                <span className="truncate text-muted-foreground" title={r.path}>{parentDir(r.path)}</span>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            ) : open && q.trim().length >= 2 && !loading ? (
+                <div className="absolute left-3 right-3 z-20 mt-1 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow-xl">
+                    No files matching “{q.trim()}” — system dirs like /usr, /proc are skipped for speed.
+                </div>
+            ) : null}
+        </div>
     );
 }
 

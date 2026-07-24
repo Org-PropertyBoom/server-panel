@@ -52,6 +52,16 @@ func Handler(sessions *services.SessionService) http.Handler {
 			return
 		}
 
+		if q := r.URL.Query().Get("q"); q != "" {
+			items, err := services.SearchFiles("/", q, homeDir, true)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"items": items})
+			return
+		}
+
 		if isContent {
 			content, err := services.GetFileContent(requestedPath, homeDir, true)
 			if err != nil {

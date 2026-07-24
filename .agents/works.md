@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-24 - Quick-open file search (VS Code Ctrl+P style) in the Files page
+
+- Goal (Owner): a search bar with autosuggestion to quickly find files, like VS Code's Ctrl+P. The explorer tree is lazy-loaded (no index), so this needs a server-side walk.
+- Files changed: `services/files.go` — `SearchFiles(root, query, homeDir, isRoot)`: `filepath.WalkDir` from root (/ for root; home-jailed for users), case-insensitive NAME substring, best-effort within a budget — prunes system/virtual + noise trees (`searchSkipAbs`: /proc /sys /dev /run /tmp /usr /var /lib /lib64 /boot /snap; `searchSkipNames`: .git node_modules vendor .cache __pycache__ .npm .cargo .terraform), caps at 150 results, stops after ~4s (sentinel error), ranks name-prefix-first then shallower paths (added io/fs + sort imports). `routes/post/files/main.go` — `?q=` branch on the existing GET handler → `{items}`. Frontend `client/src/routes/files/index.tsx` — `FileSearch` component: a top bar in the editor column with a debounced (250ms, min 2 chars) query, dropdown of ranked results (name + parent dir), ↑/↓ + Enter + Esc keyboard nav, mouse hover/click, and Ctrl/Cmd+P to focus; selecting opens the file via `openFileByPath` → the existing content-load flow. Middle grid cell wrapped as `[search bar | editor]`.
+- Important decisions: no new route/index — reused GET /post/files with `?q=`. Bounded walk (prune + 150 cap + 4s deadline) so searching from `/` stays responsive and never hangs; system dirs (/usr, /var, /proc…) skipped for speed — surfaced in the empty-state text. Root-only in practice (the search branch runs with isRoot=true on /post; /api user path unchanged). Best-effort by design — a match past the budget can be missed; acceptable for quick-open.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `go vet` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK.
+
 ### 2026-07-24 - File details panel (VS Code-style) + clear rebuild status banner
 
 - Two UX fixes the Owner flagged from screenshots.

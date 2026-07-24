@@ -3,8 +3,10 @@ package services
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -177,6 +179,75 @@ type FileContent struct {
 	Owner    string    `json:"owner,omitempty"` // Linux only
 	Group    string    `json:"group,omitempty"` // Linux only
 	Lines    int       `json:"lines,omitempty"` // text files only
+}
+
+// Directories pruned from search: virtual/huge system trees and per-dir noise
+// (VCS/dependency caches). Keeps the walk fast + relevant to operator files.
+var searchSkipAbs = map[string]bool{
+	"/proc": true, "/sys": true, "/dev": true, "/run": true, "/tmp": true,
+	"/usr": true, "/var": true, "/lib": true, "/lib64": true, "/boot": true, "/snap": true,
+}
+var searchSkipNames = map[string]bool{
+	".git": true, "node_modules": true, "vendor": true, ".cache": true,
+	"__pycache__": true, ".npm": true, ".cargo": true, ".terraform": true,
+}
+
+// SearchFiles walks root for files whose NAME contains query (case-insensitive),
+// best-effort within a time + result budget: it prunes system/noise trees, caps
+// results, and stops after ~4s. Standard users stay jailed to their home. Ranked
+// name-prefix first, then shallower paths.
+func SearchFiles(root, query, homeDir string, isRoot bool) ([]FileInfo, error) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if len(q) < 2 {
+		return nil, nil
+	}
+	if !isRoot {
+		root = filepath.Clean(homeDir)
+	}
+	const limit = 150
+	deadline := time.Now().Add(4 * time.Second)
+	stop := errors.New("search-budget-reached")
+	var results []FileInfo
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if d != nil && d.IsDir() {
+				return fs.SkipDir // unreadable dir → skip its subtree, keep going
+			}
+			return nil
+		}
+		if len(results) >= limit || time.Now().After(deadline) {
+			return stop
+		}
+		if d.IsDir() {
+			if searchSkipAbs[path] || searchSkipNames[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.Contains(strings.ToLower(d.Name()), q) {
+			if info, e := d.Info(); e == nil {
+				results = append(results, FileInfo{Name: d.Name(), IsDir: false, Size: info.Size(), ModTime: info.ModTime(), Path: path})
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, stop) {
+		return results, err
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		pi := strings.HasPrefix(strings.ToLower(results[i].Name), q)
+		pj := strings.HasPrefix(strings.ToLower(results[j].Name), q)
+		if pi != pj {
+			return pi
+		}
+		if len(results[i].Path) != len(results[j].Path) {
+			return len(results[i].Path) < len(results[j].Path)
+		}
+		return results[i].Path < results[j].Path
+	})
+	return results, nil
 }
 
 func GetFileContent(filePath string, homeDir string, isRoot bool) (FileContent, error) {
