@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Container as ContainerIcon, ExternalLink, FileCode2, FileText, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X } from "lucide-react";
+import { CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -140,6 +140,15 @@ function formatTs(value?: string): string | undefined {
     return d.toLocaleString();
 }
 
+// fmtClock renders a wall-clock time; fmtDuration a short elapsed span.
+function fmtClock(ms: number): string {
+    return new Date(ms).toLocaleTimeString();
+}
+function fmtDuration(ms: number): string {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
 function DetailSection({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
     return (
         <section className="border-t border-border px-5 py-4">
@@ -209,6 +218,15 @@ export default function ContainersRoute() {
     const [showRaw, setShowRaw] = useState(false);
     const [rebuilding, setRebuilding] = useState(false);
     const [rebuildLog, setRebuildLog] = useState("");
+    const [rebuildStatus, setRebuildStatus] = useState<{ startedAt: number; finishedAt: number | null; ok: boolean | null } | null>(null);
+    const [, setNowTick] = useState(0);
+
+    // Tick once a second while a rebuild runs so the elapsed timer updates.
+    useEffect(() => {
+        if (!rebuilding) return;
+        const t = window.setInterval(() => setNowTick((n) => n + 1), 1000);
+        return () => window.clearInterval(t);
+    }, [rebuilding]);
     const [createOpen, setCreateOpen] = useState(false);
 
     const loadContainers = useCallback(async () => {
@@ -299,6 +317,7 @@ export default function ContainersRoute() {
         setDockerfilePath("");
         setDockerfileError("");
         setRebuildLog("");
+        setRebuildStatus(null);
         setDockerfileLoading(true);
         try {
             const response = await fetch(`${Api.current.containers}/dockerfile?${dockerfileQuery(container)}`, { cache: "no-store" });
@@ -355,6 +374,8 @@ export default function ContainersRoute() {
             return;
         }
         setDockerfileSaving(false);
+        const startedAt = Date.now();
+        setRebuildStatus({ startedAt, finishedAt: null, ok: null });
         setRebuilding(true);
         try {
             const response = await fetch(`${Api.current.containers}/rebuild`, {
@@ -364,6 +385,7 @@ export default function ContainersRoute() {
             });
             const data: { output?: string; error?: string } = await response.json();
             setRebuildLog(data.output || "");
+            setRebuildStatus({ startedAt, finishedAt: Date.now(), ok: !data.error });
             if (data.error) {
                 toast.error(data.error);
             } else {
@@ -371,6 +393,8 @@ export default function ContainersRoute() {
                 await loadContainers();
             }
         } catch (rebuildError) {
+            setRebuildStatus({ startedAt, finishedAt: Date.now(), ok: false });
+            setRebuildLog((log) => log || String(rebuildError));
             toast.error(rebuildError instanceof Error ? rebuildError.message : "Rebuild failed");
         } finally {
             setRebuilding(false);
@@ -672,13 +696,25 @@ export default function ContainersRoute() {
                                 <textarea value={dockerfileContent} onChange={(event) => setDockerfileContent(event.target.value)} disabled={!dockerfilePath} spellCheck={false} className="h-full w-full resize-none bg-transparent p-5 font-mono text-xs leading-6 text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50" aria-label="Dockerfile content" />
                             )}
                         </div>
-                        {rebuildLog || rebuilding ? (
+                        {rebuildStatus ? (
                             <div className="border-t border-border bg-zinc-950">
-                                <div className="flex items-center gap-2 px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                                    {rebuilding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Hammer className="h-3 w-3" />}
-                                    {rebuilding ? "Rebuilding…" : "Build log"}
+                                <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2 text-[11px]">
+                                    <span className="flex items-center gap-1.5 font-semibold uppercase tracking-wide">
+                                        {rebuilding ? (
+                                            <><Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" /><span className="text-amber-400">Rebuilding…</span></>
+                                        ) : rebuildStatus.ok ? (
+                                            <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><span className="text-emerald-400">Build succeeded</span></>
+                                        ) : (
+                                            <><XCircle className="h-3.5 w-3.5 text-red-400" /><span className="text-red-400">Build failed</span></>
+                                        )}
+                                    </span>
+                                    <span className="font-mono text-zinc-500">
+                                        {rebuilding
+                                            ? `started ${fmtClock(rebuildStatus.startedAt)} · elapsed ${fmtDuration(Date.now() - rebuildStatus.startedAt)}`
+                                            : `finished ${fmtClock(rebuildStatus.finishedAt ?? rebuildStatus.startedAt)} · took ${fmtDuration((rebuildStatus.finishedAt ?? rebuildStatus.startedAt) - rebuildStatus.startedAt)}`}
+                                    </span>
                                 </div>
-                                <pre className="max-h-56 overflow-auto px-5 pb-3 font-mono text-[11px] leading-5 text-zinc-200">{rebuildLog || "Running docker compose up --build…"}</pre>
+                                <pre className="max-h-56 overflow-auto px-5 pb-3 font-mono text-[11px] leading-5 text-zinc-200">{rebuildLog || (rebuilding ? "Running docker compose up --build… (can take a few minutes; the full log appears when it finishes)" : "(no output)")}</pre>
                             </div>
                         ) : null}
                         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
