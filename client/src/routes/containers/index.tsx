@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X, XCircle } from "lucide-react";
+import { CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, GitCommit, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -61,6 +61,45 @@ type ContainerDetails = {
     imageSize?: number;
     raw?: string;
 };
+
+type BuildStamp = {
+    commit?: string;
+    deployedAt?: string;
+    ref?: string;
+    repo?: string;
+    source?: string;
+    found: boolean;
+};
+
+// relTime renders an ISO timestamp as "2h ago"; undefined if empty/invalid.
+function relTime(iso?: string): string | undefined {
+    if (!iso) return undefined;
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return undefined;
+    const s = Math.round((Date.now() - t) / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+}
+
+// envVal pulls a KEY's value from a docker env array ("KEY=value").
+function envVal(env: string[] | undefined, key: string): string | undefined {
+    const hit = (env ?? []).find((e) => e.startsWith(key + "="));
+    return hit ? hit.slice(key.length + 1) : undefined;
+}
+
+// githubCommitUrl derives a commit link from a repo ref ("Org/repo" or a github URL).
+function githubCommitUrl(repo?: string, commit?: string): string | undefined {
+    if (!repo || !commit) return undefined;
+    let slug = repo.trim();
+    const m = slug.match(/github\.com[/:]([^/]+\/[^/.]+)/i);
+    if (m) slug = m[1];
+    if (!/^[\w.-]+\/[\w.-]+$/.test(slug)) return undefined;
+    return `https://github.com/${slug}/commit/${commit}`;
+}
 
 // fmtSize renders a byte count as B/KB/MB/GB; undefined when size wasn't computed
 // (e.g. rootless Podman, whose inspect has no --size).
@@ -233,6 +272,11 @@ export default function ContainersRoute() {
         return () => window.clearInterval(t);
     }, [rebuilding]);
     const [createOpen, setCreateOpen] = useState(false);
+    const [stamps, setStamps] = useState<Record<string, BuildStamp>>({});
+
+    // stampFor returns a container's resolved build stamp (first route host that has one).
+    const stampFor = (c: ContainerRecord): BuildStamp | undefined =>
+        (c.routeHosts ?? []).map((h) => stamps[h]).find((s) => s?.found);
 
     const loadContainers = useCallback(async () => {
         setLoading(true);
@@ -241,7 +285,20 @@ export default function ContainersRoute() {
             const response = await fetch(Api.current.containers, { cache: "no-store" });
             if (!response.ok) throw new Error((await response.text()) || "Failed to load containers");
             const data: { containers?: ContainerRecord[] } = await response.json();
-            setContainers(data.containers ?? []);
+            const list = data.containers ?? [];
+            setContainers(list);
+            // Resolve build stamps lazily + non-blocking so a slow backend never stalls the list.
+            const hosts = Array.from(new Set(list.flatMap((c) => c.routeHosts ?? []).filter(Boolean)));
+            if (hosts.length > 0) {
+                fetch(`${Api.current.containers}/buildstamps`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ hosts }),
+                })
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((d) => d && setStamps(d.stamps || {}))
+                    .catch(() => undefined);
+            }
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : "Failed to load containers");
         } finally {
@@ -463,6 +520,19 @@ export default function ContainersRoute() {
                                         <td className="px-4 py-3">
                                             <p className="font-medium text-foreground">{container.name || container.id.slice(0, 12)}</p>
                                             <code className="mt-0.5 block text-[10px] text-muted-foreground">{container.id.slice(0, 12)}</code>
+                                            {(() => {
+                                                const s = stampFor(container);
+                                                return s?.commit ? (
+                                                    <span
+                                                        className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400"
+                                                        title={`commit ${s.commit}${s.deployedAt ? ` · deployed ${new Date(s.deployedAt).toLocaleString()}` : ""}`}
+                                                    >
+                                                        <GitCommit className="h-2.5 w-2.5" />
+                                                        {s.commit.slice(0, 7)}
+                                                        {s.deployedAt ? ` · ${relTime(s.deployedAt)}` : ""}
+                                                    </span>
+                                                ) : null;
+                                            })()}
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className="rounded border border-border bg-muted px-2 py-1 font-medium capitalize text-foreground">{container.engine}</span>
@@ -584,6 +654,42 @@ export default function ContainersRoute() {
                                             ) : null}
                                         </DetailSection>
                                     ) : null}
+
+                                    {(() => {
+                                        const s = stampFor(detailsContainer);
+                                        const commit = s?.commit || envVal(details.env, "BUILD_SHA");
+                                        const deployedAt = s?.deployedAt || envVal(details.env, "DEPLOYED_AT");
+                                        const hasRoute = (detailsContainer.routeHosts ?? []).length > 0;
+                                        if (!commit && !hasRoute) return null;
+                                        const gh = githubCommitUrl(s?.repo, commit);
+                                        return (
+                                            <DetailSection title="Build">
+                                                {commit ? (
+                                                    <>
+                                                        <DetailRow label="Commit" value={commit.slice(0, 7)} mono />
+                                                        <DetailRow label="Full commit" value={commit} mono />
+                                                        <DetailRow
+                                                            label="Deployed"
+                                                            value={deployedAt ? `${new Date(deployedAt).toLocaleString()}${relTime(deployedAt) ? ` · ${relTime(deployedAt)}` : ""}` : undefined}
+                                                        />
+                                                        <DetailRow label="Ref" value={s?.ref} mono />
+                                                        <DetailRow label="Source" value={s?.source === "header" ? "x-build-commit header" : s?.source === "up" ? "/up __BUILD__" : "container env"} />
+                                                        {gh ? (
+                                                            <div className="py-1.5">
+                                                                <a href={gh} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sky-600 hover:underline dark:text-sky-400">
+                                                                    View commit on GitHub <ExternalLink className="h-3 w-3" />
+                                                                </a>
+                                                            </div>
+                                                        ) : null}
+                                                    </>
+                                                ) : (
+                                                    <p className="text-muted-foreground">
+                                                        No build stamp on the route (no <code>x-build-commit</code> header or <code>/up</code> <code>__BUILD__</code>).
+                                                    </p>
+                                                )}
+                                            </DetailSection>
+                                        );
+                                    })()}
 
                                     {details.ports && details.ports.length > 0 ? (
                                         <DetailSection title="Ports" count={details.ports.length}>

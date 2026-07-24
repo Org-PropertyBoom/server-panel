@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-24 - Deployed commit + timestamp per container (build stamp) in the panel
+
+- Goal (hub/Server Architect, Owner-directed): deploy-verification at a glance — "is the commit I merged live in prod?" — per container in the list + inspect drawer.
+- Files changed: NEW `services/container_buildstamp.go` — `BuildStamp` type + `ResolveBuildStamp(host)` / `ResolveBuildStamps(hosts)`: fetches the stamp SERVER-SIDE (browser→route is CORS-blocked) in priority order — (a) `x-build-commit` (+`-deployed-at`/`-ref`) response header via a HEAD to `https://<host>/`, else (b) `window.__BUILD__={commit,deployedAt,ref,repo}` regex-parsed from `https://<host>/up`. In-memory cache (60s TTL), 3s HTTP timeout, concurrency cap 8, body-limited (256KB). `isPublicRouteHost` SSRF guard (hostname + must-have-dot + rejects localhost/private-range prefixes). `routes/post/containers/main.go` `BuildStampsHandler` (POST {hosts} → {stamps}, only resolved ones) + `POST /post/containers/buildstamps`. Frontend `client/src/routes/containers/index.tsx`: after the list loads, collect route hosts and POST buildstamps NON-BLOCKING (list never waits); list shows a `⎇ <short7> · <rel time>` emerald badge in the Container cell; the inspect drawer gets a "Build" section (short+full commit, deployed abs+rel, ref, source, GitHub commit link if repo derivable) with an env `BUILD_SHA`/`DEPLOYED_AT` FALLBACK, and "No build stamp on the route" when a routed container exposes none. Helpers: `relTime`, `envVal`, `githubCommitUrl`.
+- Important decisions: route stamp is the RELIABLE source (env `BUILD_SHA`/`DEPLOYED_AT` are usually empty per the spec — fallback only, drawer-only). Do NOT use image labels (`org.opencontainers.image.revision` = base image's revision, not the app's). Server-side + cached + short-timeout + non-blocking so a slow/down backend never hangs the list. Root-only (/post). Composes with the healthcheck-reason + size rows on the same surfaces.
+- Validation: `GOOS=linux CGO_ENABLED=0 go build ./services/... ./routes/...` 0; `go vet` 0; `gofmt` clean; `tsc --noEmit` 0; `npm run build` OK. VERIFY after deploy: la-app.propertyboom.co resolves `commit f5fc769a · <time>`; a stamp-less stack shows no badge / "No build stamp"; list doesn't hang on a slow backend.
+
 ### 2026-07-24 - Quick-open file search (VS Code Ctrl+P style) in the Files page
 
 - Goal (Owner): a search bar with autosuggestion to quickly find files, like VS Code's Ctrl+P. The explorer tree is lazy-loaded (no index), so this needs a server-side walk.

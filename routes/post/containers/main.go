@@ -144,6 +144,27 @@ func StatsHandler(sessions *services.SessionService, containers *services.Contai
 	})
 }
 
+// BuildStampsHandler resolves the deployed build stamp (commit + deployed-at) for
+// a batch of route hosts — fetched server-side (CORS + cached + short timeout) so
+// the container list never hangs. Only hosts that resolve a stamp are returned.
+func BuildStampsHandler(sessions *services.SessionService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Hosts []string `json:"hosts"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"stamps": services.ResolveBuildStamps(r.Context(), body.Hosts)})
+	})
+}
+
 func ActionHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validSession(r, sessions) {
