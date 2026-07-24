@@ -684,7 +684,7 @@ function AppConfigEditorModal({ target, onClose }: { target: ConfigEditorTarget;
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
             <div className="flex h-[min(720px,90vh)] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
                 <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
                     <div className="min-w-0">

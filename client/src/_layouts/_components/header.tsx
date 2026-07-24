@@ -272,7 +272,7 @@ function UpdateModal({
     );
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm">
             <div className="w-full max-w-lg rounded-md border border-border bg-card text-card-foreground shadow-lg">
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div className="flex items-center gap-3">

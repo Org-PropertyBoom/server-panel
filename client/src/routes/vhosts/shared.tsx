@@ -211,7 +211,7 @@ export function rowTint(status: string): string {
 
 export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
             <div className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <h2 className="mb-3 text-base font-semibold text-foreground">{title}</h2>
                 {children}

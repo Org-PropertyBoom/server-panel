@@ -582,7 +582,7 @@ export default function UsersRoute() {
 
             {/* Modal */}
             {addAppOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
                     <form onSubmit={submitApp} className="w-full max-w-md border border-border bg-card shadow-lg">
                         <div className="flex items-center justify-between border-b border-border px-5 py-4"><h3 className="font-semibold">Add App</h3><button type="button" onClick={() => setAddAppOpen(false)}><X className="h-4 w-4" /></button></div>
                         <div className="space-y-4 p-5">
@@ -604,7 +604,7 @@ export default function UsersRoute() {
             )}
 
             {activationOpen && selectedUser ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
                     <form onSubmit={activateCPanel} className="w-full max-w-md border border-border bg-card shadow-lg">
                         <div className="flex items-center justify-between border-b border-border px-5 py-4">
                             <div>
@@ -646,7 +646,7 @@ export default function UsersRoute() {
             ) : null}
 
             {isModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="relative w-full max-w-md overflow-hidden rounded-none border border-border bg-card shadow-lg animate-in zoom-in-95 duration-200">
                         {/* Header */}
                         <div className="flex items-center justify-between border-b border-border px-6 py-4">

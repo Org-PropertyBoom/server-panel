@@ -514,7 +514,7 @@ export default function ContainersRoute() {
             ) : null}
 
             {detailsContainer ? (
-                <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-sm" onClick={() => setDetailsContainer(null)}>
+                <div className="fixed inset-0 z-[60] flex justify-end bg-background/60 backdrop-blur-sm" onClick={() => setDetailsContainer(null)}>
                     <div
                         className="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-border bg-card shadow-xl"
                         onClick={(event) => event.stopPropagation()}
@@ -668,7 +668,7 @@ export default function ContainersRoute() {
             ) : null}
 
             {logsContainer ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
                     <div className="flex h-[min(720px,90vh)] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
                         <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
                             <div className="min-w-0">
@@ -693,7 +693,7 @@ export default function ContainersRoute() {
             ) : null}
 
             {dockerfileContainer ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
                     <div className="flex h-[min(760px,90vh)] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl">
                         <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
                             <div className="min-w-0">
@@ -819,7 +819,7 @@ function CreateContainerModal({ onClose, onCreated }: { onClose: () => void; onC
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (creating ? null : onClose())}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (creating ? null : onClose())}>
             <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
