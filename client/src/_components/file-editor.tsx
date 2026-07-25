@@ -203,7 +203,7 @@ export default function FileEditor({
 
             {/* Save confirmation */}
             {confirming ? (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => (saving ? null : setConfirming(false))}>
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => (saving ? null : setConfirming(false))}>
                     <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-5 text-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
                         <h2 className="text-sm font-semibold">Save changes to this file?</h2>
                         <p className="mt-2 text-xs text-slate-400">
