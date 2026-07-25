@@ -52,6 +52,13 @@ type Container struct {
 	Service    string `json:"service,omitempty"`    // com.docker.compose.service
 	WorkingDir string `json:"workingDir,omitempty"` // com.docker.compose.project.working_dir
 	Deployed   bool   `json:"deployed"`             // false = a compose service with NO container (not deployed)
+	// In-use guard: a project dir can be load-bearing even when its service is
+	// NOT deployed — a running container bind-mounts a path out of it, or a host
+	// process runs from it. Populated only for non-running rows. "Not deployed"
+	// ≠ "unused": these say WHY the directory isn't safe to delete.
+	InUse       bool       `json:"inUse,omitempty"`
+	InUseMounts []MountUse `json:"inUseMounts,omitempty"` // running containers bind-mounting out of the dir
+	InUseProcs  []string   `json:"inUseProcs,omitempty"`  // host processes running from inside the dir
 }
 
 // ContainerDetails is a curated view of `<engine> inspect <id>` — the fields worth

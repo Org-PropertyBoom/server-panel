@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, FolderGit2, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, FolderGit2, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -28,6 +28,11 @@ type ContainerRecord = {
     service?: string;
     workingDir?: string;
     deployed?: boolean;
+    // In-use guard: set on non-running rows whose project DIR is load-bearing
+    // (a running container mounts out of it, or a host process runs from it).
+    inUse?: boolean;
+    inUseMounts?: { container: string; paths: string[] }[];
+    inUseProcs?: string[];
 };
 
 type ContainerDetails = {
@@ -243,6 +248,46 @@ function RouteCell({ container }: { container: ContainerRecord }) {
                 </span>
             ) : null}
         </div>
+    );
+}
+
+// inUseReasons expands the in-use detail into full, human sentences (for the
+// hover title): which container mounts what, which host process runs from the dir.
+function inUseReasons(c: ContainerRecord): string[] {
+    const out: string[] = [];
+    for (const m of c.inUseMounts ?? []) {
+        const paths = m.paths.filter((p) => p !== ".");
+        out.push(`${m.container} bind-mounts ${paths.length ? paths.join(", ") : "the directory"}`);
+    }
+    for (const p of c.inUseProcs ?? []) out.push(`host process: ${p}`);
+    return out;
+}
+
+// inUseSummary is the compact inline reason ("go-actions: config, storage, …").
+function inUseSummary(c: ContainerRecord): string {
+    const parts: string[] = [];
+    for (const m of c.inUseMounts ?? []) {
+        const paths = m.paths.filter((p) => p !== ".");
+        parts.push(`${m.container}: ${paths.length ? paths.join(", ") : "dir"}`);
+    }
+    const procs = c.inUseProcs ?? [];
+    if (procs.length) parts.push(`host process${procs.length > 1 ? "es" : ""}`);
+    return parts.join(" · ");
+}
+
+// InUseBadge warns that a not-deployed/stopped row's DIRECTORY is load-bearing —
+// so it's not the dormant, safe-to-delete thing it looks like.
+function InUseBadge({ container }: { container: ContainerRecord }) {
+    if (!container.inUse) return null;
+    const label = (container.inUseMounts ?? []).length ? "In use — live mounts" : "In use — host process";
+    return (
+        <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+            title={`This directory is load-bearing — deleting it would break live services:\n\n${inUseReasons(container).join("\n")}`}
+        >
+            <AlertTriangle className="h-3 w-3" />
+            {label}
+        </span>
     );
 }
 
@@ -661,10 +706,16 @@ export default function ContainersRoute() {
                                             </tr>
                                             {group.rows.map((container) =>
                                                 isNotDeployed(container) ? (
-                                                    <tr key={`nd:${container.workingDir}:${container.service}`} className="bg-muted/10 hover:bg-muted/20">
+                                                    <tr key={`nd:${container.workingDir}:${container.service}`} className={`hover:bg-muted/20 ${container.inUse ? "bg-amber-500/[0.04]" : "bg-muted/10"}`}>
                                                         <td className="px-4 py-3">
                                                             <p className="font-medium text-muted-foreground">{container.service || container.name}</p>
                                                             <code className="mt-0.5 block break-all text-[10px] text-muted-foreground/70">{container.workingDir}</code>
+                                                            {container.inUse ? (
+                                                                <p className="mt-1 flex items-start gap-1 text-[10px] text-amber-600 dark:text-amber-400" title={inUseReasons(container).join("\n")}>
+                                                                    <AlertTriangle className="mt-px h-2.5 w-2.5 shrink-0" />
+                                                                    <span className="break-words">In use — {inUseSummary(container)}. Directory is not safe to delete.</span>
+                                                                </p>
+                                                            ) : null}
                                                         </td>
                                                         <td className="px-4 py-3">
                                                             <span className="rounded border border-border/60 bg-muted/40 px-2 py-1 font-medium capitalize text-muted-foreground">docker</span>
@@ -672,10 +723,13 @@ export default function ContainersRoute() {
                                                         <td className="px-4 py-3 text-muted-foreground">root</td>
                                                         <td className="px-4 py-3 text-muted-foreground/50">—</td>
                                                         <td className="px-4 py-3">
-                                                            <span className="inline-flex items-center gap-2">
-                                                                <span className="h-2 w-2 rounded-full border border-dashed border-muted-foreground/60" />
-                                                                <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Not deployed</span>
-                                                            </span>
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <span className="h-2 w-2 rounded-full border border-dashed border-muted-foreground/60" />
+                                                                    <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Not deployed</span>
+                                                                </span>
+                                                                <InUseBadge container={container} />
+                                                            </div>
                                                         </td>
                                                         <td className="px-4 py-3 text-muted-foreground/50">—</td>
                                                         <td className="px-4 py-3 text-muted-foreground/50">—</td>
@@ -713,6 +767,12 @@ export default function ContainersRoute() {
                                                                     </span>
                                                                 ) : null;
                                                             })()}
+                                                            {container.inUse ? (
+                                                                <p className="mt-1 flex items-start gap-1 text-[10px] text-amber-600 dark:text-amber-400" title={inUseReasons(container).join("\n")}>
+                                                                    <AlertTriangle className="mt-px h-2.5 w-2.5 shrink-0" />
+                                                                    <span className="break-words">In use — {inUseSummary(container)}</span>
+                                                                </p>
+                                                            ) : null}
                                                         </td>
                                                         <td className="px-4 py-3">
                                                             <span className="rounded border border-border bg-muted px-2 py-1 font-medium capitalize text-foreground">{container.engine}</span>
@@ -720,9 +780,12 @@ export default function ContainersRoute() {
                                                         <td className="px-4 py-3 font-medium text-foreground">{container.owner}</td>
                                                         <td className="max-w-64 truncate px-4 py-3 text-foreground" title={container.image}>{container.image || "—"}</td>
                                                         <td className="px-4 py-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className={`h-2 w-2 rounded-full ${container.state.toLowerCase() === "running" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
-                                                                <span className="text-foreground">{container.status || container.state || "Unknown"}</span>
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <span className={`h-2 w-2 rounded-full ${container.state.toLowerCase() === "running" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                                                                    <span className="text-foreground">{container.status || container.state || "Unknown"}</span>
+                                                                </span>
+                                                                <InUseBadge container={container} />
                                                             </div>
                                                         </td>
                                                         <td className="px-4 py-3 text-muted-foreground">
