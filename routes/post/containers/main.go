@@ -15,7 +15,7 @@ func Handler(sessions *services.SessionService, containers *services.ContainerSe
 			return
 		}
 
-		list := containers.ListAll()
+		list := containers.ListWithCompose() // runtime containers + "not deployed" compose services
 		if vhost != nil {
 			list = vhost.AnnotateContainers(r.Context(), list) // reverse route view: which hostnames point here
 		}
@@ -145,6 +145,33 @@ func CreateHandler(sessions *services.SessionService, containers *services.Conta
 			return
 		}
 		output, err := containers.CreateContainer(spec)
+		w.Header().Set("Content-Type", "application/json")
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"output": output, "error": errText})
+	})
+}
+
+// ComposeUpHandler starts a not-yet-deployed compose service (`docker compose up
+// -d <service>` in its project dir). Returns 200 with {output, error} so the
+// startup log is always shown. Mutating — the client confirms first.
+func ComposeUpHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var input struct {
+			WorkingDir string `json:"workingDir"`
+			Service    string `json:"service"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		output, err := containers.ComposeUp(input.WorkingDir, input.Service)
 		w.Header().Set("Content-Type", "application/json")
 		errText := ""
 		if err != nil {

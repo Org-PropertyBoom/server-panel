@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, FolderGit2, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -22,6 +22,12 @@ type ContainerRecord = {
     routeHosts?: string[];
     routeTenantCount?: number;
     routeTenantStack?: string;
+    // Compose awareness. deployed=false means the compose file defines this
+    // service but no container currently exists ("not deployed").
+    project?: string;
+    service?: string;
+    workingDir?: string;
+    deployed?: boolean;
 };
 
 type ContainerDetails = {
@@ -276,6 +282,8 @@ export default function ContainersRoute() {
     const [menuFor, setMenuFor] = useState("");
     const [removeContainer, setRemoveContainer] = useState<ContainerRecord | null>(null);
     const [removeText, setRemoveText] = useState("");
+    const [showNotDeployed, setShowNotDeployed] = useState(true);
+    const [startTarget, setStartTarget] = useState<ContainerRecord | null>(null);
 
     // stampFor returns a container's resolved build stamp (first route host that has one).
     const stampFor = (c: ContainerRecord): BuildStamp | undefined =>
@@ -352,6 +360,31 @@ export default function ContainersRoute() {
             }
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Recreate failed");
+        } finally {
+            setActionLoading("");
+        }
+    };
+
+    // composeUp starts a not-deployed compose service (`docker compose up -d
+    // <service>` in its project dir), bringing back a container that was removed
+    // (e.g. by `docker compose down`).
+    const composeUp = async (container: ContainerRecord) => {
+        const key = `nd:${container.workingDir}:${container.service}`;
+        setActionLoading(key);
+        try {
+            const res = await fetch(`${Api.current.containers}/compose-up`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ workingDir: container.workingDir, service: container.service }),
+            });
+            const data: { output?: string; error?: string } = await res.json();
+            if (data.error) toast.error(data.error);
+            else {
+                toast.success(`${container.service || container.name} started`);
+                await loadContainers();
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Start failed");
         } finally {
             setActionLoading("");
         }
@@ -490,6 +523,34 @@ export default function ContainersRoute() {
         }
     };
 
+    // Compose-aware summary + grouping. A container with deployed===false is a
+    // compose service with no running/stopped container ("not deployed").
+    const isNotDeployed = (c: ContainerRecord) => c.deployed === false;
+    const isRunning = (c: ContainerRecord) => c.deployed !== false && c.state.toLowerCase() === "running";
+    const isStopped = (c: ContainerRecord) => c.deployed !== false && c.state.toLowerCase() !== "running";
+    const counts = {
+        running: containers.filter(isRunning).length,
+        stopped: containers.filter(isStopped).length,
+        notDeployed: containers.filter(isNotDeployed).length,
+        standalone: containers.filter((c) => c.deployed !== false && !c.project).length,
+    };
+
+    // Group consecutive rows by compose project (the backend already sorts by
+    // project, then name; standalone/non-compose sorts last). "Show not deployed"
+    // hides the synthetic rows when the operator wants only live objects.
+    const visibleContainers = showNotDeployed ? containers : containers.filter((c) => !isNotDeployed(c));
+    type Group = { key: string; title: string; standalone: boolean; rows: ContainerRecord[] };
+    const groups: Group[] = [];
+    for (const c of visibleContainers) {
+        const key = c.project || "__standalone__";
+        const last = groups[groups.length - 1];
+        if (!last || last.key !== key) {
+            groups.push({ key, title: c.project || "Standalone", standalone: !c.project, rows: [c] });
+        } else {
+            last.rows.push(c);
+        }
+    }
+
     return (
         <DashboardLayout
             title="Containers"
@@ -525,6 +586,39 @@ export default function ContainersRoute() {
             ) : null}
 
             {containers.length > 0 ? (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
+                        <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                            <span className="font-medium text-foreground">{counts.running}</span> running
+                        </span>
+                        <span className="text-muted-foreground/40">·</span>
+                        <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+                            <span className="font-medium text-foreground">{counts.stopped}</span> stopped
+                        </span>
+                        <span className="text-muted-foreground/40">·</span>
+                        <span className="inline-flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full border border-dashed border-muted-foreground/60" />
+                            <span className="font-medium text-foreground">{counts.notDeployed}</span> not deployed
+                        </span>
+                        {counts.standalone > 0 ? (
+                            <>
+                                <span className="text-muted-foreground/40">·</span>
+                                <span><span className="font-medium text-foreground">{counts.standalone}</span> standalone</span>
+                            </>
+                        ) : null}
+                    </div>
+                    {counts.notDeployed > 0 ? (
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-muted-foreground">
+                            <input type="checkbox" checked={showNotDeployed} onChange={(e) => setShowNotDeployed(e.target.checked)} className="h-3.5 w-3.5 rounded border-border" />
+                            Show not deployed
+                        </label>
+                    ) : null}
+                </div>
+            ) : null}
+
+            {containers.length > 0 ? (
                 <div className="overflow-hidden rounded-md border border-border bg-card">
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[1240px] text-left text-xs">
@@ -541,91 +635,155 @@ export default function ContainersRoute() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                                {containers.map((container) => (
-                                    <tr key={`${container.engine}:${container.owner}:${container.id}`} className="hover:bg-muted/30">
-                                        <td className="px-4 py-3">
-                                            <p className="font-medium text-foreground">{container.name || container.id.slice(0, 12)}</p>
-                                            <code className="mt-0.5 block text-[10px] text-muted-foreground">{container.id.slice(0, 12)}</code>
-                                            {(() => {
-                                                const s = stampFor(container);
-                                                return s?.commit ? (
-                                                    <span
-                                                        className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400"
-                                                        title={`commit ${s.commit}${s.deployedAt ? ` · deployed ${new Date(s.deployedAt).toLocaleString()}` : ""}`}
-                                                    >
-                                                        <GitCommit className="h-2.5 w-2.5" />
-                                                        {s.commit.slice(0, 7)}
-                                                        {s.deployedAt ? ` · ${relTime(s.deployedAt)}` : ""}
-                                                    </span>
-                                                ) : null;
-                                            })()}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <span className="rounded border border-border bg-muted px-2 py-1 font-medium capitalize text-foreground">{container.engine}</span>
-                                        </td>
-                                        <td className="px-4 py-3 font-medium text-foreground">{container.owner}</td>
-                                        <td className="max-w-64 truncate px-4 py-3 text-foreground" title={container.image}>{container.image || "—"}</td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`h-2 w-2 rounded-full ${container.state.toLowerCase() === "running" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
-                                                <span className="text-foreground">{container.status || container.state || "Unknown"}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-muted-foreground">
-                                            {container.ports?.length ? container.ports.join(", ") : "—"}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <RouteCell container={container} />
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center justify-end gap-1.5">
-                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Details" aria-label={`Inspect ${container.name}`} onClick={() => openDetails(container)}>
-                                                    <Info className="h-3.5 w-3.5" />
-                                                </Button>
-                                                {container.state.toLowerCase() === "running" ? (
-                                                    <Button size="icon" variant="outline" className="h-8 w-8" title="Stop" aria-label={`Stop ${container.name}`} disabled={Boolean(actionLoading)} onClick={() => runAction(container, "stop")}>
-                                                        {actionLoading.endsWith(":stop") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-                                                    </Button>
-                                                ) : (
-                                                    <Button size="icon" variant="outline" className="h-8 w-8 text-emerald-600" title="Start" aria-label={`Start ${container.name}`} disabled={Boolean(actionLoading)} onClick={() => runAction(container, "start")}>
-                                                        {actionLoading.endsWith(":start") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                                                    </Button>
-                                                )}
-                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Restart" aria-label={`Restart ${container.name}`} disabled={Boolean(actionLoading) || container.state.toLowerCase() !== "running"} onClick={() => runAction(container, "restart")}>
-                                                    {actionLoading.endsWith(":restart") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
-                                                </Button>
-                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Logs" aria-label={`View logs for ${container.name}`} onClick={() => openLogs(container)}>
-                                                    <FileText className="h-3.5 w-3.5" />
-                                                </Button>
-                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Edit Dockerfile" aria-label={`Edit Dockerfile for ${container.name}`} onClick={() => openDockerfile(container)}>
-                                                    <FileCode2 className="h-3.5 w-3.5" />
-                                                </Button>
-                                                <div className="relative">
-                                                    <Button size="icon" variant="outline" className="h-8 w-8" title="More actions" aria-label={`More actions for ${container.name}`} onClick={() => setMenuFor(menuFor === container.id ? "" : container.id)}>
-                                                        {actionLoading === `${container.id}:recreate` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreVertical className="h-3.5 w-3.5" />}
-                                                    </Button>
-                                                    {menuFor === container.id ? (
-                                                        <>
-                                                            <div className="fixed inset-0 z-40" onClick={() => setMenuFor("")} />
-                                                            <div className="absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card py-1 text-xs shadow-lg">
-                                                                <button onClick={() => { setMenuFor(""); recreate(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
-                                                                    <Repeat2 className="h-3.5 w-3.5" /> Recreate
-                                                                </button>
-                                                                <button onClick={() => { setMenuFor(""); runAction(container, "kill"); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
-                                                                    <Ban className="h-3.5 w-3.5" /> Force kill
-                                                                </button>
-                                                                <div className="my-1 border-t border-border" />
-                                                                <button onClick={() => { setMenuFor(""); setRemoveText(""); setRemoveContainer(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-destructive/10">
-                                                                    <Trash2 className="h-3.5 w-3.5" /> Remove…
-                                                                </button>
+                                {groups.map((group) => {
+                                    const run = group.rows.filter(isRunning).length;
+                                    const nd = group.rows.filter(isNotDeployed).length;
+                                    const noun = group.standalone ? "container" : "service";
+                                    return (
+                                        <Fragment key={group.key}>
+                                            <tr className="bg-muted/30">
+                                                <td colSpan={8} className="px-4 py-2">
+                                                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                                        {group.standalone ? (
+                                                            <span className="font-semibold uppercase tracking-wide text-muted-foreground">Standalone</span>
+                                                        ) : (
+                                                            <>
+                                                                <FolderGit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                <span className="font-semibold text-foreground">{group.title}</span>
+                                                            </>
+                                                        )}
+                                                        <span className="text-muted-foreground">
+                                                            {group.rows.length} {noun}{group.rows.length === 1 ? "" : "s"} · {run} running
+                                                            {nd > 0 ? <span className="text-amber-600 dark:text-amber-400"> · {nd} not deployed</span> : null}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            {group.rows.map((container) =>
+                                                isNotDeployed(container) ? (
+                                                    <tr key={`nd:${container.workingDir}:${container.service}`} className="bg-muted/10 hover:bg-muted/20">
+                                                        <td className="px-4 py-3">
+                                                            <p className="font-medium text-muted-foreground">{container.service || container.name}</p>
+                                                            <code className="mt-0.5 block break-all text-[10px] text-muted-foreground/70">{container.workingDir}</code>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="rounded border border-border/60 bg-muted/40 px-2 py-1 font-medium capitalize text-muted-foreground">docker</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-muted-foreground">root</td>
+                                                        <td className="px-4 py-3 text-muted-foreground/50">—</td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="inline-flex items-center gap-2">
+                                                                <span className="h-2 w-2 rounded-full border border-dashed border-muted-foreground/60" />
+                                                                <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Not deployed</span>
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-muted-foreground/50">—</td>
+                                                        <td className="px-4 py-3 text-muted-foreground/50">—</td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center justify-end">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-8 gap-1.5 text-emerald-600 dark:text-emerald-400"
+                                                                    title={`Start ${container.service} (docker compose up -d)`}
+                                                                    disabled={Boolean(actionLoading)}
+                                                                    onClick={() => setStartTarget(container)}
+                                                                >
+                                                                    {actionLoading === `nd:${container.workingDir}:${container.service}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                                                                    Start
+                                                                </Button>
                                                             </div>
-                                                        </>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    <tr key={`${container.engine}:${container.owner}:${container.id}`} className="hover:bg-muted/30">
+                                                        <td className="px-4 py-3">
+                                                            <p className="font-medium text-foreground">{container.name || container.id.slice(0, 12)}</p>
+                                                            <code className="mt-0.5 block text-[10px] text-muted-foreground">{container.id.slice(0, 12)}</code>
+                                                            {(() => {
+                                                                const s = stampFor(container);
+                                                                return s?.commit ? (
+                                                                    <span
+                                                                        className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400"
+                                                                        title={`commit ${s.commit}${s.deployedAt ? ` · deployed ${new Date(s.deployedAt).toLocaleString()}` : ""}`}
+                                                                    >
+                                                                        <GitCommit className="h-2.5 w-2.5" />
+                                                                        {s.commit.slice(0, 7)}
+                                                                        {s.deployedAt ? ` · ${relTime(s.deployedAt)}` : ""}
+                                                                    </span>
+                                                                ) : null;
+                                                            })()}
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="rounded border border-border bg-muted px-2 py-1 font-medium capitalize text-foreground">{container.engine}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 font-medium text-foreground">{container.owner}</td>
+                                                        <td className="max-w-64 truncate px-4 py-3 text-foreground" title={container.image}>{container.image || "—"}</td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`h-2 w-2 rounded-full ${container.state.toLowerCase() === "running" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
+                                                                <span className="text-foreground">{container.status || container.state || "Unknown"}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-muted-foreground">
+                                                            {container.ports?.length ? container.ports.join(", ") : "—"}
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <RouteCell container={container} />
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center justify-end gap-1.5">
+                                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Details" aria-label={`Inspect ${container.name}`} onClick={() => openDetails(container)}>
+                                                                    <Info className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                                {container.state.toLowerCase() === "running" ? (
+                                                                    <Button size="icon" variant="outline" className="h-8 w-8" title="Stop" aria-label={`Stop ${container.name}`} disabled={Boolean(actionLoading)} onClick={() => runAction(container, "stop")}>
+                                                                        {actionLoading.endsWith(":stop") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button size="icon" variant="outline" className="h-8 w-8 text-emerald-600" title="Start" aria-label={`Start ${container.name}`} disabled={Boolean(actionLoading)} onClick={() => runAction(container, "start")}>
+                                                                        {actionLoading.endsWith(":start") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                                                                    </Button>
+                                                                )}
+                                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Restart" aria-label={`Restart ${container.name}`} disabled={Boolean(actionLoading) || container.state.toLowerCase() !== "running"} onClick={() => runAction(container, "restart")}>
+                                                                    {actionLoading.endsWith(":restart") && actionLoading.includes(container.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                                                                </Button>
+                                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Logs" aria-label={`View logs for ${container.name}`} onClick={() => openLogs(container)}>
+                                                                    <FileText className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                                <Button size="icon" variant="outline" className="h-8 w-8" title="Edit Dockerfile" aria-label={`Edit Dockerfile for ${container.name}`} onClick={() => openDockerfile(container)}>
+                                                                    <FileCode2 className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                                <div className="relative">
+                                                                    <Button size="icon" variant="outline" className="h-8 w-8" title="More actions" aria-label={`More actions for ${container.name}`} onClick={() => setMenuFor(menuFor === container.id ? "" : container.id)}>
+                                                                        {actionLoading === `${container.id}:recreate` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreVertical className="h-3.5 w-3.5" />}
+                                                                    </Button>
+                                                                    {menuFor === container.id ? (
+                                                                        <>
+                                                                            <div className="fixed inset-0 z-40" onClick={() => setMenuFor("")} />
+                                                                            <div className="absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card py-1 text-xs shadow-lg">
+                                                                                <button onClick={() => { setMenuFor(""); recreate(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
+                                                                                    <Repeat2 className="h-3.5 w-3.5" /> Recreate
+                                                                                </button>
+                                                                                <button onClick={() => { setMenuFor(""); runAction(container, "kill"); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
+                                                                                    <Ban className="h-3.5 w-3.5" /> Force kill
+                                                                                </button>
+                                                                                <div className="my-1 border-t border-border" />
+                                                                                <button onClick={() => { setMenuFor(""); setRemoveText(""); setRemoveContainer(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-destructive/10">
+                                                                                    <Trash2 className="h-3.5 w-3.5" /> Remove…
+                                                                                </button>
+                                                                            </div>
+                                                                        </>
+                                                                    ) : null}
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            )}
+                                        </Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -945,6 +1103,33 @@ export default function ContainersRoute() {
                                 }}
                             >
                                 <Trash2 className="h-4 w-4" /> Remove
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {startTarget ? (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => setStartTarget(null)}>
+                    <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-sm font-semibold text-foreground">Start service</h2>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                            Deploy <b className="text-foreground">{startTarget.service}</b>
+                            {startTarget.project ? <> from project <b className="text-foreground">{startTarget.project}</b></> : null}. This runs <code>docker compose up -d {startTarget.service}</code> in:
+                        </p>
+                        <code className="mt-2 block break-all rounded border border-border bg-muted/40 px-2 py-1.5 text-[11px] text-foreground">{startTarget.workingDir}</code>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setStartTarget(null)}>Cancel</Button>
+                            <Button
+                                size="sm"
+                                className="gap-2"
+                                onClick={() => {
+                                    const c = startTarget;
+                                    setStartTarget(null);
+                                    composeUp(c);
+                                }}
+                            >
+                                <Play className="h-4 w-4" /> Start
                             </Button>
                         </div>
                     </div>

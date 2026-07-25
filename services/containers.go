@@ -47,6 +47,11 @@ type Container struct {
 	RouteHosts       []string `json:"routeHosts,omitempty"`       // App-route hostnames (platform_hosts) pointing here
 	RouteTenantCount int      `json:"routeTenantCount,omitempty"` // tenant sites (website_hosts) via this container's stack
 	RouteTenantStack string   `json:"routeTenantStack,omitempty"` // the stack name backing those tenants
+	// Compose awareness (docker compose labels; "" for standalone / non-compose).
+	Project    string `json:"project,omitempty"`    // com.docker.compose.project
+	Service    string `json:"service,omitempty"`    // com.docker.compose.service
+	WorkingDir string `json:"workingDir,omitempty"` // com.docker.compose.project.working_dir
+	Deployed   bool   `json:"deployed"`             // false = a compose service with NO container (not deployed)
 }
 
 // ContainerDetails is a curated view of `<engine> inspect <id>` — the fields worth
@@ -946,11 +951,16 @@ func parseDockerContainers(output []byte) []Container {
 		if json.Unmarshal([]byte(line), &item) != nil {
 			continue
 		}
+		labels := textField(item, "Labels")
 		result = append(result, Container{
 			ID: textField(item, "ID"), Name: textField(item, "Names"), Image: textField(item, "Image"),
 			Command: textField(item, "Command"), Engine: "docker", Owner: "root",
 			State: textField(item, "State"), Status: textField(item, "Status"),
 			CreatedAt: textField(item, "CreatedAt"), Ports: splitDockerPorts(textField(item, "Ports")),
+			Project:    composeLabel(labels, "com.docker.compose.project"),
+			Service:    composeLabel(labels, "com.docker.compose.service"),
+			WorkingDir: composeLabel(labels, "com.docker.compose.project.working_dir"),
+			Deployed:   true,
 		})
 	}
 	return result
@@ -968,6 +978,7 @@ func parsePodmanContainers(output []byte, owner string) []Container {
 			Command: joinedField(item["Command"]), Engine: "podman", Owner: owner,
 			State: firstTextField(item, "State", "Status"), Status: firstTextField(item, "Status", "State"),
 			CreatedAt: formatCreatedAt(item["CreatedAt"]), Ports: podmanPorts(item["Ports"]),
+			Deployed: true,
 		})
 	}
 	return result
