@@ -62,13 +62,18 @@ type Host struct {
 	OnDemandTLS bool
 }
 
-// onDemandBlock is the `tls { on_demand }` snippet, 4-space indented to sit
+// onDemandBlock is the `tls { on_demand … }` snippet, 4-space indented to sit
 // inside a site block. Suppressed for wildcard hosts (on-demand can't issue them).
+//
+// It pins `issuer acme` (Let's Encrypt production — the default ACME CA), which
+// drops Caddy's dead ZeroSSL fallback (retired legacy integration → every attempt
+// logs caddy_legacy_user_removed / code 2977). The ACME account email is inherited
+// from the global Caddyfile `email` option, so it isn't repeated per host.
 func onDemandBlock(host string, on bool) string {
 	if !on || strings.HasPrefix(normalizeHost(host), "*.") {
 		return ""
 	}
-	return "    tls {\n        on_demand\n    }\n"
+	return "    tls {\n        on_demand\n        issuer acme\n    }\n"
 }
 
 // FileName is the flat-folder filename for a host: "<host>.caddy", with a

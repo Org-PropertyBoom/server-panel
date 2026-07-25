@@ -55,7 +55,7 @@ func TestRender_OnDemandTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "go3.propertyweb.co {\n    tls {\n        on_demand\n    }\n    reverse_proxy 127.0.0.1:8002\n}\n"
+	want := "go3.propertyweb.co {\n    tls {\n        on_demand\n        issuer acme\n    }\n    reverse_proxy 127.0.0.1:8002\n}\n"
 	if body != want {
 		t.Errorf("body = %q, want %q", body, want)
 	}
@@ -65,7 +65,7 @@ func TestRender_OnDemandTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rwant := "old.example.com {\n    tls {\n        on_demand\n    }\n    redir https://new.example.com 301\n}\n"
+	rwant := "old.example.com {\n    tls {\n        on_demand\n        issuer acme\n    }\n    redir https://new.example.com 301\n}\n"
 	if rbody != rwant {
 		t.Errorf("redirect body = %q, want %q", rbody, rwant)
 	}

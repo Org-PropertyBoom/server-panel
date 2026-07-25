@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-26 - Pin issuer acme in the on-demand template (drop dead ZeroSSL)
+
+- Goal (Owner, after step-c on-demand rollout went live): kill the `caddy_legacy_user_removed (code 2977)` noise — ZeroSSL retired the legacy Caddy integration, so it's a dead fallback issuer that every ACME attempt wastes a try on. (Largely moot once the retry storm stopped, but pin it so ZeroSSL is NEVER attempted.)
+- Change: `render.onDemandBlock` now emits `tls {\n on_demand\n issuer acme\n }` — `issuer acme` = Let's Encrypt production (default ACME CA), which drops Caddy's ZeroSSL fallback. Still skipped for wildcards. Applies to proxy AND redirect blocks. Updated golden tests. The ACME account **email** is intentionally NOT per-host — it's inherited from the global Caddyfile `email` option (hand-managed, one line), so it isn't repeated across ~107 files.
+- Rollout: rebuild+redeploy the panel binary → Reconcile (rewrites every host file with the issuer line, validated adapt→reload) → optionally add `email <addr>` to the global `/etc/caddy/Caddyfile` block. Live config confirmed PRODUCTION CA (staging grep = 0; earlier staging log lines were stale in-flight retries, now cleared). On-demand rollout verified live: 107/107 host files render on_demand, all spot-checked hosts 200, 0 ACME retry errors in 3 min.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; render+reconcile tests pass.
+
 ### 2026-07-26 - On-demand TLS: ask endpoint + gated tls{on_demand} template
 
 - Goal (hub spec, Owner principle "dead tenant domains should not burn a server quota"): ~100 configured tenant domains that are NXDOMAIN / point elsewhere retry ACME forever, flooding the Caddy log (masked a real TLS question). Make issuance traffic-driven + DB-authorized. Panel reports it already: Unreachable 102/103.
