@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"ppt/server-panel/services"
 )
@@ -59,6 +60,26 @@ func Handler(sessions *services.SessionService) http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"items": items})
+			return
+		}
+
+		if r.Method == http.MethodDelete {
+			if strings.TrimSpace(requestedPath) == "" {
+				http.Error(w, "path is required", http.StatusBadRequest)
+				return
+			}
+			if err := services.DeleteFile(requestedPath, homeDir, true); err != nil {
+				switch {
+				case errors.Is(err, services.ErrAccessDenied):
+					http.Error(w, "access denied", http.StatusForbidden)
+				case errors.Is(err, services.ErrProtectedPath):
+					http.Error(w, err.Error(), http.StatusForbidden)
+				default:
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 			return
 		}
 

@@ -95,6 +95,29 @@ func WriteFileContent(filePath, content, homeDir string, isRoot bool) error {
 	return os.Rename(tmpPath, filePath)
 }
 
+// DeleteFile removes a regular file (or symlink) — refuses directories and the
+// deny-list. Standard users stay jailed to their home.
+func DeleteFile(filePath, homeDir string, isRoot bool) error {
+	filePath = filepath.Clean(filePath)
+	if !isRoot {
+		cleanHome := filepath.Clean(homeDir)
+		if !strings.HasPrefix(filePath, cleanHome+string(filepath.Separator)) {
+			return ErrAccessDenied
+		}
+	}
+	if isProtectedFilePath(filePath) {
+		return ErrProtectedPath
+	}
+	info, err := os.Lstat(filePath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return errors.New("refusing to delete a directory")
+	}
+	return os.Remove(filePath)
+}
+
 type FileInfo struct {
 	Name    string    `json:"name"`
 	IsDir   bool      `json:"isDir"`

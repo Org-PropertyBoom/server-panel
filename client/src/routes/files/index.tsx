@@ -14,9 +14,11 @@ import {
     AlertCircle,
     RefreshCw,
     Search,
+    Trash2,
     X,
     FolderOpen,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
@@ -190,6 +192,17 @@ export default function FilesRoute() {
     };
     const navigateToFolder = (dirPath: string) => expandPath(dirPath, dirPath);
 
+    // Delete a file: remove it, clear the editor if it was open, and refresh its
+    // folder in the tree so the node disappears.
+    const deleteFile = async (path: string) => {
+        const res = await fetch(`${apiEndpoint}?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error((await res.text()).trim() || "Failed to delete file");
+        if (selectedFile?.path === path) setSelectedFile(null);
+        const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+        const items = await fetchFolderContents(parent);
+        setExpanded((prev) => ({ ...prev, [parent]: items }));
+    };
+
     // Open a file directly by path (from quick-search): reveal it in the tree, then load it.
     const openFileByPath = async (path: string, name: string) => {
         await revealInTree(path);
@@ -281,7 +294,7 @@ export default function FilesRoute() {
                 </div>
 
                 {showDetails && selectedFile && !contentError ? (
-                    <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} />
+                    <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} onDelete={deleteFile} />
                 ) : null}
             </div>
         </DashboardLayout>
@@ -440,7 +453,21 @@ function relativeTime(iso?: string): string | undefined {
 
 // FileDetailsPanel is the right-hand metadata pane (VS Code-style): type, size,
 // timestamps, permissions, owner, line count, and the full path.
-function FileDetailsPanel({ file, size, isBinary, meta, onClose }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void }) {
+function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void; onDelete: (path: string) => Promise<void> }) {
+    const [confirming, setConfirming] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const doDelete = async () => {
+        setDeleting(true);
+        try {
+            await onDelete(file.path);
+            toast.success(`${file.name} deleted`);
+            setConfirming(false);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Delete failed");
+        } finally {
+            setDeleting(false);
+        }
+    };
     const rows: { label: string; value?: string; sub?: string; mono?: boolean }[] = [
         { label: "Type", value: isBinary ? "Binary" : "Text file" },
         { label: "Size", value: fmtFileBytes(size), sub: `${size.toLocaleString()} bytes` },
@@ -480,6 +507,35 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose }: { file: FileI
                     </div>
                 </dl>
             </div>
+            <div className="border-t border-border p-3">
+                <button
+                    onClick={() => setConfirming(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
+                >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete file
+                </button>
+            </div>
+
+            {confirming ? (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (deleting ? null : setConfirming(false))}>
+                    <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-sm font-semibold text-foreground">Delete this file?</h2>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                            Permanently deletes <b className="text-foreground">{file.name}</b>. This can't be undone.
+                        </p>
+                        <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">{file.path}</p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button onClick={() => setConfirming(false)} disabled={deleting} className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">
+                                Cancel
+                            </button>
+                            <button onClick={doDelete} disabled={deleting} className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:opacity-90 disabled:opacity-50">
+                                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </aside>
     );
 }
