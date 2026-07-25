@@ -210,7 +210,8 @@ type ManageRow struct {
 	Code        int               `json:"code,omitempty"`
 	IsActive    bool              `json:"isActive"`
 	SoftDeleted bool              `json:"softDeleted"`
-	Headers     map[string]string `json:"headers,omitempty"` // system hosts only: panel-local response headers
+	Headers     map[string]string `json:"headers,omitempty"`    // system hosts only: panel-local response headers
+	Suppressed  bool              `json:"suppressed,omitempty"` // operator edge-disabled at Caddy (redirects UI)
 }
 
 // ManageSets is the editable slice of desired state: the panel-owned system hosts
@@ -285,6 +286,7 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	}
 	snap.ReadAt = time.Now()
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // so dry-run render matches what reconcile will write
+	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // edge-disabled tenants → shown "disabled"
 
 	dry, err := v.engine.DryRun(snap)
 	if err != nil {
@@ -362,22 +364,25 @@ func sortPinned(rows []PinnedRow) {
 // website_hosts are intentionally excluded — stack-owned, read-only here.
 func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 	m := &ManageSets{SystemHosts: []ManageRow{}, Redirects: []ManageRow{}, Stacks: v.cfg.Stacks(), Upstreams: v.containerUpstreams()}
-	headers, _ := v.settings.AllVhostHeaders() // panel-local; nil on error → no headers shown
+	headers, _ := v.settings.AllVhostHeaders()    // panel-local; nil on error → no headers shown
+	suppressed, _ := v.settings.SuppressedHosts() // panel-local edge-disable
 	for _, r := range snap.Rows {
 		if r.SoftDeleted {
 			continue
 		}
+		key := strings.ToLower(strings.TrimSpace(r.Host))
 		switch r.Table {
 		case "platform_hosts":
 			m.SystemHosts = append(m.SystemHosts, ManageRow{
 				ID: r.ID, Host: r.Host, ServerStack: r.ServerStack, Target: r.Target,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
-				Headers: headers[strings.ToLower(strings.TrimSpace(r.Host))],
+				Headers: headers[key], Suppressed: suppressed[key],
 			})
 		case "platform_redirect_hosts":
 			m.Redirects = append(m.Redirects, ManageRow{
 				ID: r.ID, Host: r.Host, Target: r.Target, Code: r.Code,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
+				Suppressed: suppressed[key],
 			})
 		}
 	}
@@ -526,6 +531,7 @@ func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, e
 	}
 	snap.ReadAt = time.Now()
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // panel-local; rendered into system host blocks
+	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // panel-local edge-disable
 	return v.engine.Reconcile(ctx, snap)
 }
 
@@ -699,6 +705,29 @@ func (v *VhostEngineService) DeleteRedirect(ctx context.Context, id int64) error
 	}
 	defer conn.Close()
 	return conn.DeleteRedirect(ctx, id)
+}
+
+// SuppressHost edge-disables (or re-enables) a host at Caddy — works for tenant AND
+// redirect vhosts: it flips the panel-local suppress flag (NO DB write), then
+// reconciles so the vhost is removed (disable) or re-rendered (enable) through the
+// safe reload path. GATED by live-reconcile like every write.
+func (v *VhostEngineService) SuppressHost(ctx context.Context, host string, suppressed bool) (reconcile.Result, error) {
+	if !v.LiveReloadEnabled() {
+		return reconcile.Result{Error: liveGateMsg}, errLiveGate
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return reconcile.Result{Error: "host is required"}, errors.New("host is required")
+	}
+	for _, p := range v.cfg.ProtectedHosts() {
+		if strings.EqualFold(p, host) {
+			return reconcile.Result{Error: "refusing to disable a protected domain"}, errors.New("protected domain")
+		}
+	}
+	if err := v.settings.SetHostSuppressed(host, suppressed); err != nil {
+		return reconcile.Result{Error: err.Error()}, err
+	}
+	return v.Reconcile(ctx)
 }
 
 // PruneOrphan removes one orphan `<host>.caddy` file, then reconciles. GATED.

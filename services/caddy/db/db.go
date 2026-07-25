@@ -45,6 +45,10 @@ type Snapshot struct {
 	// injected by the caller from server-panel's OWN store — NOT read from the shared
 	// pc-owned schema. Rendered into the system host's Caddy block. nil = none.
 	ResponseHeaders map[string]map[string]string
+	// SuppressedHosts are hosts the OPERATOR disabled at the Caddy edge (panel-local,
+	// NOT a stack-DB write): a suppressed host is not rendered, and its live vhost is
+	// removed on reconcile, so Caddy stops serving it while the stack row stays intact.
+	SuppressedHosts map[string]bool
 }
 
 // DB is a thin read-only handle to the shared propertyteam MySQL.

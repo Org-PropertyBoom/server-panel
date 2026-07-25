@@ -112,3 +112,35 @@ func (s *SettingsService) DeleteVhostHeaders(host string) error {
 	_, err := s.db.Exec("DELETE FROM vhost_response_headers WHERE host = ?", normalizeHostKey(host))
 	return err
 }
+
+// SuppressedHosts returns the set of hosts the operator disabled at the Caddy edge.
+func (s *SettingsService) SuppressedHosts() (map[string]bool, error) {
+	rows, err := s.db.Query("SELECT host FROM vhost_suppressed_hosts")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out[h] = true
+	}
+	return out, rows.Err()
+}
+
+// SetHostSuppressed toggles a host's edge-disable (panel-local; no stack-DB write).
+func (s *SettingsService) SetHostSuppressed(host string, suppressed bool) error {
+	key := normalizeHostKey(host)
+	if key == "" {
+		return fmt.Errorf("host is required")
+	}
+	if suppressed {
+		_, err := s.db.Exec("INSERT OR IGNORE INTO vhost_suppressed_hosts (host) VALUES (?)", key)
+		return err
+	}
+	_, err := s.db.Exec("DELETE FROM vhost_suppressed_hosts WHERE host = ?", key)
+	return err
+}

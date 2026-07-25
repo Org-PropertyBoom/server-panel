@@ -291,6 +291,27 @@ func UnpinHandler(sessions *services.SessionService, engine *services.VhostEngin
 	})
 }
 
+// SuppressHandler edge-disables/enables a host at Caddy — tenant or redirect
+// (panel-local, no DB write) then reconciles. GATED; returns the truthful Result.
+func SuppressHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host       string `json:"host"`
+			Suppressed bool   `json:"suppressed"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Host) == "" {
+			http.Error(w, "host is required", http.StatusBadRequest)
+			return
+		}
+		res, _ := engine.SuppressHost(r.Context(), body.Host, body.Suppressed)
+		writeJSON(w, res)
+	})
+}
+
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {

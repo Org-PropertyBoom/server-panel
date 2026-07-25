@@ -106,6 +106,13 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 			continue
 		}
 
+		// Operator edge-disable: don't render, and remove any live vhost — the stack
+		// row stays intact, Caddy just stops serving it.
+		if snap.SuppressedHosts[host] {
+			disabled[name] = true
+			continue
+		}
+
 		if !r.Desired() {
 			// Known, disabled row → its file should not exist (subject to the
 			// first-run + protection guards applied when the plan is turned into

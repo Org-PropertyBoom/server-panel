@@ -1,15 +1,28 @@
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, HostLink, type ManageRow, Pill, UrlLink, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type ManageRow, Pill, suppressHost, summarizeError, UrlLink, ViewHeader } from "./shared";
 import RedirectForm from "./redirect-form";
 
 // RedirectsView manages platform_redirect_hosts — host → URL redirects answered at
 // the edge. Full CRUD; live on the next global reconcile.
 export default function RedirectsView({ rows, onSaved }: { rows: ManageRow[]; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
+    const [busy, setBusy] = useState("");
+
+    // Edge disable/enable (suppress) — distinct from Delete (soft-delete the row):
+    // suppress just stops Caddy serving the redirect, keeping the row intact.
+    const toggle = async (host: string, suppressed: boolean) => {
+        setBusy(host);
+        const res = await suppressHost(host, suppressed);
+        if (res.error) toast.error(summarizeError(res.error));
+        else if (res.reloaded) toast.success(`Redirect for ${host} ${suppressed ? "disabled" : "enabled"}`);
+        else toast.error(`Not ${suppressed ? "disabled" : "enabled"}`);
+        setBusy("");
+        onSaved();
+    };
 
     const del = async (row: ManageRow) => {
         if (!window.confirm(`Disable the redirect for ${row.host}? It is soft-deleted and removed from Caddy on the next reconcile.`)) return;
@@ -68,13 +81,21 @@ export default function RedirectsView({ rows, onSaved }: { rows: ManageRow[]; on
                                             <UrlLink url={r.target} />
                                         </td>
                                         <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{r.code}</td>
-                                        <td className="px-4 py-2.5">{r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
+                                        <td className="px-4 py-2.5">{r.suppressed ? <Pill tone="warn">Disabled · edge</Pill> : r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
                                         <td className="px-4 py-2.5">
                                             <div className="flex justify-end gap-1">
+                                                <button
+                                                    onClick={() => toggle(r.host, !r.suppressed)}
+                                                    disabled={busy === r.host}
+                                                    className={`rounded p-1.5 ${r.suppressed ? "text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
+                                                    title={r.suppressed ? "Enable serving at Caddy" : "Disable serving at Caddy (edge — row kept)"}
+                                                >
+                                                    {busy === r.host ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : r.suppressed ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
+                                                </button>
                                                 <button onClick={() => setEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Edit">
                                                     <Pencil className="h-3.5 w-3.5" />
                                                 </button>
-                                                <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable">
+                                                <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Delete (soft-delete the row)">
                                                     <Trash2 className="h-3.5 w-3.5" />
                                                 </button>
                                             </div>

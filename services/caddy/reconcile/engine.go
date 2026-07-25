@@ -604,7 +604,26 @@ func (e *Engine) DryRun(snap db.Snapshot) (DryRunResult, error) {
 			Hostname: w.Host, Kind: w.Kind, Stack: w.Stack, Upstream: w.Upstream, Status: status,
 		})
 	}
+	// Operator-suppressed tenants: shown as a stable "disabled" row (not served at
+	// the edge) so they stay visible + re-enableable, not a transient will_remove.
+	suppressedFiles := map[string]bool{}
+	for _, r := range snap.Rows {
+		h := strings.ToLower(strings.TrimSpace(r.Host))
+		if !snap.SuppressedHosts[h] {
+			continue
+		}
+		suppressedFiles[render.FileName(h)] = true
+		// Tenants show as a "disabled" cockpit row here; redirects surface via the
+		// editable ManageRow (manageSets) instead.
+		if r.Table == "website_hosts" {
+			up, _ := e.cfg.UpstreamFor(r.ServerStack)
+			out.Hosts = append(out.Hosts, HostRow{Hostname: h, Kind: "tenant", Stack: r.ServerStack, Upstream: up, Status: "disabled"})
+		}
+	}
 	for _, name := range plan.Removes {
+		if suppressedFiles[name] {
+			continue // shown as "disabled" above, not "will_remove"
+		}
 		out.Hosts = append(out.Hosts, HostRow{Hostname: render.HostFromFileName(name), Status: "will_remove"})
 	}
 	for _, name := range plan.Orphans {

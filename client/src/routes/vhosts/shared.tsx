@@ -36,6 +36,7 @@ export type ManageRow = {
     isActive: boolean;
     softDeleted: boolean;
     headers?: Record<string, string>; // system hosts only: panel-local response headers
+    suppressed?: boolean; // operator edge-disabled at Caddy
 };
 
 export type Upstream = {
@@ -167,6 +168,22 @@ export function normalizeResult(r: ReconcileResult): ReconcileResult {
     };
 }
 
+// suppressHost edge-disables/enables a host at Caddy (tenant/redirect/system) via
+// the panel-local suppress flag + reconcile. Returns the truthful outcome.
+export async function suppressHost(host: string, suppressed: boolean): Promise<{ reloaded: boolean; error?: string }> {
+    try {
+        const res = await fetch("/post/vhost/suppress", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ host, suppressed }),
+        });
+        const data = await res.json();
+        return { reloaded: Boolean(data.reloaded), error: data.error };
+    } catch (e) {
+        return { reloaded: false, error: String(e) };
+    }
+}
+
 export function summarizeError(err: string): string {
     const first = err.split("\n")[0].trim();
     return first.length > 140 ? `${first.slice(0, 137)}…` : first;
@@ -198,6 +215,7 @@ export function StatusChip({ status }: { status: string }) {
         will_write: { tone: "warn", label: "Will write" },
         will_remove: { tone: "err", label: "Will remove" },
         orphan: { tone: "err", label: "Orphan" },
+        disabled: { tone: "warn", label: "Disabled · edge" },
     };
     const s = map[status] ?? { tone: "warn" as const, label: status };
     return <Pill tone={s.tone}>{s.label}</Pill>;

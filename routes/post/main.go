@@ -96,6 +96,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("POST /post/vhost/pinned/remove", postOnly(deps.Startup, postvhost.PinnedRemoveHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/pin", postOnly(deps.Startup, postvhost.PinHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/unpin", postOnly(deps.Startup, postvhost.UnpinHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/suppress", postOnly(deps.Startup, postvhost.SuppressHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))

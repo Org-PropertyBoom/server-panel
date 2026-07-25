@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { ExternalLink, Lock, Search } from "lucide-react";
+import { ExternalLink, Loader2, Lock, Power, PowerOff, Search } from "lucide-react";
+import { toast } from "sonner";
 
-import { EmptyBanner, HostLink, type HostHealth, type HostRow, rowTint, StatusChip, UnreachableChip, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type HostHealth, type HostRow, rowTint, StatusChip, suppressHost, summarizeError, UnreachableChip, ViewHeader } from "./shared";
 
 // Stack dashboard host per server_stack — the deep-link target for "Manage in
 // stack" (tenant rows are stack-owned; edits/deletes happen there, not here).
@@ -19,10 +20,23 @@ function manageInStackUrl(host: string, stack?: string): string | null {
 
 // TenantView renders website_hosts — the stack-owned tenant sites. READ-ONLY here:
 // the stack apps own these rows; the panel only views + monitors drift + health.
-export default function TenantView({ hosts, health }: { hosts: HostRow[]; health: Record<string, HostHealth> }) {
+export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[]; health: Record<string, HostHealth>; onSaved: () => void }) {
     const [stack, setStack] = useState<string>("");
     const [query, setQuery] = useState("");
     const [unreachableOnly, setUnreachableOnly] = useState(false);
+    const [busy, setBusy] = useState("");
+
+    // Edge disable/enable: flips the panel-local suppress flag (no stack-DB write),
+    // then reconciles so Caddy stops/starts serving the host.
+    const toggle = async (host: string, suppressed: boolean) => {
+        setBusy(host);
+        const res = await suppressHost(host, suppressed);
+        if (res.error) toast.error(summarizeError(res.error));
+        else if (res.reloaded) toast.success(`${host} ${suppressed ? "disabled" : "enabled"} at Caddy`);
+        else toast.error(`Not ${suppressed ? "disabled" : "enabled"}`);
+        setBusy("");
+        onSaved();
+    };
 
     const stacks = useMemo(() => {
         const counts = new Map<string, number>();
@@ -129,21 +143,34 @@ export default function TenantView({ hosts, health }: { hosts: HostRow[]; health
                                                         <UnreachableChip health={health[h.hostname]} />
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right">
-                                                    {manageInStackUrl(h.hostname, h.stack) ? (
-                                                        <a
-                                                            href={manageInStackUrl(h.hostname, h.stack) as string}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-primary"
-                                                            title={`Open ${h.hostname} in the ${h.stack} dashboard to add/edit/delete (tenant hosts are stack-owned)`}
+                                                <td className="px-4 py-3">
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <button
+                                                            onClick={() => toggle(h.hostname, h.status !== "disabled")}
+                                                            disabled={busy === h.hostname}
+                                                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium ${
+                                                                h.status === "disabled"
+                                                                    ? "text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                                                                    : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                                            }`}
+                                                            title={h.status === "disabled" ? "Re-enable serving at Caddy" : "Disable serving at Caddy (edge only — the stack row is untouched)"}
                                                         >
-                                                            Manage in stack
-                                                            <ExternalLink className="h-3 w-3" />
-                                                        </a>
-                                                    ) : (
-                                                        <span className="text-[11px] text-muted-foreground/50">—</span>
-                                                    )}
+                                                            {busy === h.hostname ? <Loader2 className="h-3 w-3 animate-spin" /> : h.status === "disabled" ? <Power className="h-3 w-3" /> : <PowerOff className="h-3 w-3" />}
+                                                            {h.status === "disabled" ? "Enable" : "Disable"}
+                                                        </button>
+                                                        {manageInStackUrl(h.hostname, h.stack) ? (
+                                                            <a
+                                                                href={manageInStackUrl(h.hostname, h.stack) as string}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-primary"
+                                                                title={`Open ${h.hostname} in the ${h.stack} dashboard to add/edit/delete (tenant hosts are stack-owned)`}
+                                                            >
+                                                                Manage in stack
+                                                                <ExternalLink className="h-3 w-3" />
+                                                            </a>
+                                                        ) : null}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}

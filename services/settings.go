@@ -60,6 +60,15 @@ func NewSettingsService() (*SettingsService, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Hosts the operator disabled at the Caddy edge (panel-local; the stack DB row is
+	// never touched — reconcile just stops rendering these).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vhost_suppressed_hosts (
+		host TEXT PRIMARY KEY,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	for oldKey, newKey := range map[string]string{
 		"app_name": "general_app_name", "color_mode": "general_color_mode", "header_apps": "apps_header",
 	} {

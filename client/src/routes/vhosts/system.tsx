@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, summarizeError, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, suppressHost, summarizeError, type Upstream, ViewHeader } from "./shared";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
@@ -17,6 +17,18 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
     const [pinRow, setPinRow] = useState<ManageRow | null>(null);
     const [unpinRow, setUnpinRow] = useState<PinnedRow | null>(null);
     const [converting, setConverting] = useState(false);
+    const [suppressBusy, setSuppressBusy] = useState("");
+
+    // Edge disable/enable (suppress) — served = Active AND not suppressed.
+    const toggleSuppress = async (host: string, suppressed: boolean) => {
+        setSuppressBusy(host);
+        const res = await suppressHost(host, suppressed);
+        if (res.error) toast.error(summarizeError(res.error));
+        else if (res.reloaded) toast.success(`${host} ${suppressed ? "disabled" : "enabled"} at Caddy`);
+        else toast.error(`Not ${suppressed ? "disabled" : "enabled"}`);
+        setSuppressBusy("");
+        onSaved();
+    };
 
     // convert POSTs a pin/unpin and reports the truthful Result (both mutate the main
     // Caddyfile via the same backup → adapt → diff-assert → reload discipline).
@@ -185,13 +197,21 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                         </span>
                                     </td>
                                     <td className="px-4 py-2.5 font-mono text-muted-foreground">{r.target}</td>
-                                    <td className="px-4 py-2.5">{r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
+                                    <td className="px-4 py-2.5">{r.suppressed ? <Pill tone="warn">Disabled · edge</Pill> : r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
                                     <td className="px-4 py-2.5">
                                         <div className="flex justify-end gap-1">
+                                            <button
+                                                onClick={() => toggleSuppress(r.host, !r.suppressed)}
+                                                disabled={suppressBusy === r.host}
+                                                className={`rounded p-1.5 ${r.suppressed ? "text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
+                                                title={r.suppressed ? "Enable serving at Caddy" : "Disable serving at Caddy (edge — DB row kept)"}
+                                            >
+                                                {suppressBusy === r.host ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : r.suppressed ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
+                                            </button>
                                             <button onClick={() => setEdit(r)} className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Edit">
                                                 <Pencil className="h-3.5 w-3.5" />
                                             </button>
-                                            {r.isActive ? (
+                                            {r.isActive && !r.suppressed ? (
                                                 <button
                                                     onClick={() => setPinRow(r)}
                                                     className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -200,7 +220,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                                     <Pin className="h-3.5 w-3.5" />
                                                 </button>
                                             ) : null}
-                                            <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable">
+                                            <button onClick={() => del(r)} className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Disable (soft-delete the row)">
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </button>
                                         </div>
