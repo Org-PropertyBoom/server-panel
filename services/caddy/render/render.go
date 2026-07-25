@@ -55,6 +55,20 @@ type Host struct {
 	RedirectCode int    // redirect only; <=0 renders as 301
 	Encode       string // proxy only: `encode` formats (e.g. "zstd gzip"); "" = none
 	HeaderBlock  string // proxy only: a pre-rendered `header { ... }` block (4-space indented, trailing \n); "" = none
+	// OnDemandTLS emits a `tls { on_demand }` block so Caddy only obtains this
+	// host's cert when it's actually visited (and the ask endpoint authorizes it),
+	// instead of trying at startup for every configured domain. NEVER emitted for
+	// wildcard hosts — on-demand issuance can't satisfy a wildcard (needs DNS).
+	OnDemandTLS bool
+}
+
+// onDemandBlock is the `tls { on_demand }` snippet, 4-space indented to sit
+// inside a site block. Suppressed for wildcard hosts (on-demand can't issue them).
+func onDemandBlock(host string, on bool) string {
+	if !on || strings.HasPrefix(normalizeHost(host), "*.") {
+		return ""
+	}
+	return "    tls {\n        on_demand\n    }\n"
 }
 
 // FileName is the flat-folder filename for a host: "<host>.caddy", with a
@@ -96,13 +110,13 @@ func Render(h Host) (name string, contents string, err error) {
 		if up == "" {
 			return "", "", fmt.Errorf("render: %s host %q has no upstream target", h.Kind, host)
 		}
-		return FileName(host), proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock), nil
+		return FileName(host), proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock, onDemandBlock(host, h.OnDemandTLS)), nil
 	case KindRedirect:
 		target := strings.TrimSpace(h.Target)
 		if target == "" {
 			return "", "", fmt.Errorf("render: redirect host %q has no target URL", host)
 		}
-		return FileName(host), redirectSnippet(host, target, h.RedirectCode), nil
+		return FileName(host), redirectSnippet(host, target, h.RedirectCode, onDemandBlock(host, h.OnDemandTLS)), nil
 	default:
 		return "", "", fmt.Errorf("render: unknown kind %d for host %q", h.Kind, host)
 	}
@@ -114,9 +128,10 @@ func Render(h Host) (name string, contents string, err error) {
 // before reverse_proxy (Caddy orders directives itself, so placement is cosmetic).
 // headerBlock, when non-empty, is a fully-rendered block starting with
 // "    header {\n" and ending with "    }\n". Redirect blocks never get either.
-func proxySnippet(host, upstream, encode, headerBlock string) string {
+func proxySnippet(host, upstream, encode, headerBlock, tlsBlock string) string {
 	var b strings.Builder
 	b.WriteString(host + " {\n")
+	b.WriteString(tlsBlock)    // "" or "    tls {\n        on_demand\n    }\n"
 	b.WriteString(headerBlock) // "" or a complete, indented block ending in \n
 	if encode != "" {
 		b.WriteString("    encode " + encode + "\n")
@@ -125,13 +140,13 @@ func proxySnippet(host, upstream, encode, headerBlock string) string {
 	return b.String()
 }
 
-// redirectSnippet is the redir block. Byte-identical to
+// redirectSnippet is the redir block. With no tlsBlock it is byte-identical to
 // CaddyVhostsService::redirectSnippet (numeric code; <=0 -> 301).
-func redirectSnippet(host, target string, code int) string {
+func redirectSnippet(host, target string, code int, tlsBlock string) string {
 	if code <= 0 {
 		code = 301
 	}
-	return fmt.Sprintf("%s {\n    redir %s %d\n}\n", host, target, code)
+	return fmt.Sprintf("%s {\n%s    redir %s %d\n}\n", host, tlsBlock, target, code)
 }
 
 // normalizeHost lower-cases and trims a host, matching the apps' strtolower/trim

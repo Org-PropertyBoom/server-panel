@@ -49,6 +49,12 @@ type Snapshot struct {
 	// NOT a stack-DB write): a suppressed host is not rendered, and its live vhost is
 	// removed on reconcile, so Caddy stops serving it while the stack row stays intact.
 	SuppressedHosts map[string]bool
+	// OnDemandTLS, when true, renders a `tls { on_demand }` block into every host
+	// file so Caddy obtains certs traffic-driven (gated by the ask endpoint) rather
+	// than at startup for every configured domain. Injected by the caller from the
+	// panel-local setting; requires the global `on_demand_tls ask` block in the main
+	// Caddyfile. Default false (unchanged rendering).
+	OnDemandTLS bool
 }
 
 // DB is a thin read-only handle to the shared propertyteam MySQL.
@@ -115,6 +121,33 @@ func (d *DB) ReadSnapshot(ctx context.Context) (Snapshot, error) {
 	}
 
 	return snap, nil
+}
+
+// HostCertAllowed reports whether on-demand TLS issuance should be authorized for
+// host: true iff an ACTIVE, non-soft-deleted row for it exists in platform_hosts,
+// platform_redirect_hosts, or website_hosts. Cheap indexed equality lookups (no
+// joins, no scan) — this is called on Caddy handshakes, so it must stay light. A
+// missing table is treated as "no row there" (pre-migration tolerance). Any OTHER
+// error propagates so the caller can FAIL CLOSED (refuse issuance). website_hosts
+// is lean (no is_active/deleted_at) — existence alone is "desired".
+func (d *DB) HostCertAllowed(ctx context.Context, host string) (bool, error) {
+	queries := []string{
+		`SELECT 1 FROM platform_hosts WHERE host = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM platform_redirect_hosts WHERE host = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM website_hosts WHERE host = ? LIMIT 1`,
+	}
+	for _, q := range queries {
+		var one int
+		switch err := d.sql.QueryRowContext(ctx, q, host).Scan(&one); {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, sql.ErrNoRows), isMissingTable(err):
+			continue
+		default:
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // isMissingTable reports whether err is MySQL error 1146 (table doesn't exist).

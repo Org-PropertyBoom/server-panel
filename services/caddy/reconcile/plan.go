@@ -126,6 +126,7 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 			skips = append(skips, Skip{r.Table, host, reason})
 			continue
 		}
+		h.OnDemandTLS = snap.OnDemandTLS // traffic-driven issuance (gated); no-op for wildcards
 		_, contents, err := render.Render(h)
 		if err != nil {
 			skips = append(skips, Skip{r.Table, host, "render: " + err.Error()})

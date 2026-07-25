@@ -104,6 +104,24 @@ function VHostsShell({ active }: { active: Section }) {
         }
     };
 
+    const toggleOnDemandTls = async (enabled: boolean) => {
+        try {
+            const res = await fetch("/post/vhost/on-demand-tls", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled }),
+            });
+            if (!res.ok) {
+                toast.error(`Could not ${enabled ? "enable" : "disable"} on-demand TLS: ${(await res.text()).trim() || res.statusText}`);
+                return;
+            }
+            toast.success(enabled ? "On-demand TLS rendering enabled — Reconcile to apply" : "On-demand TLS rendering disabled");
+            await loadState();
+        } catch (err) {
+            toast.error(`On-demand TLS toggle failed: ${String(err)}`);
+        }
+    };
+
     const pruneOrphans = async (names: string[]) => {
         setPruning(true);
         try {
@@ -141,6 +159,7 @@ function VHostsShell({ active }: { active: Section }) {
                         result={result}
                         onApply={applyReconcile}
                         onToggleGate={toggleGate}
+                        onToggleOnDemandTls={toggleOnDemandTls}
                         onDismissResult={() => setResult(null)}
                     />
                 ) : (

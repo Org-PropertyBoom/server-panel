@@ -18,6 +18,7 @@ import (
 	"ppt/server-panel/routes/post/session"
 	settingsroute "ppt/server-panel/routes/post/settings"
 	"ppt/server-panel/routes/post/terminal"
+	"ppt/server-panel/routes/post/tlsask"
 	"ppt/server-panel/routes/post/update"
 	useradd "ppt/server-panel/routes/post/user/add"
 	userapps "ppt/server-panel/routes/post/user/apps"
@@ -96,6 +97,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("DELETE /post/vhost/redirect", postOnly(deps.Startup, postvhost.RedirectHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/orphan/prune", postOnly(deps.Startup, postvhost.OrphanPruneHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/gate", postOnly(deps.Startup, postvhost.GateHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/on-demand-tls", postOnly(deps.Startup, postvhost.OnDemandTLSHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/pinned/remove", postOnly(deps.Startup, postvhost.PinnedRemoveHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/pin", postOnly(deps.Startup, postvhost.PinHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/unpin", postOnly(deps.Startup, postvhost.UnpinHandler(deps.Sessions, deps.VhostEngine)))
@@ -103,6 +105,25 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))
+	// Caddy on-demand-TLS ask endpoint — loopback-only (Caddy calls it on 127.0.0.1),
+	// root mode only. NOT a /post route: no session, machine-to-machine. Fail-closed.
+	mux.Handle("GET /internal/tls-ask", loopbackOnly(rootOnly(deps.Startup, tlsask.Handler(deps.VhostEngine))))
+}
+
+// loopbackOnly accepts a request only when BOTH the connection origin AND the Host
+// header are loopback. The RemoteAddr check blocks anything reaching a directly
+// exposed panel port from off-box; the Host check blocks a public request that
+// Caddy reverse-proxies to the panel from loopback (it arrives with the public
+// Host). Together: only Caddy's direct `http://127.0.0.1:<port>/internal/...` call
+// passes — never public traffic.
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLocalhost(remoteHost(r.RemoteAddr)) || !isLocalhost(hostname(r.Host)) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func authenticatedSystemHandler(sessions *services.SessionService, system *services.SystemService) http.Handler {

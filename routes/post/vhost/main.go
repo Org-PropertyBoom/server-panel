@@ -212,6 +212,37 @@ func GateHandler(sessions *services.SessionService, engine *services.VhostEngine
 	})
 }
 
+// OnDemandTLSHandler flips the on-demand-TLS render toggle (persisted setting).
+// When ON, the next Reconcile rewrites every host file with a `tls { on_demand }`
+// block so Caddy issues certs traffic-driven (gated by the /internal/tls-ask
+// endpoint). Requires the global `on_demand_tls ask` block in the main Caddyfile
+// FIRST — otherwise the adapt-validate guard refuses the reload (safe, no outage).
+func OnDemandTLSHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := engine.SetOnDemandTLS(body.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("vhost on-demand-TLS render toggled: enabled=%v", body.Enabled)
+		writeJSON(w, map[string]bool{"onDemandTls": engine.OnDemandTLSEnabled()})
+	})
+}
+
 // RedirectTargetsHandler returns the active tenant domains as redirect-target
 // suggestions for the combobox (read-only).
 func RedirectTargetsHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {

@@ -49,6 +49,40 @@ func TestRender_Redirect(t *testing.T) {
 	}
 }
 
+func TestRender_OnDemandTLS(t *testing.T) {
+	// System/tenant proxy block gets the tls{on_demand} block before reverse_proxy.
+	_, body, err := Render(Host{Host: "go3.propertyweb.co", Kind: KindSystem, Target: "127.0.0.1:8002", OnDemandTLS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "go3.propertyweb.co {\n    tls {\n        on_demand\n    }\n    reverse_proxy 127.0.0.1:8002\n}\n"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+
+	// Redirect blocks also get it (they terminate TLS to issue the 301).
+	_, rbody, err := Render(Host{Host: "old.example.com", Kind: KindRedirect, Target: "https://new.example.com", RedirectCode: 301, OnDemandTLS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rwant := "old.example.com {\n    tls {\n        on_demand\n    }\n    redir https://new.example.com 301\n}\n"
+	if rbody != rwant {
+		t.Errorf("redirect body = %q, want %q", rbody, rwant)
+	}
+}
+
+func TestRender_OnDemandTLS_SkippedForWildcard(t *testing.T) {
+	// On-demand issuance can't satisfy a wildcard (needs DNS) — never emit it.
+	_, body, err := Render(Host{Host: "*.example.com", Kind: KindTenant, Target: "127.0.0.1:8005", OnDemandTLS: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "*.example.com {\n    reverse_proxy 127.0.0.1:8005\n}\n"
+	if body != want {
+		t.Errorf("wildcard must not get on_demand: body = %q, want %q", body, want)
+	}
+}
+
 func TestRender_RedirectDefaultsTo301(t *testing.T) {
 	_, body, err := Render(Host{Host: "a.com", Kind: KindRedirect, Target: "https://b.com", RedirectCode: 0})
 	if err != nil {

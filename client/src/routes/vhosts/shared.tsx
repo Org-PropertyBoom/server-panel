@@ -68,6 +68,7 @@ export type VhostState = {
     source?: string;
     vhostsDir: string;
     liveReload: boolean;
+    onDemandTls?: boolean;
     message?: string;
     error?: string;
     dryRun?: DryRun;

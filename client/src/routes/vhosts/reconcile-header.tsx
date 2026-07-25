@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Database, Lock, RefreshCw, ShieldCheck, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Lock, LockKeyhole, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
 import { Modal, Pill, type ReconcileResult, type VhostState } from "./shared";
@@ -10,6 +10,7 @@ export default function ReconcileHeader({
     result,
     onApply,
     onToggleGate,
+    onToggleOnDemandTls,
     onDismissResult,
 }: {
     state: VhostState;
@@ -17,12 +18,15 @@ export default function ReconcileHeader({
     result: ReconcileResult | null;
     onApply: (kind: "reconcile" | "reload") => void;
     onToggleGate: (enabled: boolean) => void;
+    onToggleOnDemandTls: (enabled: boolean) => void;
     onDismissResult: () => void;
 }) {
     const [confirm, setConfirm] = useState<null | "reconcile" | "reload">(null);
     const [armConfirm, setArmConfirm] = useState(false);
+    const [onDemandConfirm, setOnDemandConfirm] = useState(false);
     const dry = state.dryRun;
     const live = state.liveReload;
+    const onDemand = state.onDemandTls ?? false;
     const hostsOnDisk = dry?.files.length ?? 0;
     const writes = dry?.would_write ?? [];
     const removes = dry?.would_remove ?? [];
@@ -95,6 +99,12 @@ export default function ReconcileHeader({
                         <b className="text-destructive">{removes.length}</b> to remove
                     </span>
                 ) : null}
+                <span className="hidden h-4 w-px bg-border sm:block" />
+                <OnDemandSwitch on={onDemand} onToggle={(v) => (v ? setOnDemandConfirm(true) : onToggleOnDemandTls(false))} />
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground" title="When on, each host file renders tls { on_demand } so Caddy only issues a cert when the host is actually visited and the ask endpoint authorizes it.">
+                    <LockKeyhole className="h-3.5 w-3.5" />
+                    {onDemand ? "On-demand TLS: hosts render tls { on_demand }" : "On-demand TLS off — certs attempted for every host at startup"}
+                </span>
             </div>
 
             {result ? (
@@ -116,6 +126,33 @@ export default function ReconcileHeader({
                         onApply(k);
                     }}
                 />
+            ) : null}
+
+            {onDemandConfirm ? (
+                <Modal onClose={() => setOnDemandConfirm(false)} title="Enable on-demand TLS rendering?">
+                    <p className="text-xs text-muted-foreground">
+                        Each host file will render a <code>tls {"{"} on_demand {"}"}</code> block, so Caddy obtains a cert only when a host is
+                        actually visited and the <code>/internal/tls-ask</code> endpoint authorizes it (active platform/website/redirect row, not
+                        edge-disabled). Dead domains stop burning ACME quota.
+                    </p>
+                    <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                            Prerequisite: the global <code>on_demand_tls {"{"} ask … {"}"}</code> block must already be in the main Caddyfile. Without
+                            it <code>caddy adapt</code> fails and the next Reconcile's reload is refused (safe — no outage, nothing changes). This only
+                            flips the setting; it takes effect on the next <b>Reconcile</b>.
+                        </span>
+                    </div>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setOnDemandConfirm(false)}>
+                            Cancel
+                        </Button>
+                        <Button size="sm" className="gap-2" onClick={() => { setOnDemandConfirm(false); onToggleOnDemandTls(true); }}>
+                            <LockKeyhole className="h-4 w-4" />
+                            Enable on-demand TLS
+                        </Button>
+                    </div>
+                </Modal>
             ) : null}
 
             {armConfirm ? (
@@ -191,6 +228,29 @@ function GateSwitch({ live, onToggle }: { live: boolean; onToggle: (enabled: boo
             </span>
             <span className={live ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
                 Live reconcile: {live ? "ON" : "OFF"}
+            </span>
+        </button>
+    );
+}
+
+// OnDemandSwitch flips traffic-driven cert issuance. Turning ON is guarded by a
+// confirm (the caller handles it, since it needs the global Caddyfile block first);
+// turning OFF is instant.
+function OnDemandSwitch({ on, onToggle }: { on: boolean; onToggle: (enabled: boolean) => void }) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            onClick={() => onToggle(!on)}
+            className="inline-flex items-center gap-2 text-[11px] font-semibold"
+            title={on ? "Disable on-demand TLS rendering" : "Enable on-demand TLS rendering"}
+        >
+            <span className={`relative h-4 w-7 rounded-full transition-colors ${on ? "bg-sky-500" : "bg-muted-foreground/30"}`}>
+                <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all ${on ? "left-3.5" : "left-0.5"}`} />
+            </span>
+            <span className={on ? "text-sky-600 dark:text-sky-400" : "text-muted-foreground"}>
+                On-demand TLS: {on ? "ON" : "OFF"}
             </span>
         </button>
     );

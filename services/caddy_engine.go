@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ppt/server-panel/services/caddy/caddyctl"
@@ -33,6 +34,9 @@ type VhostEngineService struct {
 	engine     *reconcile.Engine
 	health     *HealthProbeService // alert-only reachability probe (read-only), attached post-construction
 	containers *ContainerService   // for the system-host upstream picker (running containers + published ports)
+
+	certAskMu    sync.Mutex           // guards the on-demand-TLS ask cache
+	certAskCache map[string]time.Time // host -> when authorized (positive answers only, short TTL)
 }
 
 // AttachHealth wires the reachability probe so State can surface it. Set once at
@@ -65,7 +69,7 @@ func (v *VhostEngineService) TenantHosts(ctx context.Context) ([]string, error) 
 func NewVhostEngineService(sources *DataSourceService, settings *SettingsService) *VhostEngineService {
 	cfg := caddyconfig.Load()
 	engine := reconcile.NewEngine(cfg, caddyctl.Adapter{}, caddyctl.NewClient(cfg.CaddyAdminURL))
-	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine, containers: NewContainerService()}
+	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine, containers: NewContainerService(), certAskCache: map[string]time.Time{}}
 }
 
 // Upstream is one reverse-proxy target a system host can point at — synced from a
@@ -180,6 +184,92 @@ func envLiveReloadArmed() bool {
 	return false
 }
 
+const onDemandTLSSettingKey = "vhost_on_demand_tls"
+
+// OnDemandTLSEnabled reports whether host files render a `tls { on_demand }` block
+// (traffic-driven cert issuance, gated by the ask endpoint). Default OFF — flip it
+// ON only AFTER the global `on_demand_tls ask` block is in the main Caddyfile,
+// else `caddy adapt` fails and the safe-reload guard refuses the reload.
+func (v *VhostEngineService) OnDemandTLSEnabled() bool {
+	return v.settings.Get(onDemandTLSSettingKey, "") == "true"
+}
+
+// SetOnDemandTLS persists the on-demand-TLS render toggle. Takes effect on the
+// next Reconcile (which rewrites every host file with/without the tls block).
+func (v *VhostEngineService) SetOnDemandTLS(enabled bool) error {
+	return v.settings.Set(onDemandTLSSettingKey, strconv.FormatBool(enabled))
+}
+
+// certAskCacheTTL is how long a positive ask answer is trusted before re-checking
+// the DB. Short, because a host can be disabled/suppressed at any time.
+const certAskCacheTTL = 45 * time.Second
+
+// CertAllowed is the authorization decision behind the Caddy `ask` endpoint: may
+// Caddy obtain an on-demand cert for host? True ONLY for a known, active,
+// non-suppressed host (protected/panel domains are always allowed). FAIL-CLOSED:
+// any DB error returns (false, err) so a DB blip only pauses NEW issuance —
+// existing certs keep serving from Caddy's storage. Positive answers are cached
+// briefly; negatives and errors are NOT cached, so a fresh enable+visit works.
+func (v *VhostEngineService) CertAllowed(ctx context.Context, host string) (bool, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false, nil
+	}
+	// Our own guarded domains (panel etc.) are always legitimate.
+	for _, p := range v.cfg.ProtectedHosts() {
+		if strings.EqualFold(p, host) {
+			return true, nil
+		}
+	}
+	if v.certAskCached(host) {
+		return true, nil
+	}
+	// Edge-disabled ("Disabled · edge") hosts must not obtain certs either.
+	if sup, err := v.settings.SuppressedHosts(); err == nil && sup[host] {
+		return false, nil
+	}
+	conn, err := v.openDB(ctx)
+	if err != nil {
+		return false, err // fail closed
+	}
+	defer conn.Close()
+	allowed, err := conn.HostCertAllowed(ctx, host)
+	if err != nil {
+		return false, err // fail closed
+	}
+	if allowed {
+		v.certAskStore(host)
+	}
+	return allowed, nil
+}
+
+func (v *VhostEngineService) certAskCached(host string) bool {
+	v.certAskMu.Lock()
+	defer v.certAskMu.Unlock()
+	at, ok := v.certAskCache[host]
+	if !ok {
+		return false
+	}
+	if time.Since(at) > certAskCacheTTL {
+		delete(v.certAskCache, host)
+		return false
+	}
+	return true
+}
+
+func (v *VhostEngineService) certAskStore(host string) {
+	v.certAskMu.Lock()
+	defer v.certAskMu.Unlock()
+	now := time.Now()
+	v.certAskCache[host] = now
+	// Opportunistically evict expired entries so the map can't grow unbounded.
+	for h, at := range v.certAskCache {
+		if now.Sub(at) > certAskCacheTTL {
+			delete(v.certAskCache, h)
+		}
+	}
+}
+
 // SystemHostForm / RedirectForm are the management-UI create/update payloads.
 type SystemHostForm struct {
 	ID          int64             `json:"id"`
@@ -225,14 +315,15 @@ type ManageSets struct {
 
 // VhostStateResult is the read-only drift view returned to the panel.
 type VhostStateResult struct {
-	Configured bool                    `json:"configured"`
-	Source     string                  `json:"source,omitempty"`
-	VhostsDir  string                  `json:"vhostsDir"`
-	LiveReload bool                    `json:"liveReload"`
-	Message    string                  `json:"message,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	DryRun     *reconcile.DryRunResult `json:"dryRun,omitempty"`
-	Manage     *ManageSets             `json:"manage,omitempty"`
+	Configured  bool                    `json:"configured"`
+	Source      string                  `json:"source,omitempty"`
+	VhostsDir   string                  `json:"vhostsDir"`
+	LiveReload  bool                    `json:"liveReload"`
+	OnDemandTLS bool                    `json:"onDemandTls"` // host files render tls{on_demand} (traffic-driven issuance)
+	Message     string                  `json:"message,omitempty"`
+	Error       string                  `json:"error,omitempty"`
+	DryRun      *reconcile.DryRunResult `json:"dryRun,omitempty"`
+	Manage      *ManageSets             `json:"manage,omitempty"`
 	// Health is the alert-only reachability status per host (DNS + TLS), orthogonal
 	// to reconcile drift. Empty/absent when the probe is disabled or hasn't run.
 	Health   map[string]caddyhealth.Status `json:"health,omitempty"`
@@ -260,7 +351,7 @@ type PinnedRow struct {
 // snapshot, and computes drift against the vhosts folder. It never mutates
 // anything. Failure modes are returned in the result (never a 500).
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
-	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), HealthOn: v.health.Enabled()}
+	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), OnDemandTLS: v.OnDemandTLSEnabled(), HealthOn: v.health.Enabled()}
 	out.Health = v.health.Snapshot()
 	out.Protected, out.ProtectedWarning = v.protectedRows()
 
@@ -287,6 +378,7 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	snap.ReadAt = time.Now()
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // so dry-run render matches what reconcile will write
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // edge-disabled tenants → shown "disabled"
+	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // render tls{on_demand} to match reconcile
 
 	dry, err := v.engine.DryRun(snap)
 	if err != nil {
@@ -532,6 +624,7 @@ func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, e
 	snap.ReadAt = time.Now()
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // panel-local; rendered into system host blocks
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // panel-local edge-disable
+	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // panel-local; renders tls{on_demand}
 	return v.engine.Reconcile(ctx, snap)
 }
 
