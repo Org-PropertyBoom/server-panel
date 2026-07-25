@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -125,16 +126,26 @@ func (d *DB) ReadSnapshot(ctx context.Context) (Snapshot, error) {
 
 // HostCertAllowed reports whether on-demand TLS issuance should be authorized for
 // host: true iff an ACTIVE, non-soft-deleted row for it exists in platform_hosts,
-// platform_redirect_hosts, or website_hosts. Cheap indexed equality lookups (no
-// joins, no scan) — this is called on Caddy handshakes, so it must stay light. A
-// missing table is treated as "no row there" (pre-migration tolerance). Any OTHER
-// error propagates so the caller can FAIL CLOSED (refuse issuance). website_hosts
-// is lean (no is_active/deleted_at) — existence alone is "desired".
+// platform_redirect_hosts, or website_hosts. A missing table is treated as "no row
+// there" (pre-migration tolerance). Any OTHER error propagates so the caller can
+// FAIL CLOSED (refuse issuance). website_hosts is lean (no is_active/deleted_at) —
+// existence alone is "desired".
+//
+// The match is case-insensitive (`LOWER(host)` vs a lowercased param) so a
+// stack-written website_hosts row with any casing still authorizes — the panel
+// can't normalize that table, so we never risk denying a live host a cert on a
+// casing quirk. LOWER() forgoes the host index, but these tables are small
+// (hundreds of rows), the answer is cached upstream, and Caddy rate-limits the
+// ask — so the cost is trivial and correctness wins.
 func (d *DB) HostCertAllowed(ctx context.Context, host string) (bool, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false, nil
+	}
 	queries := []string{
-		`SELECT 1 FROM platform_hosts WHERE host = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
-		`SELECT 1 FROM platform_redirect_hosts WHERE host = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
-		`SELECT 1 FROM website_hosts WHERE host = ? LIMIT 1`,
+		`SELECT 1 FROM platform_hosts WHERE LOWER(host) = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM platform_redirect_hosts WHERE LOWER(host) = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1`,
+		`SELECT 1 FROM website_hosts WHERE LOWER(host) = ? LIMIT 1`,
 	}
 	for _, q := range queries {
 		var one int
