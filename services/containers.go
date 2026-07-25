@@ -616,6 +616,46 @@ func (s *ContainerService) RebuildAll(engine, owner, id string) (string, error) 
 	return string(out), err
 }
 
+// RecreateAll recreates a Docker Compose-managed root container from its CURRENT
+// image + compose config, WITHOUT rebuilding: `docker compose up -d --no-deps
+// --force-recreate <service>`. Use it to re-apply a changed compose file / env, or
+// to pick up a re-pulled image. Returns the combined output.
+func (s *ContainerService) RecreateAll(engine, owner, id string) (string, error) {
+	if engine != "docker" || (owner != "root" && owner != "system") {
+		return "", errors.New("recreate is only supported for root Docker containers")
+	}
+	if !allowedContainerID.MatchString(id) {
+		return "", errors.New("invalid container")
+	}
+	output, err := s.runForOwner(engine, owner, "inspect", id)
+	if err != nil {
+		return "", err
+	}
+	var arr []rawInspect
+	if json.Unmarshal(output, &arr) != nil || len(arr) == 0 {
+		return "", errors.New("could not read container details")
+	}
+	labels := arr[0].Config.Labels
+	workingDir := strings.TrimSpace(labels["com.docker.compose.project.working_dir"])
+	service := strings.TrimSpace(labels["com.docker.compose.service"])
+	if workingDir == "" || service == "" {
+		return "", errors.New("recreate needs a Docker Compose-managed container (compose labels missing)")
+	}
+	if !allowedComposeService.MatchString(service) {
+		return "", errors.New("invalid compose service name")
+	}
+	if !filepath.IsAbs(workingDir) {
+		return "", errors.New("invalid compose working directory")
+	}
+	args := []string{"compose"}
+	for _, cf := range composeConfigFiles(labels["com.docker.compose.project.config_files"], workingDir) {
+		args = append(args, "-f", cf)
+	}
+	args = append(args, "up", "-d", "--no-deps", "--force-recreate", service)
+	out, err := runContainerCommand(workingDir, buildTimeout(), "docker", args...)
+	return string(out), err
+}
+
 // composeConfigFiles resolves the compose project's config-file label (comma-
 // separated, possibly relative to the working dir) into absolute paths. Empty
 // label → nil, letting compose use its default file resolution in the working dir.
@@ -861,10 +901,14 @@ func containerActionArgs(id, action string) ([]string, error) {
 	if !allowedContainerID.MatchString(id) {
 		return nil, errors.New("invalid container")
 	}
-	if action != "start" && action != "stop" && action != "restart" {
+	switch action {
+	case "start", "stop", "restart", "kill":
+		return []string{action, id}, nil
+	case "remove":
+		return []string{"rm", "-f", id}, nil // force: stop + remove in one step
+	default:
 		return nil, errors.New("invalid container action")
 	}
-	return []string{action, id}, nil
 }
 
 func isCurrentUser(username string) bool {

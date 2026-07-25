@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, GitCommit, Hammer, Info, Loader2, Play, Plus, RefreshCw, RotateCw, Save, Square, X, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -273,6 +273,9 @@ export default function ContainersRoute() {
     }, [rebuilding]);
     const [createOpen, setCreateOpen] = useState(false);
     const [stamps, setStamps] = useState<Record<string, BuildStamp>>({});
+    const [menuFor, setMenuFor] = useState("");
+    const [removeContainer, setRemoveContainer] = useState<ContainerRecord | null>(null);
+    const [removeText, setRemoveText] = useState("");
 
     // stampFor returns a container's resolved build stamp (first route host that has one).
     const stampFor = (c: ContainerRecord): BuildStamp | undefined =>
@@ -310,10 +313,10 @@ export default function ContainersRoute() {
         loadContainers();
     }, [loadContainers]);
 
-    const runAction = async (container: ContainerRecord, action: "start" | "stop" | "restart") => {
+    const runAction = async (container: ContainerRecord, action: "start" | "stop" | "restart" | "kill" | "remove") => {
         const key = `${container.engine}:${container.owner}:${container.id}:${action}`;
         const label = container.name || container.id.slice(0, 12);
-        const done = action === "stop" ? "stopped" : action === "restart" ? "restarted" : "started";
+        const done = { stop: "stopped", restart: "restarted", kill: "killed", remove: "removed", start: "started" }[action];
         setActionLoading(key);
         try {
             const response = await fetch(`${Api.current.containers}/action`, {
@@ -326,6 +329,29 @@ export default function ContainersRoute() {
             await loadContainers();
         } catch (actionError) {
             toast.error(actionError instanceof Error ? actionError.message : `Failed to ${action} container`);
+        } finally {
+            setActionLoading("");
+        }
+    };
+
+    // Recreate: compose up --force-recreate (no rebuild) — re-applies compose config
+    // / picks up a re-pulled image. Compose-managed containers only.
+    const recreate = async (container: ContainerRecord) => {
+        setActionLoading(`${container.id}:recreate`);
+        try {
+            const res = await fetch(`${Api.current.containers}/recreate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ engine: container.engine, id: container.id, owner: container.owner }),
+            });
+            const data: { output?: string; error?: string } = await res.json();
+            if (data.error) toast.error(data.error);
+            else {
+                toast.success(`${container.name || "Container"} recreated`);
+                await loadContainers();
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Recreate failed");
         } finally {
             setActionLoading("");
         }
@@ -574,6 +600,28 @@ export default function ContainersRoute() {
                                                 <Button size="icon" variant="outline" className="h-8 w-8" title="Edit Dockerfile" aria-label={`Edit Dockerfile for ${container.name}`} onClick={() => openDockerfile(container)}>
                                                     <FileCode2 className="h-3.5 w-3.5" />
                                                 </Button>
+                                                <div className="relative">
+                                                    <Button size="icon" variant="outline" className="h-8 w-8" title="More actions" aria-label={`More actions for ${container.name}`} onClick={() => setMenuFor(menuFor === container.id ? "" : container.id)}>
+                                                        {actionLoading === `${container.id}:recreate` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreVertical className="h-3.5 w-3.5" />}
+                                                    </Button>
+                                                    {menuFor === container.id ? (
+                                                        <>
+                                                            <div className="fixed inset-0 z-40" onClick={() => setMenuFor("")} />
+                                                            <div className="absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card py-1 text-xs shadow-lg">
+                                                                <button onClick={() => { setMenuFor(""); recreate(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
+                                                                    <Repeat2 className="h-3.5 w-3.5" /> Recreate
+                                                                </button>
+                                                                <button onClick={() => { setMenuFor(""); runAction(container, "kill"); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-muted">
+                                                                    <Ban className="h-3.5 w-3.5" /> Force kill
+                                                                </button>
+                                                                <div className="my-1 border-t border-border" />
+                                                                <button onClick={() => { setMenuFor(""); setRemoveText(""); setRemoveContainer(container); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-destructive/10">
+                                                                    <Trash2 className="h-3.5 w-3.5" /> Remove…
+                                                                </button>
+                                                            </div>
+                                                        </>
+                                                    ) : null}
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>
@@ -862,6 +910,42 @@ export default function ContainersRoute() {
                                     </Button>
                                 ) : null}
                             </div>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {removeContainer ? (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => setRemoveContainer(null)}>
+                    <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-sm font-semibold text-foreground">Remove container</h2>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                            This force-removes <b className="text-foreground">{removeContainer.name || removeContainer.id.slice(0, 12)}</b> (<code>docker rm -f</code>) — it stops and deletes the container. Its image and any named volumes are kept. A compose-managed service comes back on the next <code>up</code>.
+                        </p>
+                        <p className="mt-3 text-xs text-muted-foreground">
+                            Type <b className="font-mono text-foreground">{removeContainer.name || removeContainer.id.slice(0, 12)}</b> to confirm:
+                        </p>
+                        <input
+                            value={removeText}
+                            onChange={(e) => setRemoveText(e.target.value)}
+                            autoFocus
+                            className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:border-destructive"
+                        />
+                        <div className="mt-5 flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setRemoveContainer(null)}>Cancel</Button>
+                            <Button
+                                size="sm"
+                                variant="destructive"
+                                className="gap-2"
+                                disabled={removeText.trim() !== (removeContainer.name || removeContainer.id.slice(0, 12))}
+                                onClick={() => {
+                                    const c = removeContainer;
+                                    setRemoveContainer(null);
+                                    runAction(c, "remove");
+                                }}
+                            >
+                                <Trash2 className="h-4 w-4" /> Remove
+                            </Button>
                         </div>
                     </div>
                 </div>

@@ -104,6 +104,33 @@ func RebuildHandler(sessions *services.SessionService, containers *services.Cont
 	})
 }
 
+// RecreateHandler recreates a compose-managed container from its current image +
+// compose config (no rebuild). Returns 200 with {output, error}.
+func RecreateHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var input struct {
+			Engine string `json:"engine"`
+			ID     string `json:"id"`
+			Owner  string `json:"owner"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		output, err := containers.RecreateAll(input.Engine, input.Owner, input.ID)
+		w.Header().Set("Content-Type", "application/json")
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"output": output, "error": errText})
+	})
+}
+
 // CreateHandler runs a new Docker container (`docker run -d`). Returns 200 with
 // {output, error} so the run output is shown either way. Long-running (image pull).
 func CreateHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
