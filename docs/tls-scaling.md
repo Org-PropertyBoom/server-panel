@@ -4,6 +4,19 @@ Decision criteria for the platform's TLS/edge strategy. Written 2026-07-26 after
 on-demand-TLS rollout. Read this before assuming "Caddy can't scale" or reaching for
 Cloudflare — the limits are specific, and none of them are cert count.
 
+## Decision (2026-07-26): go with Cloudflare
+
+The edge provider will be **Cloudflare**, not AWS-native (CloudFront/ACM). The
+deciding factor is the per-tenant custom-domain cert problem: **Cloudflare for SaaS**
+is a turnkey product for it, whereas AWS has no equivalent and would require building +
+running that automation ourselves. Bandwidth economics (no per-GB egress) and setup
+simplicity also favor Cloudflare. See "Alternatives considered — AWS-native" below for
+the full comparison.
+
+**The origin stays on AWS EC2 with Caddy either way** — this is only about what sits in
+front. Adopting Cloudflare undoes no AWS investment; it's an edge choice, not a
+migration. Roll it out in the two stages under "The Cloudflare adoption plan".
+
 ## What's live today (the baseline)
 
 - **Caddy terminates TLS on a single origin** for all platform + tenant hosts.
@@ -86,6 +99,40 @@ their DNS. So edge-caching those requires **Cloudflare for SaaS custom hostnames
 beyond a free quota — check current pricing). Until then, tenant sites stay
 **Caddy-direct** (on-demand LE, uncached). Nothing is wasted: the on-demand work is the
 right baseline and the fallback for non-proxied domains.
+
+## Alternatives considered — AWS-native (rejected 2026-07-26)
+
+Since the origin is already an EC2 box, the AWS-native edge stack was a real option:
+
+| Need | Cloudflare (chosen) | AWS-native (rejected) |
+| --- | --- | --- |
+| Edge cache / CDN | CF proxy | CloudFront |
+| Public certs | Universal SSL (free) | ACM (free) |
+| Per-tenant custom domains | **Cloudflare for SaaS** (turnkey) | CloudFront + ACM + **our own automation** |
+| DNS | CF DNS | Route 53 |
+| WAF | CF WAF | AWS WAF |
+| DDoS | included free | Shield (Standard free, Advanced paid) |
+
+Why Cloudflare won:
+
+1. **Per-tenant custom domains is the deciding factor.** Cloudflare for SaaS auto-issues
+   + auto-renews a cert per tenant custom hostname via one API. AWS has **no turnkey
+   equivalent** — we'd script ACM DNS-validated issuance + attach domains to CloudFront
+   distributions (100 alt-names/distribution default → shard at scale). That's
+   engineering we'd own and maintain.
+2. **Bandwidth economics.** CloudFront bills **per GB egress**; for image-heavy property
+   sites that adds up. Cloudflare bandwidth is effectively free on standard plans.
+3. **Simplicity** for a small team, and no lock-in to AWS edge services.
+
+Notes that shaped the call:
+
+- **ACM public certs can't be installed on our own EC2/Caddy** (the key can't be
+  exported — ACM only works with CloudFront/ALB/etc.). So the AWS path would FORCE TLS
+  termination at CloudFront, same as Cloudflare terminates at its edge. No advantage
+  there for keeping certs on Caddy.
+- AWS-native would only have won if we were deliberately AWS-all-in (compliance /
+  data-residency), already leaning on CloudFront/ALB, wanted a single vendor/bill, or
+  needed tight VPC/private-origin integration — none of which apply now.
 
 ## Key gotchas (do not skip)
 
