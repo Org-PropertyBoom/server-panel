@@ -1,7 +1,22 @@
 import { type ReactNode } from "react";
-import { Database, ExternalLink, Loader2 } from "lucide-react";
+import { AlertTriangle, Database, ExternalLink, Loader2 } from "lucide-react";
 
 import { Button } from "_layouts/_components/ui/button";
+
+// NoCertBadge marks a host that will NOT get a certificate — because it's disabled
+// or edge-suppressed, so the tls-ask endpoint refuses issuance (403) and TLS
+// handshakes to it fail by design. Makes the disable → no-TLS consequence visible
+// (it previously surfaced only as an opaque `tlsv1 alert internal error`).
+export function NoCertBadge() {
+    return (
+        <span
+            className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
+            title="No certificate: this host is disabled/edge-off, so the tls-ask endpoint refuses issuance (403) and TLS handshakes fail by design."
+        >
+            <AlertTriangle className="h-3 w-3" /> no cert
+        </span>
+    );
+}
 
 // ---- Types (mirror the /post/vhost/state + reconcile Result payloads) ----
 
@@ -37,6 +52,7 @@ export type ManageRow = {
     softDeleted: boolean;
     headers?: Record<string, string>; // system hosts only: panel-local response headers
     suppressed?: boolean; // operator edge-disabled at Caddy
+    tlsMode?: string; // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
 };
 
 export type Upstream = {
@@ -69,6 +85,8 @@ export type VhostState = {
     vhostsDir: string;
     liveReload: boolean;
     onDemandTls?: boolean;
+    originCert?: string; // global Cloudflare Origin cert path (cf_origin hosts)
+    originKey?: string;
     message?: string;
     error?: string;
     dryRun?: DryRun;
@@ -177,6 +195,22 @@ export async function suppressHost(host: string, suppressed: boolean): Promise<{
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ host, suppressed }),
+        });
+        const data = await res.json();
+        return { reloaded: Boolean(data.reloaded), error: data.error };
+    } catch (e) {
+        return { reloaded: false, error: String(e) };
+    }
+}
+
+// setHostTlsMode switches a host between on-demand LE and Cloudflare Origin cert
+// (cf_origin), then reconciles. mode "" / "ondemand" returns it to on-demand.
+export async function setHostTlsMode(host: string, mode: string): Promise<{ reloaded: boolean; error?: string }> {
+    try {
+        const res = await fetch("/post/vhost/tls-mode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ host, mode }),
         });
         const data = await res.json();
         return { reloaded: Boolean(data.reloaded), error: data.error };

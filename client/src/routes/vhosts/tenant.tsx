@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ExternalLink, Loader2, Lock, Power, PowerOff, Search } from "lucide-react";
 import { toast } from "sonner";
 
-import { EmptyBanner, HostLink, type HostHealth, type HostRow, rowTint, StatusChip, suppressHost, summarizeError, UnreachableChip, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type HostHealth, type HostRow, NoCertBadge, rowTint, StatusChip, suppressHost, summarizeError, UnreachableChip, ViewHeader } from "./shared";
 
 // Stack dashboard host per server_stack — the deep-link target for "Manage in
 // stack" (tenant rows are stack-owned; edits/deletes happen there, not here).
@@ -140,6 +140,7 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                                                 <td className="px-4 py-3">
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         <StatusChip status={h.status} />
+                                                        {h.status === "disabled" ? <NoCertBadge /> : null}
                                                         <UnreachableChip health={health[h.hostname]} />
                                                     </div>
                                                 </td>

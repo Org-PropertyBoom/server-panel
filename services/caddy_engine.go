@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -200,6 +201,52 @@ func (v *VhostEngineService) SetOnDemandTLS(enabled bool) error {
 	return v.settings.Set(onDemandTLSSettingKey, strconv.FormatBool(enabled))
 }
 
+const (
+	originCertPathKey = "vhost_origin_cert_path"
+	originKeyPathKey  = "vhost_origin_key_path"
+)
+
+// OriginCertPaths returns the global default Cloudflare Origin cert + key paths
+// used by cf_origin hosts that don't set their own. One cert can list hostnames
+// from both zones (propertyweb.co + propertyboom.co).
+func (v *VhostEngineService) OriginCertPaths() (cert, key string) {
+	return v.settings.Get(originCertPathKey, ""), v.settings.Get(originKeyPathKey, "")
+}
+
+// SetOriginCertPaths persists the global default Origin cert + key paths (absolute).
+// Takes effect on the next Reconcile.
+func (v *VhostEngineService) SetOriginCertPaths(cert, key string) error {
+	cert, key = strings.TrimSpace(cert), strings.TrimSpace(key)
+	if cert != "" && !filepath.IsAbs(cert) {
+		return errors.New("origin cert path must be absolute")
+	}
+	if key != "" && !filepath.IsAbs(key) {
+		return errors.New("origin key path must be absolute")
+	}
+	if err := v.settings.Set(originCertPathKey, cert); err != nil {
+		return err
+	}
+	return v.settings.Set(originKeyPathKey, key)
+}
+
+// SetHostTLSMode sets a host's TLS mode (ondemand | cf_origin) with optional
+// per-host cert/key override, then reconciles so the change renders + reloads
+// through the safe path. cf_origin serves a static Origin cert; ondemand returns
+// the host to gated on-demand LE. GATED by live-reconcile like every write.
+func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, certPath, keyPath string) (reconcile.Result, error) {
+	if !v.LiveReloadEnabled() {
+		return reconcile.Result{Error: liveGateMsg}, errLiveGate
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return reconcile.Result{Error: "host is required"}, errors.New("host is required")
+	}
+	if err := v.settings.SetHostTLSMode(host, mode, certPath, keyPath); err != nil {
+		return reconcile.Result{Error: err.Error()}, err
+	}
+	return v.Reconcile(ctx)
+}
+
 // certAskCacheTTL is how long a positive ask answer is trusted before re-checking
 // the DB. Short, because a host can be disabled/suppressed at any time.
 const certAskCacheTTL = 45 * time.Second
@@ -302,6 +349,7 @@ type ManageRow struct {
 	SoftDeleted bool              `json:"softDeleted"`
 	Headers     map[string]string `json:"headers,omitempty"`    // system hosts only: panel-local response headers
 	Suppressed  bool              `json:"suppressed,omitempty"` // operator edge-disabled at Caddy (redirects UI)
+	TLSMode     string            `json:"tlsMode,omitempty"`    // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
 }
 
 // ManageSets is the editable slice of desired state: the panel-owned system hosts
@@ -319,7 +367,9 @@ type VhostStateResult struct {
 	Source      string                  `json:"source,omitempty"`
 	VhostsDir   string                  `json:"vhostsDir"`
 	LiveReload  bool                    `json:"liveReload"`
-	OnDemandTLS bool                    `json:"onDemandTls"` // host files render tls{on_demand} (traffic-driven issuance)
+	OnDemandTLS bool                    `json:"onDemandTls"`          // host files render tls{on_demand} (traffic-driven issuance)
+	OriginCert  string                  `json:"originCert,omitempty"` // global default Cloudflare Origin cert path (cf_origin hosts)
+	OriginKey   string                  `json:"originKey,omitempty"`  // global default Cloudflare Origin key path
 	Message     string                  `json:"message,omitempty"`
 	Error       string                  `json:"error,omitempty"`
 	DryRun      *reconcile.DryRunResult `json:"dryRun,omitempty"`
@@ -352,6 +402,7 @@ type PinnedRow struct {
 // anything. Failure modes are returned in the result (never a 500).
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), OnDemandTLS: v.OnDemandTLSEnabled(), HealthOn: v.health.Enabled()}
+	out.OriginCert, out.OriginKey = v.OriginCertPaths()
 	out.Health = v.health.Snapshot()
 	out.Protected, out.ProtectedWarning = v.protectedRows()
 
@@ -379,6 +430,8 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // so dry-run render matches what reconcile will write
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // edge-disabled tenants → shown "disabled"
 	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // render tls{on_demand} to match reconcile
+	snap.TLSModes, _ = v.settings.AllHostTLSModes()        // per-host cf_origin overrides
+	snap.DefaultOriginCert, snap.DefaultOriginKey = v.OriginCertPaths()
 
 	dry, err := v.engine.DryRun(snap)
 	if err != nil {
@@ -458,6 +511,7 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 	m := &ManageSets{SystemHosts: []ManageRow{}, Redirects: []ManageRow{}, Stacks: v.cfg.Stacks(), Upstreams: v.containerUpstreams()}
 	headers, _ := v.settings.AllVhostHeaders()    // panel-local; nil on error → no headers shown
 	suppressed, _ := v.settings.SuppressedHosts() // panel-local edge-disable
+	tlsModes, _ := v.settings.AllHostTLSModes()   // panel-local per-host cf_origin overrides
 	for _, r := range snap.Rows {
 		if r.SoftDeleted {
 			continue
@@ -468,13 +522,13 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 			m.SystemHosts = append(m.SystemHosts, ManageRow{
 				ID: r.ID, Host: r.Host, ServerStack: r.ServerStack, Target: r.Target,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
-				Headers: headers[key], Suppressed: suppressed[key],
+				Headers: headers[key], Suppressed: suppressed[key], TLSMode: tlsModes[key].Mode,
 			})
 		case "platform_redirect_hosts":
 			m.Redirects = append(m.Redirects, ManageRow{
 				ID: r.ID, Host: r.Host, Target: r.Target, Code: r.Code,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
-				Suppressed: suppressed[key],
+				Suppressed: suppressed[key], TLSMode: tlsModes[key].Mode,
 			})
 		}
 	}
@@ -625,6 +679,8 @@ func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, e
 	snap.ResponseHeaders, _ = v.settings.AllVhostHeaders() // panel-local; rendered into system host blocks
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // panel-local edge-disable
 	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // panel-local; renders tls{on_demand}
+	snap.TLSModes, _ = v.settings.AllHostTLSModes()        // panel-local; per-host cf_origin overrides
+	snap.DefaultOriginCert, snap.DefaultOriginKey = v.OriginCertPaths()
 	return v.engine.Reconcile(ctx, snap)
 }
 
@@ -753,9 +809,10 @@ func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostFor
 	if herr := v.settings.SetVhostHeaders(in.Host, cleanHeaders); herr != nil {
 		return herr
 	}
-	// On a host rename, drop the old key so stale headers don't linger.
+	// On a host rename, drop the old keys so stale headers / TLS mode don't linger.
 	if oldHost != "" && normalizeHostKey(oldHost) != normalizeHostKey(in.Host) {
 		_ = v.settings.DeleteVhostHeaders(oldHost)
+		_ = v.settings.DeleteHostTLSMode(oldHost)
 	}
 	return nil
 }

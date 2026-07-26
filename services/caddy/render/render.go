@@ -60,20 +60,33 @@ type Host struct {
 	// instead of trying at startup for every configured domain. NEVER emitted for
 	// wildcard hosts — on-demand issuance can't satisfy a wildcard (needs DNS).
 	OnDemandTLS bool
+	// TLSCertPath/TLSKeyPath, when BOTH set, render a static `tls <cert> <key>`
+	// (Cloudflare Origin cert mode) INSTEAD of on_demand — mutually exclusive. Used
+	// for hosts proxied through Cloudflare, which can't complete an ACME challenge
+	// (it terminates at the CF edge, never reaching Caddy).
+	TLSCertPath string
+	TLSKeyPath  string
 }
 
-// onDemandBlock is the `tls { on_demand … }` snippet, 4-space indented to sit
-// inside a site block. Suppressed for wildcard hosts (on-demand can't issue them).
+// tlsBlock renders the `tls` line for a site, 4-space indented. The two modes are
+// MUTUALLY EXCLUSIVE and Cloudflare-Origin-cert takes precedence:
 //
-// It pins `issuer acme` (Let's Encrypt production — the default ACME CA), which
-// drops Caddy's dead ZeroSSL fallback (retired legacy integration → every attempt
-// logs caddy_legacy_user_removed / code 2977). The ACME account email is inherited
-// from the global Caddyfile `email` option, so it isn't repeated per host.
-func onDemandBlock(host string, on bool) string {
-	if !on || strings.HasPrefix(normalizeHost(host), "*.") {
-		return ""
+//   - certPath+keyPath both set → `tls <cert> <key>` (cf_origin): the host is
+//     proxied through Cloudflare and serves a static Origin cert; it must NOT also
+//     carry on_demand, since a proxied host can't complete an ACME challenge.
+//   - else on_demand → `tls { on_demand … }` with `issuer acme` pinned (Let's
+//     Encrypt production; drops the dead ZeroSSL fallback / code 2977). The ACME
+//     email is inherited from the global Caddyfile `email` option. Never emitted
+//     for wildcard hosts (on-demand can't satisfy a wildcard — needs DNS).
+//   - else "" (no tls line → Caddy's default automatic HTTPS).
+func tlsBlock(host string, onDemand bool, certPath, keyPath string) string {
+	if certPath != "" && keyPath != "" {
+		return "    tls " + certPath + " " + keyPath + "\n"
 	}
-	return "    tls {\n        on_demand\n        issuer acme\n    }\n"
+	if onDemand && !strings.HasPrefix(normalizeHost(host), "*.") {
+		return "    tls {\n        on_demand\n        issuer acme\n    }\n"
+	}
+	return ""
 }
 
 // FileName is the flat-folder filename for a host: "<host>.caddy", with a
@@ -115,13 +128,13 @@ func Render(h Host) (name string, contents string, err error) {
 		if up == "" {
 			return "", "", fmt.Errorf("render: %s host %q has no upstream target", h.Kind, host)
 		}
-		return FileName(host), proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock, onDemandBlock(host, h.OnDemandTLS)), nil
+		return FileName(host), proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
 	case KindRedirect:
 		target := strings.TrimSpace(h.Target)
 		if target == "" {
 			return "", "", fmt.Errorf("render: redirect host %q has no target URL", host)
 		}
-		return FileName(host), redirectSnippet(host, target, h.RedirectCode, onDemandBlock(host, h.OnDemandTLS)), nil
+		return FileName(host), redirectSnippet(host, target, h.RedirectCode, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
 	default:
 		return "", "", fmt.Errorf("render: unknown kind %d for host %q", h.Kind, host)
 	}

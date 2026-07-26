@@ -71,6 +71,23 @@ func TestRender_OnDemandTLS(t *testing.T) {
 	}
 }
 
+func TestRender_CFOrigin(t *testing.T) {
+	// cf_origin renders a static `tls <cert> <key>` and takes precedence over
+	// on_demand (mutually exclusive) even when OnDemandTLS is also set.
+	_, body, err := Render(Host{
+		Host: "grafana.propertyweb.co", Kind: KindSystem, Target: "127.0.0.1:3000",
+		OnDemandTLS: true,
+		TLSCertPath: "/etc/caddy/cf-origin/propertyweb.pem", TLSKeyPath: "/etc/caddy/cf-origin/propertyweb.key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "grafana.propertyweb.co {\n    tls /etc/caddy/cf-origin/propertyweb.pem /etc/caddy/cf-origin/propertyweb.key\n    reverse_proxy 127.0.0.1:3000\n}\n"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
 func TestRender_OnDemandTLS_SkippedForWildcard(t *testing.T) {
 	// On-demand issuance can't satisfy a wildcard (needs DNS) — never emit it.
 	_, body, err := Render(Host{Host: "*.example.com", Kind: KindTenant, Target: "127.0.0.1:8005", OnDemandTLS: true})

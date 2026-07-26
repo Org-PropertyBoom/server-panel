@@ -1,16 +1,16 @@
 import { useState } from "react";
-import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Power, PowerOff, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Power, PowerOff, Shield, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, suppressHost, summarizeError, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, setHostTlsMode, suppressHost, summarizeError, type Upstream, ViewHeader } from "./shared";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
 // The pinned domains (derived from the ACTUAL Caddyfile) show as read-only rows on
 // top — they ARE App/System hosts, just static blocks, not DB-reconciled — with a
 // drift flag vs what the reload actually guards.
-export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; onSaved: () => void }) {
+export default function SystemView({ rows, upstreams, pinned, pinnedWarning, originCert, originKey, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; originCert?: string; originKey?: string; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
     const [removeBlock, setRemoveBlock] = useState<PinnedRow | null>(null);
     const [removing, setRemoving] = useState(false);
@@ -18,6 +18,23 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
     const [unpinRow, setUnpinRow] = useState<PinnedRow | null>(null);
     const [converting, setConverting] = useState(false);
     const [suppressBusy, setSuppressBusy] = useState("");
+    const [tlsRow, setTlsRow] = useState<ManageRow | null>(null); // TLS-mode confirm target
+    const [tlsBusy, setTlsBusy] = useState("");
+    const [originOpen, setOriginOpen] = useState(false);
+    const originConfigured = Boolean(originCert && originKey);
+
+    // Switch a host between on-demand LE and a Cloudflare Origin cert (cf_origin),
+    // then reconcile. cf_origin is for hosts proxied through Cloudflare.
+    const applyTlsMode = async (host: string, mode: string) => {
+        setTlsBusy(host);
+        const res = await setHostTlsMode(host, mode);
+        if (res.error) toast.error(summarizeError(res.error));
+        else if (res.reloaded) toast.success(`${host} → ${mode === "cf_origin" ? "Cloudflare Origin cert" : "on-demand LE"}`);
+        else toast.error("TLS mode not applied");
+        setTlsBusy("");
+        setTlsRow(null);
+        onSaved();
+    };
 
     // Edge disable/enable (suppress) — served = Active AND not suppressed.
     const toggleSuppress = async (host: string, suppressed: boolean) => {
@@ -104,17 +121,29 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                 title="System hosts"
                 subtitle="platform_hosts — panel-owned reverse proxies. Edits save to the database; they go live on the next reconcile."
                 actions={
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        onClick={() => setEdit({ id: 0, host: "", serverStack: "", target: "", isActive: true, softDeleted: false })}
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add system host
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOriginOpen(true)} title="Cloudflare Origin cert paths (for cf_origin hosts)">
+                            <Shield className={`h-3.5 w-3.5 ${originConfigured ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                            Origin cert
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => setEdit({ id: 0, host: "", serverStack: "", target: "", isActive: true, softDeleted: false })}
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add system host
+                        </Button>
+                    </div>
                 }
             />
+            {rows.some((r) => r.tlsMode === "cf_origin") && !originConfigured ? (
+                <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>A host is set to <b>CF Origin</b> but no Origin cert/key path is configured — those hosts are skipped at reconcile. Set the paths via <b>Origin cert</b>.</span>
+                </div>
+            ) : null}
             {pinnedWarning ? (
                 <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -130,6 +159,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                 <th className="px-4 py-2.5 font-medium">Service</th>
                                 <th className="px-4 py-2.5 font-medium">Upstream</th>
                                 <th className="px-4 py-2.5 font-medium">State</th>
+                                <th className="px-4 py-2.5 font-medium">TLS</th>
                                 <th className="px-4 py-2.5 text-right font-medium">Actions</th>
                             </tr>
                         </thead>
@@ -162,6 +192,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                             <Pill tone="ok">Protected</Pill>
                                         )}
                                     </td>
+                                    <td className="px-4 py-2.5 text-muted-foreground/50" title="Pinned static blocks manage their own TLS in the main Caddyfile">—</td>
                                     <td className="px-4 py-2.5 text-right">
                                         {p.drift === "unmanaged" ? (
                                             <div className="flex justify-end gap-1">
@@ -199,7 +230,28 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                                     <td className="px-4 py-2.5 font-mono text-muted-foreground">{r.target}</td>
                                     <td className="px-4 py-2.5">{r.suppressed ? <Pill tone="warn">Disabled · edge</Pill> : r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
                                     <td className="px-4 py-2.5">
+                                        {!r.isActive || r.suppressed ? (
+                                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400" title="Disabled/edge-off hosts are refused a certificate (the tls-ask endpoint returns 403) — TLS handshakes to them fail by design.">
+                                                <AlertTriangle className="h-3 w-3" /> No cert · disabled
+                                            </span>
+                                        ) : r.tlsMode === "cf_origin" ? (
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400" title="Serves a static Cloudflare Origin certificate (proxied through Cloudflare)">
+                                                <ShieldCheck className="h-3 w-3" /> CF Origin
+                                            </span>
+                                        ) : (
+                                            <span className="text-[11px] text-muted-foreground" title="On-demand Let's Encrypt (issued on first visit, authorized by the tls-ask endpoint)">On-demand</span>
+                                        )}
+                                    </td>
+                                    <td className="px-4 py-2.5">
                                         <div className="flex justify-end gap-1">
+                                            <button
+                                                onClick={() => setTlsRow(r)}
+                                                disabled={tlsBusy === r.host}
+                                                className={`rounded p-1.5 ${r.tlsMode === "cf_origin" ? "text-sky-600 hover:bg-sky-500/10 dark:text-sky-400" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
+                                                title={r.tlsMode === "cf_origin" ? "Switch back to on-demand Let's Encrypt" : "Switch to Cloudflare Origin cert (for a CF-proxied host)"}
+                                            >
+                                                {tlsBusy === r.host ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}
+                                            </button>
                                             <button
                                                 onClick={() => toggleSuppress(r.host, !r.suppressed)}
                                                 disabled={suppressBusy === r.host}
@@ -229,7 +281,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                             ))}
                             {rows.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
+                                    <td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">
                                         No editable system hosts yet — use “Add system host”.
                                     </td>
                                 </tr>
@@ -328,7 +380,95 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, onS
                     </div>
                 </Modal>
             ) : null}
+
+            {tlsRow ? (
+                (() => {
+                    const toCF = tlsRow.tlsMode !== "cf_origin";
+                    return (
+                        <Modal onClose={() => (tlsBusy ? null : setTlsRow(null))} title={toCF ? `Switch ${tlsRow.host} to Cloudflare Origin cert?` : `Switch ${tlsRow.host} back to on-demand?`}>
+                            {toCF ? (
+                                <>
+                                    <p className="text-xs text-muted-foreground">
+                                        Renders <code>tls &lt;cert&gt; &lt;key&gt;</code> instead of <code>tls {"{"} on_demand {"}"}</code> — a static Cloudflare Origin
+                                        certificate. Use this <b>only for a host proxied through Cloudflare</b>: a proxied host can't complete an ACME
+                                        challenge (it terminates at the CF edge), so on-demand LE would fail. The two modes are mutually exclusive.
+                                    </p>
+                                    {!originConfigured ? (
+                                        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                            <span>No Origin cert/key path is set yet — set it under <b>Origin cert</b> first, or this host is skipped at reconcile.</span>
+                                        </div>
+                                    ) : (
+                                        <p className="mt-2 font-mono text-[11px] text-muted-foreground">uses {originCert} + {originKey}</p>
+                                    )}
+                                    <p className="mt-2 text-[11px] text-muted-foreground">Reconciles immediately (validated adapt → reload). Reversible — flip it back any time.</p>
+                                </>
+                            ) : (
+                                <p className="text-xs text-muted-foreground">
+                                    Returns <b>{tlsRow.host}</b> to <code>tls {"{"} on_demand {"}"}</code> (on-demand Let's Encrypt). Do this only after the host is
+                                    <b> no longer proxied through Cloudflare</b> — otherwise ACME will fail at the edge. Reconciles immediately.
+                                </p>
+                            )}
+                            <div className="mt-5 flex justify-end gap-2">
+                                <Button variant="outline" size="sm" onClick={() => setTlsRow(null)} disabled={Boolean(tlsBusy)}>Cancel</Button>
+                                <Button size="sm" className="gap-2" onClick={() => applyTlsMode(tlsRow.host, toCF ? "cf_origin" : "ondemand")} disabled={Boolean(tlsBusy)}>
+                                    {tlsBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                                    {toCF ? "Use CF Origin cert" : "Use on-demand"}
+                                </Button>
+                            </div>
+                        </Modal>
+                    );
+                })()
+            ) : null}
+
+            {originOpen ? <OriginCertModal cert={originCert ?? ""} keyPath={originKey ?? ""} onClose={() => setOriginOpen(false)} onSaved={() => { setOriginOpen(false); onSaved(); }} /> : null}
         </div>
+    );
+}
+
+// OriginCertModal sets the global Cloudflare Origin cert + key paths (absolute) that
+// cf_origin hosts fall back to. One cert can list hostnames from both zones.
+function OriginCertModal({ cert, keyPath, onClose, onSaved }: { cert: string; keyPath: string; onClose: () => void; onSaved: () => void }) {
+    const [c, setC] = useState(cert);
+    const [k, setK] = useState(keyPath);
+    const [saving, setSaving] = useState(false);
+    const save = async () => {
+        setSaving(true);
+        try {
+            const res = await fetch("/post/vhost/origin-cert", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cert: c.trim(), key: k.trim() }),
+            });
+            if (!res.ok) {
+                toast.error((await res.text()).trim() || res.statusText);
+                return;
+            }
+            toast.success("Origin cert paths saved — Reconcile to apply");
+            onSaved();
+        } catch (err) {
+            toast.error(`Save failed: ${String(err)}`);
+        } finally {
+            setSaving(false);
+        }
+    };
+    return (
+        <Modal onClose={onClose} title="Cloudflare Origin certificate">
+            <p className="text-xs text-muted-foreground">
+                Absolute paths to the Cloudflare Origin cert + key on this host. Used by every <b>CF Origin</b> host that doesn't set its own.
+                One Origin cert can list hostnames from both zones (propertyweb.co + propertyboom.co). Create it in the Cloudflare dashboard
+                (SSL/TLS → Origin Server) and install the files on the host first.
+            </p>
+            <div className="mt-3 space-y-3">
+                <Field label="Certificate path">
+                    <input value={c} onChange={(e) => setC(e.target.value)} placeholder="/etc/caddy/cf-origin/origin.pem" className={`${inputCls} font-mono`} autoFocus />
+                </Field>
+                <Field label="Private key path">
+                    <input value={k} onChange={(e) => setK(e.target.value)} placeholder="/etc/caddy/cf-origin/origin.key" className={`${inputCls} font-mono`} />
+                </Field>
+            </div>
+            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={false} />
+        </Modal>
     );
 }
 

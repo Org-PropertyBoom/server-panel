@@ -56,6 +56,23 @@ type Snapshot struct {
 	// panel-local setting; requires the global `on_demand_tls ask` block in the main
 	// Caddyfile. Default false (unchanged rendering).
 	OnDemandTLS bool
+	// TLSModes are per-host TLS overrides (panel-local), keyed by host. A host with
+	// Mode "cf_origin" renders `tls <cert> <key>` INSTEAD of on_demand (mutually
+	// exclusive) — for hosts proxied through Cloudflare. Absent host = on-demand.
+	TLSModes map[string]TLSOverride
+	// DefaultOriginCert/Key are the fallback Cloudflare Origin cert + key paths used
+	// by cf_origin hosts that don't set their own (one cert can list both zones).
+	DefaultOriginCert string
+	DefaultOriginKey  string
+}
+
+// TLSOverride is one host's panel-local TLS mode. Mode "cf_origin" pins a static
+// Origin cert (CertPath/KeyPath, or the snapshot defaults when empty); any other
+// value falls back to the on-demand behavior.
+type TLSOverride struct {
+	Mode     string
+	CertPath string
+	KeyPath  string
 }
 
 // DB is a thin read-only handle to the shared propertyteam MySQL.

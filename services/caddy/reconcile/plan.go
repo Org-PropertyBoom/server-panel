@@ -126,7 +126,25 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 			skips = append(skips, Skip{r.Table, host, reason})
 			continue
 		}
-		h.OnDemandTLS = snap.OnDemandTLS // traffic-driven issuance (gated); no-op for wildcards
+		// Per-host TLS mode: cf_origin renders a static Origin cert (mutually
+		// exclusive with on_demand — a CF-proxied host can't do ACME); anything
+		// else falls back to the gated on-demand behavior.
+		if ov, ok := snap.TLSModes[host]; ok && ov.Mode == "cf_origin" {
+			cert, key := ov.CertPath, ov.KeyPath
+			if cert == "" {
+				cert = snap.DefaultOriginCert
+			}
+			if key == "" {
+				key = snap.DefaultOriginKey
+			}
+			if cert == "" || key == "" {
+				skips = append(skips, Skip{r.Table, host, "cf_origin TLS selected but no Origin cert/key configured (set the global paths or a per-host override)"})
+				continue
+			}
+			h.TLSCertPath, h.TLSKeyPath = cert, key
+		} else {
+			h.OnDemandTLS = snap.OnDemandTLS // traffic-driven issuance (gated); no-op for wildcards
+		}
 		_, contents, err := render.Render(h)
 		if err != nil {
 			skips = append(skips, Skip{r.Table, host, "render: " + err.Error()})

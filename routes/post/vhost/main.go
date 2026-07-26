@@ -343,6 +343,56 @@ func SuppressHandler(sessions *services.SessionService, engine *services.VhostEn
 	})
 }
 
+// TLSModeHandler sets a host's TLS mode (ondemand | cf_origin) with an optional
+// per-host cert/key override, then reconciles. cf_origin serves a static Cloudflare
+// Origin cert (for proxied hosts); ondemand returns it to on-demand LE. Returns the
+// reconcile Result.
+func TLSModeHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host     string `json:"host"`
+			Mode     string `json:"mode"`
+			CertPath string `json:"certPath"`
+			KeyPath  string `json:"keyPath"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Host) == "" {
+			http.Error(w, "host is required", http.StatusBadRequest)
+			return
+		}
+		res, _ := engine.SetHostTLSMode(r.Context(), body.Host, body.Mode, body.CertPath, body.KeyPath)
+		writeJSON(w, res)
+	})
+}
+
+// OriginCertHandler persists the global default Cloudflare Origin cert + key paths
+// (absolute) that cf_origin hosts fall back to. Takes effect on the next Reconcile.
+func OriginCertHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Cert string `json:"cert"`
+			Key  string `json:"key"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := engine.SetOriginCertPaths(body.Cert, body.Key); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cert, key := engine.OriginCertPaths()
+		writeJSON(w, map[string]string{"originCert": cert, "originKey": key})
+	})
+}
+
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {

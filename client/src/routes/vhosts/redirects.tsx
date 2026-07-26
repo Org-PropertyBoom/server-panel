@@ -3,7 +3,7 @@ import { Loader2, Pencil, Plus, Power, PowerOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { EmptyBanner, HostLink, type ManageRow, Pill, suppressHost, summarizeError, UrlLink, ViewHeader } from "./shared";
+import { EmptyBanner, HostLink, type ManageRow, NoCertBadge, Pill, suppressHost, summarizeError, UrlLink, ViewHeader } from "./shared";
 import RedirectForm from "./redirect-form";
 
 // RedirectsView manages platform_redirect_hosts — host → URL redirects answered at
@@ -81,7 +81,12 @@ export default function RedirectsView({ rows, onSaved }: { rows: ManageRow[]; on
                                             <UrlLink url={r.target} />
                                         </td>
                                         <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{r.code}</td>
-                                        <td className="px-4 py-2.5">{r.suppressed ? <Pill tone="warn">Disabled · edge</Pill> : r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}</td>
+                                        <td className="px-4 py-2.5">
+                                            <div className="flex items-center gap-2">
+                                                {r.suppressed ? <Pill tone="warn">Disabled · edge</Pill> : r.isActive ? <Pill tone="ok">Active</Pill> : <Pill tone="warn">Disabled</Pill>}
+                                                {!r.isActive || r.suppressed ? <NoCertBadge /> : null}
+                                            </div>
+                                        </td>
                                         <td className="px-4 py-2.5">
                                             <div className="flex justify-end gap-1">
                                                 <button

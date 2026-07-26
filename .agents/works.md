@@ -23,6 +23,18 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-26 - Per-host TLS mode (ondemand | cf_origin) — Cloudflare Stage 1 enabler
+
+- Goal (hub orchestration, Owner nod): enable putting Cloudflare in front of Caddy per-host. A CF-PROXIED host can't complete an ACME challenge (terminates at the CF edge) → must serve a static CF Origin cert AND be excluded from on-demand. The two are MUTUALLY EXCLUSIVE per host — that collision is the failure mode. `propertyweb.co` zone is live on CF (grey-cloud); this feature unblocks proxying.
+- Model: panel-local `vhost_tls_modes` SQLite table (host→mode+optional cert/key), same pattern as suppress/headers (shared MySQL is read-only, never migrated). Absent row = `ondemand` (today's behavior, zero change for existing rows). `cf_origin` renders `tls <cert> <key>`.
+- Render (`services/caddy/render`): `onDemandBlock`→`tlsBlock(host, onDemand, certPath, keyPath)` — cert+key set → `tls <cert> <key>` (takes precedence); else on_demand → `tls { on_demand; issuer acme }` (wildcard-skipped); else nothing. MUTUAL EXCLUSION enforced by branch order. plan.go resolves per-host mode from `snap.TLSModes` + falls back to global default paths; a cf_origin host with no cert/key resolvable is SKIPPED with a clear reason (never emits a broken `tls` line). +TestRender_CFOrigin.
+- Two zones: global default cert/key paths (settings `vhost_origin_cert_path`/`_key_path`; one CF Origin cert can list both propertyweb.co + propertyboom.co hostnames) + optional per-host override in the table. No single-zone hardcode.
+- Engine (`caddy_engine.go`): `OriginCertPaths`/`SetOriginCertPaths` (abs-path validated), `SetHostTLSMode(ctx,host,mode,cert,key)` (GATED reconcile like SuppressHost), snapshot injection in Reconcile+State, `ManageRow.TLSMode`, `VhostStateResult.OriginCert/Key`, TLS-mode cleanup on system-host rename. Store: `services/vhost_tls_store.go` (AllHostTLSModes→map[string]caddydb.TLSOverride, SetHostTLSMode, DeleteHostTLSMode). `db.Snapshot.TLSModes/DefaultOriginCert/DefaultOriginKey` + `db.TLSOverride`.
+- Routes: `POST /post/vhost/tls-mode` (TLSModeHandler), `POST /post/vhost/origin-cert` (OriginCertHandler).
+- UI (system.tsx): new **TLS column** (On-demand / **CF Origin** badge / **No cert · disabled** marker), a Shield toggle → confirm modal (explains CF-proxied-only + mutual exclusion + reversible), an **Origin cert** header button → modal to set the global cert/key paths, and an amber banner when a cf_origin host exists but no cert configured. Shared `NoCertBadge` also added to redirect + tenant state cells (the hub's SMALL ADDITION — makes the disable→no-TLS consequence visible; the go1/go2/go3 debugging pain was a disabled row whose ask returned 403 → opaque `tlsv1 alert internal error`). shared.tsx: ManageRow.tlsMode, VhostState.originCert/Key, `setHostTlsMode` helper.
+- PILOT (next, after deploy): grafana.propertyweb.co → set cf_origin → reconcile → Owner orange-clouds it Full(strict) → verify chain is CF's → report wiring to hub. Owner provides the CF Origin cert+key + installs on host.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; render+reconcile tests pass; services test compiles for linux; client tsc 0; `npm run build` OK. NOT YET DEPLOYED — needs the STEP-1 deploy (issuer acme + this) then reconcile.
+
 ### 2026-07-26 - Pin issuer acme in the on-demand template (drop dead ZeroSSL)
 
 - Goal (Owner, after step-c on-demand rollout went live): kill the `caddy_legacy_user_removed (code 2977)` noise — ZeroSSL retired the legacy Caddy integration, so it's a dead fallback issuer that every ACME attempt wastes a try on. (Largely moot once the retry storm stopped, but pin it so ZeroSSL is NEVER attempted.)

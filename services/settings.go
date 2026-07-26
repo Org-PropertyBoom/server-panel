@@ -69,6 +69,20 @@ func NewSettingsService() (*SettingsService, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Per-host TLS mode (panel-local). Absent row = "ondemand" (Let's Encrypt via the
+	// on-demand template). "cf_origin" renders a static `tls <cert> <key>` instead — for
+	// hosts proxied through Cloudflare, which can't complete an ACME challenge (it
+	// terminates at the CF edge). cert_path/key_path override the global default paths.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vhost_tls_modes (
+		host TEXT PRIMARY KEY,
+		mode TEXT NOT NULL DEFAULT 'ondemand',
+		cert_path TEXT NOT NULL DEFAULT '',
+		key_path TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	for oldKey, newKey := range map[string]string{
 		"app_name": "general_app_name", "color_mode": "general_color_mode", "header_apps": "apps_header",
 	} {
