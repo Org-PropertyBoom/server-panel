@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -241,10 +243,54 @@ func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, cer
 	if host == "" {
 		return reconcile.Result{Error: "host is required"}, errors.New("host is required")
 	}
+	// Guard: for cf_origin, the EFFECTIVE cert (per-host override, else the global
+	// default) must actually cover this hostname — otherwise a proxied host would
+	// serve the wrong zone's Origin cert and fail with an opaque TLS error. Block
+	// early with a clear message instead of discovering it as a broken site.
+	if strings.EqualFold(strings.TrimSpace(mode), TLSModeCFOrigin) {
+		cert := strings.TrimSpace(certPath)
+		if cert == "" {
+			cert, _ = v.OriginCertPaths()
+		}
+		if err := verifyOriginCertCoversHost(cert, host); err != nil {
+			return reconcile.Result{Error: err.Error()}, err
+		}
+	}
 	if err := v.settings.SetHostTLSMode(host, mode, certPath, keyPath); err != nil {
 		return reconcile.Result{Error: err.Error()}, err
 	}
 	return v.Reconcile(ctx)
+}
+
+// verifyOriginCertCoversHost reads the PEM cert at certPath and checks it is valid
+// for host (SAN/CN name match, wildcard-aware). Guards against handing a host the
+// wrong zone's Origin cert. A missing/unreadable/unparseable cert, or a name that
+// the cert doesn't cover, returns a clear error. Runs on the host, where the cert
+// files live.
+func verifyOriginCertCoversHost(certPath, host string) error {
+	if certPath == "" {
+		return errors.New("no Origin cert configured — set a per-host cert/key path or the global default first")
+	}
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return fmt.Errorf("cannot read Origin cert at %s: %w", certPath, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return fmt.Errorf("Origin cert at %s is not valid PEM", certPath)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("cannot parse Origin cert at %s: %w", certPath, err)
+	}
+	if err := cert.VerifyHostname(host); err != nil {
+		covers := strings.Join(cert.DNSNames, ", ")
+		if covers == "" {
+			covers = cert.Subject.CommonName
+		}
+		return fmt.Errorf("the Origin cert at %s does not cover %s (it covers: %s) — use the right zone's cert", certPath, host, covers)
+	}
+	return nil
 }
 
 // certAskCacheTTL is how long a positive ask answer is trusted before re-checking
@@ -347,9 +393,11 @@ type ManageRow struct {
 	Code        int               `json:"code,omitempty"`
 	IsActive    bool              `json:"isActive"`
 	SoftDeleted bool              `json:"softDeleted"`
-	Headers     map[string]string `json:"headers,omitempty"`    // system hosts only: panel-local response headers
-	Suppressed  bool              `json:"suppressed,omitempty"` // operator edge-disabled at Caddy (redirects UI)
-	TLSMode     string            `json:"tlsMode,omitempty"`    // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
+	Headers     map[string]string `json:"headers,omitempty"`     // system hosts only: panel-local response headers
+	Suppressed  bool              `json:"suppressed,omitempty"`  // operator edge-disabled at Caddy (redirects UI)
+	TLSMode     string            `json:"tlsMode,omitempty"`     // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
+	TLSCertPath string            `json:"tlsCertPath,omitempty"` // per-host Origin cert override ("" = use global default)
+	TLSKeyPath  string            `json:"tlsKeyPath,omitempty"`  // per-host Origin key override
 }
 
 // ManageSets is the editable slice of desired state: the panel-owned system hosts
@@ -522,7 +570,8 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 			m.SystemHosts = append(m.SystemHosts, ManageRow{
 				ID: r.ID, Host: r.Host, ServerStack: r.ServerStack, Target: r.Target,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
-				Headers: headers[key], Suppressed: suppressed[key], TLSMode: tlsModes[key].Mode,
+				Headers: headers[key], Suppressed: suppressed[key],
+				TLSMode: tlsModes[key].Mode, TLSCertPath: tlsModes[key].CertPath, TLSKeyPath: tlsModes[key].KeyPath,
 			})
 		case "platform_redirect_hosts":
 			m.Redirects = append(m.Redirects, ManageRow{

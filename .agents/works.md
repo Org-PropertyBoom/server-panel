@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-26 - Expose per-host Origin cert/key + verify the cert covers the host
+
+- Goal (hub follow-up): the tls-mode API already accepted optional certPath/keyPath but the UI didn't surface them. Owner has TWO zones with SEPARATE Origin CA certs (Origin CA is per-zone). Global default = propertyweb.co pair (grafana + media live on it). Without per-host fields, shielding `app/la-app/go-app/rust-app.propertyboom.co` would hand them the propertyweb cert = wrong domain = opaque TLS break. Alternative workaround (one combined cert) would mean replacing a cert already serving live hosts — rejected.
+- UI: inline TLS modal → new stateful `TlsModeModal` with optional **Certificate path** + **Private key path** fields (empty = global default, unchanged behavior), showing the **effective** cert + whether it's per-host or global. TLS column now shows the cert basename under the CF Origin badge ("default cert" / per-host filename / "⚠ no cert"), full path on hover — so a wrong-zone mismatch is visible in the list, not discovered by a broken site. `ManageRow.tlsCertPath/tlsKeyPath` populated from the store; `setHostTlsMode(host, mode, certPath, keyPath)`.
+- GUARD (hub suggested; Owner hit the "wrong cert / wrong mode" class twice): `verifyOriginCertCoversHost` — on switching a host to cf_origin, the panel reads the EFFECTIVE PEM (per-host override else global default), parses it with x509, and calls `cert.VerifyHostname(host)` (SAN/CN, wildcard-aware). A cert that doesn't cover the host is REFUSED with a message naming what it does cover. Also refuses missing/unreadable/non-PEM. So a propertyweb cert can't be attached to a propertyboom host.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; services test compiles for linux; client tsc 0; `npm run build` OK. Stage 1 status: grafana + media.propertyweb.co live on CF Origin (shield ON + Proxied + Full strict, proven); propertyboom hosts stay on-demand until this deploys.
+
 ### 2026-07-26 - Per-host TLS mode (ondemand | cf_origin) — Cloudflare Stage 1 enabler
 
 - Goal (hub orchestration, Owner nod): enable putting Cloudflare in front of Caddy per-host. A CF-PROXIED host can't complete an ACME challenge (terminates at the CF edge) → must serve a static CF Origin cert AND be excluded from on-demand. The two are MUTUALLY EXCLUSIVE per host — that collision is the failure mode. `propertyweb.co` zone is live on CF (grey-cloud); this feature unblocks proxying.

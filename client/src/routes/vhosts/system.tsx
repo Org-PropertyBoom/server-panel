@@ -24,10 +24,11 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
     const originConfigured = Boolean(originCert && originKey);
 
     // Switch a host between on-demand LE and a Cloudflare Origin cert (cf_origin),
-    // then reconcile. cf_origin is for hosts proxied through Cloudflare.
-    const applyTlsMode = async (host: string, mode: string) => {
+    // then reconcile. cf_origin is for hosts proxied through Cloudflare. certPath/
+    // keyPath are an optional per-host override (empty = the global default).
+    const applyTlsMode = async (host: string, mode: string, certPath = "", keyPath = "") => {
         setTlsBusy(host);
-        const res = await setHostTlsMode(host, mode);
+        const res = await setHostTlsMode(host, mode, certPath, keyPath);
         if (res.error) toast.error(summarizeError(res.error));
         else if (res.reloaded) toast.success(`${host} → ${mode === "cf_origin" ? "Cloudflare Origin cert" : "on-demand LE"}`);
         else toast.error("TLS mode not applied");
@@ -235,9 +236,14 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                                                 <AlertTriangle className="h-3 w-3" /> No cert · disabled
                                             </span>
                                         ) : r.tlsMode === "cf_origin" ? (
-                                            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400" title="Serves a static Cloudflare Origin certificate (proxied through Cloudflare)">
-                                                <ShieldCheck className="h-3 w-3" /> CF Origin
-                                            </span>
+                                            <div className="flex flex-col gap-0.5">
+                                                <span className="inline-flex w-fit items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400" title="Serves a static Cloudflare Origin certificate (proxied through Cloudflare)">
+                                                    <ShieldCheck className="h-3 w-3" /> CF Origin
+                                                </span>
+                                                <span className="text-[10px] text-muted-foreground" title={r.tlsCertPath || originCert || "no cert path set"}>
+                                                    {r.tlsCertPath ? certBasename(r.tlsCertPath) : originConfigured ? "default cert" : "⚠ no cert"}
+                                                </span>
+                                            </div>
                                         ) : (
                                             <span className="text-[11px] text-muted-foreground" title="On-demand Let's Encrypt (issued on first visit, authorized by the tls-ask endpoint)">On-demand</span>
                                         )}
@@ -382,47 +388,98 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
             ) : null}
 
             {tlsRow ? (
-                (() => {
-                    const toCF = tlsRow.tlsMode !== "cf_origin";
-                    return (
-                        <Modal onClose={() => (tlsBusy ? null : setTlsRow(null))} title={toCF ? `Switch ${tlsRow.host} to Cloudflare Origin cert?` : `Switch ${tlsRow.host} back to on-demand?`}>
-                            {toCF ? (
-                                <>
-                                    <p className="text-xs text-muted-foreground">
-                                        Renders <code>tls &lt;cert&gt; &lt;key&gt;</code> instead of <code>tls {"{"} on_demand {"}"}</code> — a static Cloudflare Origin
-                                        certificate. Use this <b>only for a host proxied through Cloudflare</b>: a proxied host can't complete an ACME
-                                        challenge (it terminates at the CF edge), so on-demand LE would fail. The two modes are mutually exclusive.
-                                    </p>
-                                    {!originConfigured ? (
-                                        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                            <span>No Origin cert/key path is set yet — set it under <b>Origin cert</b> first, or this host is skipped at reconcile.</span>
-                                        </div>
-                                    ) : (
-                                        <p className="mt-2 font-mono text-[11px] text-muted-foreground">uses {originCert} + {originKey}</p>
-                                    )}
-                                    <p className="mt-2 text-[11px] text-muted-foreground">Reconciles immediately (validated adapt → reload). Reversible — flip it back any time.</p>
-                                </>
-                            ) : (
-                                <p className="text-xs text-muted-foreground">
-                                    Returns <b>{tlsRow.host}</b> to <code>tls {"{"} on_demand {"}"}</code> (on-demand Let's Encrypt). Do this only after the host is
-                                    <b> no longer proxied through Cloudflare</b> — otherwise ACME will fail at the edge. Reconciles immediately.
-                                </p>
-                            )}
-                            <div className="mt-5 flex justify-end gap-2">
-                                <Button variant="outline" size="sm" onClick={() => setTlsRow(null)} disabled={Boolean(tlsBusy)}>Cancel</Button>
-                                <Button size="sm" className="gap-2" onClick={() => applyTlsMode(tlsRow.host, toCF ? "cf_origin" : "ondemand")} disabled={Boolean(tlsBusy)}>
-                                    {tlsBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
-                                    {toCF ? "Use CF Origin cert" : "Use on-demand"}
-                                </Button>
-                            </div>
-                        </Modal>
-                    );
-                })()
+                <TlsModeModal
+                    row={tlsRow}
+                    originCert={originCert ?? ""}
+                    originKey={originKey ?? ""}
+                    busy={Boolean(tlsBusy)}
+                    onApply={applyTlsMode}
+                    onClose={() => setTlsRow(null)}
+                />
             ) : null}
 
             {originOpen ? <OriginCertModal cert={originCert ?? ""} keyPath={originKey ?? ""} onClose={() => setOriginOpen(false)} onSaved={() => { setOriginOpen(false); onSaved(); }} /> : null}
         </div>
+    );
+}
+
+// certBasename shows just the filename of a cert path (the directory is in the title).
+function certBasename(path: string): string {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || path;
+}
+
+// TlsModeModal confirms switching a host's TLS mode. Switching TO cf_origin exposes
+// optional per-host Certificate/Private-key path fields (empty = the global default)
+// and shows the EFFECTIVE cert the host will use, so a wrong-zone mismatch is obvious
+// before it's applied (the backend also blocks a cert that doesn't cover the host).
+function TlsModeModal({
+    row,
+    originCert,
+    originKey,
+    busy,
+    onApply,
+    onClose,
+}: {
+    row: ManageRow;
+    originCert: string;
+    originKey: string;
+    busy: boolean;
+    onApply: (host: string, mode: string, certPath?: string, keyPath?: string) => void;
+    onClose: () => void;
+}) {
+    const toCF = row.tlsMode !== "cf_origin";
+    const [cert, setCert] = useState(row.tlsCertPath ?? "");
+    const [key, setKey] = useState(row.tlsKeyPath ?? "");
+    const effectiveCert = cert.trim() || originCert;
+    const effectiveKey = key.trim() || originKey;
+
+    return (
+        <Modal onClose={() => (busy ? null : onClose())} title={toCF ? `Switch ${row.host} to Cloudflare Origin cert?` : `Switch ${row.host} back to on-demand?`}>
+            {toCF ? (
+                <>
+                    <p className="text-xs text-muted-foreground">
+                        Renders <code>tls &lt;cert&gt; &lt;key&gt;</code> instead of <code>tls {"{"} on_demand {"}"}</code> — a static Cloudflare Origin
+                        certificate. Use this <b>only for a host proxied through Cloudflare</b>: a proxied host can't complete an ACME challenge
+                        (it terminates at the CF edge), so on-demand LE would fail. The two modes are mutually exclusive.
+                    </p>
+                    <div className="mt-3 space-y-2">
+                        <Field label="Certificate path" hint="Leave empty to use the global default. Set a per-host path when this host is on a different zone's Origin cert (e.g. propertyboom vs propertyweb).">
+                            <input value={cert} onChange={(e) => setCert(e.target.value)} placeholder={originCert || "/etc/caddy/cf-origin/…pem"} className={`${inputCls} font-mono`} />
+                        </Field>
+                        <Field label="Private key path">
+                            <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={originKey || "/etc/caddy/cf-origin/…key"} className={`${inputCls} font-mono`} />
+                        </Field>
+                    </div>
+                    {effectiveCert ? (
+                        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                            effective: {effectiveCert} + {effectiveKey}
+                            {cert.trim() ? " (per-host)" : " (global default)"}
+                        </p>
+                    ) : (
+                        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>No cert path — set one here or a global default under <b>Origin cert</b>, or this is rejected.</span>
+                        </div>
+                    )}
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                        The cert must cover <b>{row.host}</b> — the panel verifies this and refuses a wrong-zone cert. Reconciles immediately (validated adapt → reload); reversible.
+                    </p>
+                </>
+            ) : (
+                <p className="text-xs text-muted-foreground">
+                    Returns <b>{row.host}</b> to <code>tls {"{"} on_demand {"}"}</code> (on-demand Let's Encrypt). Do this only after the host is
+                    <b> no longer proxied through Cloudflare</b> — otherwise ACME will fail at the edge. Reconciles immediately.
+                </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+                <Button size="sm" className="gap-2" onClick={() => onApply(row.host, toCF ? "cf_origin" : "ondemand", cert.trim(), key.trim())} disabled={busy}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                    {toCF ? "Use CF Origin cert" : "Use on-demand"}
+                </Button>
+            </div>
+        </Modal>
     );
 }
 
