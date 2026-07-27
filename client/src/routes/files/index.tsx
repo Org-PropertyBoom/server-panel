@@ -380,10 +380,15 @@ function CreateEntryModal({
     const [name, setName] = useState("");
     const [kind, setKind] = useState<"file" | "dir">("file");
     const [busy, setBusy] = useState(false);
+    // Synchronous re-entry guard. `disabled={busy}` alone loses the race: setBusy is
+    // async, so a fast double-click (or Enter held down) fires submit twice before
+    // React re-renders — creating the entry once and erroring the second time.
+    const submitting = useRef(false);
 
     const submit = async () => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (submitting.current || !trimmed) return;
+        submitting.current = true;
         setBusy(true);
         try {
             await onCreate(dir.trim() || "/", trimmed, kind);
@@ -392,6 +397,7 @@ function CreateEntryModal({
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Create failed");
         } finally {
+            submitting.current = false;
             setBusy(false);
         }
     };
@@ -618,12 +624,18 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRen
     const [renaming, setRenaming] = useState(false);
     const [renameTo, setRenameTo] = useState("");
     const [renameBusy, setRenameBusy] = useState(false);
+    // Synchronous guards — see CreateEntryModal: the disabled prop can't stop a
+    // second click that lands before React re-renders.
+    const renameRunning = useRef(false);
+    const deleteRunning = useRef(false);
     const doRename = async () => {
         const name = renameTo.trim();
+        if (renameRunning.current) return;
         if (!name || name === file.name) {
             setRenaming(false);
             return;
         }
+        renameRunning.current = true;
         setRenameBusy(true);
         try {
             await onRename(file.path, name);
@@ -632,10 +644,13 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRen
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Rename failed");
         } finally {
+            renameRunning.current = false;
             setRenameBusy(false);
         }
     };
     const doDelete = async () => {
+        if (deleteRunning.current) return;
+        deleteRunning.current = true;
         setDeleting(true);
         try {
             await onDelete(file.path);
@@ -644,6 +659,7 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRen
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Delete failed");
         } finally {
+            deleteRunning.current = false;
             setDeleting(false);
         }
     };
