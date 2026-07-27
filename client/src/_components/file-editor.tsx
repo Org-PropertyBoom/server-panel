@@ -18,6 +18,11 @@ interface FileEditorProps {
     onNavigate?: (path: string) => void;
     placeholderTitle?: string;
     placeholderDescription?: string;
+    // Multi-tab: the set of open files. When omitted the bar shows just the current
+    // file, so callers that only ever open one keep working unchanged.
+    tabs?: { name: string; path: string }[];
+    onSelectTab?: (path: string) => void;
+    onCloseTab?: (path: string) => void;
 }
 
 function formatBytes(bytes: number) {
@@ -42,6 +47,9 @@ export default function FileEditor({
     onToggleDetails,
     detailsOpen = false,
     onNavigate,
+    tabs,
+    onSelectTab,
+    onCloseTab,
     placeholderTitle = "Ppt Server Panel Editor",
     placeholderDescription = "Select a configuration file or script from the directory tree sidebar to view or edit its contents.",
 }: FileEditorProps) {
@@ -75,7 +83,10 @@ export default function FileEditor({
         }
     };
 
-    if (!fileName && !filePath) {
+    // Empty state only when nothing is open at all — with tabs present but no active
+    // file (e.g. a restored file that couldn't be read), keep the bar so the other
+    // tabs stay reachable.
+    if (!fileName && !filePath && !(tabs && tabs.length > 0)) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-8 select-none bg-slate-950 text-slate-500">
                 <div className="flex flex-col items-center max-w-md text-center gap-6">
@@ -95,17 +106,38 @@ export default function FileEditor({
         <div className="flex-grow flex flex-col h-full overflow-hidden text-slate-200 bg-slate-950">
             {/* Editor Tab Bar */}
             <div className="flex h-10 items-center border-b border-slate-800 bg-slate-900/60 select-none shrink-0">
-                <div className="flex h-full items-center gap-2 px-3 bg-slate-950 border-r border-slate-800 text-xs font-medium text-slate-200 relative">
-                    <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                    <span>{fileName}</span>
-                    {dirty ? <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" /> : null}
-                    {onClose && (
-                        <button onClick={onClose} className="ml-2 p-0.5 rounded text-slate-500 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                            <X className="h-3 w-3" />
-                        </button>
-                    )}
+                <div className="flex h-full min-w-0 flex-1 items-center overflow-x-auto">
+                    {(tabs && tabs.length > 0 ? tabs : [{ name: fileName, path: filePath }]).map((tab) => {
+                        const active = tab.path === filePath;
+                        return (
+                            <div
+                                key={tab.path}
+                                onClick={() => (active ? undefined : onSelectTab?.(tab.path))}
+                                title={tab.path}
+                                className={`flex h-full shrink-0 items-center gap-2 border-r border-slate-800 px-3 text-xs font-medium ${
+                                    active ? "bg-slate-950 text-slate-200" : "cursor-pointer bg-slate-900/40 text-slate-400 hover:text-slate-200"
+                                }`}
+                            >
+                                <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                <span className="max-w-[16rem] truncate">{tab.name}</span>
+                                {active && dirty ? <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" /> : null}
+                                {onCloseTab || onClose ? (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onCloseTab) onCloseTab(tab.path);
+                                            else onClose?.();
+                                        }}
+                                        className="ml-1 rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                                        aria-label={`Close ${tab.name}`}
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                ) : null}
+                            </div>
+                        );
+                    })}
                 </div>
-                <div className="flex-1" />
                 {editable && !editing ? (
                     <button onClick={() => setEditing(true)} className="mr-2 inline-flex items-center gap-1.5 rounded border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-800">
                         <Pencil className="h-3 w-3" /> Edit

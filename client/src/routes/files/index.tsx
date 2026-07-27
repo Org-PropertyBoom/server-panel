@@ -43,6 +43,11 @@ interface DirectoryList {
 
 const apiEndpoint = runtime.isRoot ? "/post/files" : "/api/files";
 
+// Editor session, persisted locally so a reload (or a panel update) reopens what you
+// were working on. Scoped per mode so a root and a user session don't share tabs.
+const OPEN_TABS_KEY = `files_open_tabs_${runtime.isRoot ? "root" : "user"}`;
+const ACTIVE_FILE_KEY = `files_active_file_${runtime.isRoot ? "root" : "user"}`;
+
 export default function FilesRoute() {
     const [homePath, setHomePath] = useState<string>("");
     const [isLoading, setIsLoading] = useState(true);
@@ -66,6 +71,36 @@ export default function FilesRoute() {
     // New file/folder modal
     const [createOpen, setCreateOpen] = useState(false);
     const [createDir, setCreateDir] = useState("/");
+
+    // Open editor tabs, restored across reloads so a refresh (or a panel update)
+    // doesn't lose your place. Only the paths are persisted — contents are re-read
+    // from disk, which is also what keeps a tab honest if the file changed.
+    const [openTabs, setOpenTabs] = useState<{ name: string; path: string }[]>(() => {
+        try {
+            const raw = window.localStorage.getItem(OPEN_TABS_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed.filter((t) => t && typeof t.path === "string") : [];
+        } catch {
+            return [];
+        }
+    });
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(openTabs));
+        } catch {
+            /* private mode / quota — tabs just won't persist */
+        }
+    }, [openTabs]);
+
+    useEffect(() => {
+        try {
+            if (selectedFile) window.localStorage.setItem(ACTIVE_FILE_KEY, selectedFile.path);
+            else window.localStorage.removeItem(ACTIVE_FILE_KEY);
+        } catch {
+            /* ignore */
+        }
+    }, [selectedFile]);
 
     // Initialize root / home directory
     const initExplorer = async () => {
@@ -130,6 +165,7 @@ export default function FilesRoute() {
         } else {
             // Load file content
             setSelectedFile(item);
+            setOpenTabs((prev) => (prev.some((t) => t.path === item.path) ? prev : [...prev, { name: item.name, path: item.path }]));
             setIsContentLoading(true);
             setContentError(null);
             try {
@@ -204,9 +240,23 @@ export default function FilesRoute() {
         const res = await fetch(`${apiEndpoint}?path=${encodeURIComponent(path)}`, { method: "DELETE" });
         if (!res.ok) throw new Error((await res.text()).trim() || "Failed to delete file");
         if (selectedFile?.path === path) setSelectedFile(null);
+        setOpenTabs((prev) => prev.filter((t) => t.path !== path)); // a deleted file can't stay open
         const parent = path.slice(0, path.lastIndexOf("/")) || "/";
         const items = await fetchFolderContents(parent);
         setExpanded((prev) => ({ ...prev, [parent]: items }));
+    };
+
+    // Close one tab. If it was the active one, fall to the neighbour (the tab that
+    // slid into its place, else the one before) so the editor doesn't go blank while
+    // other files are still open.
+    const closeTab = (path: string) => {
+        const idx = openTabs.findIndex((t) => t.path === path);
+        const next = openTabs.filter((t) => t.path !== path);
+        setOpenTabs(next);
+        if (selectedFile?.path !== path) return;
+        const neighbour = next[idx] ?? next[idx - 1];
+        if (neighbour) handleSelectNode({ name: neighbour.name, path: neighbour.path, isDir: false, size: 0, modTime: "" });
+        else setSelectedFile(null);
     };
 
     // Create a new file or folder in dir, refresh + expand that folder in the tree,
@@ -238,6 +288,7 @@ export default function FilesRoute() {
         const parent = path.slice(0, path.lastIndexOf("/")) || "/";
         const newPath = `${parent === "/" ? "" : parent}/${newName}`;
         if (selectedFile?.path === path) setSelectedFile({ ...selectedFile, name: newName, path: newPath });
+        setOpenTabs((prev) => prev.map((t) => (t.path === path ? { name: newName, path: newPath } : t)));
         const items = await fetchFolderContents(parent);
         setExpanded((prev) => ({ ...prev, [parent]: items }));
     };
@@ -249,7 +300,19 @@ export default function FilesRoute() {
     };
 
     useEffect(() => {
-        initExplorer();
+        // Restore the previously active file after the tree is ready, so it's also
+        // revealed in place. A file that's since been deleted surfaces as a normal
+        // read error rather than silently vanishing.
+        initExplorer().then(() => {
+            let active = "";
+            try {
+                active = window.localStorage.getItem(ACTIVE_FILE_KEY) ?? "";
+            } catch {
+                return;
+            }
+            if (!active) return;
+            openFileByPath(active, active.slice(active.lastIndexOf("/") + 1)).catch(() => undefined);
+        });
     }, []);
 
     const formatBytes = (bytes: number) => {
@@ -336,6 +399,12 @@ export default function FilesRoute() {
                             isLoading={isContentLoading}
                             error={contentError}
                             onClose={() => setSelectedFile(null)}
+                            tabs={openTabs}
+                            onSelectTab={(path) => {
+                                const tab = openTabs.find((t) => t.path === path);
+                                if (tab) handleSelectNode({ name: tab.name, path: tab.path, isDir: false, size: 0, modTime: "" });
+                            }}
+                            onCloseTab={closeTab}
                             canEdit={runtime.isRoot}
                             onSave={selectedFile ? (content) => saveFile(selectedFile.path, content) : undefined}
                             onToggleDetails={selectedFile ? () => setShowDetails((v) => !v) : undefined}
