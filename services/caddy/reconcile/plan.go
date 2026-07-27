@@ -128,20 +128,14 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 		}
 		// Per-host TLS mode: cf_origin renders a static Origin cert (mutually
 		// exclusive with on_demand — a CF-proxied host can't do ACME); anything
-		// else falls back to the gated on-demand behavior.
+		// else falls back to the gated on-demand behavior. Cert/key are already
+		// resolved by the caller from the Origin cert registry.
 		if ov, ok := snap.TLSModes[host]; ok && ov.Mode == "cf_origin" {
-			cert, key := ov.CertPath, ov.KeyPath
-			if cert == "" {
-				cert = snap.DefaultOriginCert
-			}
-			if key == "" {
-				key = snap.DefaultOriginKey
-			}
-			if cert == "" || key == "" {
-				skips = append(skips, Skip{r.Table, host, "cf_origin TLS selected but no Origin cert/key configured (set the global paths or a per-host override)"})
+			if ov.CertPath == "" || ov.KeyPath == "" {
+				skips = append(skips, Skip{r.Table, host, "cf_origin TLS selected but no Origin cert covers this host — register one under System → Origin certs"})
 				continue
 			}
-			h.TLSCertPath, h.TLSKeyPath = cert, key
+			h.TLSCertPath, h.TLSKeyPath = ov.CertPath, ov.KeyPath
 		} else {
 			h.OnDemandTLS = snap.OnDemandTLS // traffic-driven issuance (gated); no-op for wildcards
 		}

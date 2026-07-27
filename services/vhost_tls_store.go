@@ -9,6 +9,63 @@ import (
 	caddydb "ppt/server-panel/services/caddy/db"
 )
 
+// --- Origin certificate registry ---
+//
+// A LIST of Cloudflare Origin certs with NO "default" entry: propertyweb.co and
+// propertyboom.co are peer zones, so calling either one the default would be
+// arbitrary (and a third zone makes it worse). The panel picks the entry whose PEM
+// covers the hostname being switched to cf_origin.
+
+// OriginCertRow is one registered cert as stored (paths only; coverage is parsed
+// from the PEM on read by the engine).
+type OriginCertRow struct {
+	CertPath string `json:"certPath"`
+	KeyPath  string `json:"keyPath"`
+}
+
+// OriginCerts lists the registered Origin certificates, oldest first (registration
+// order is the documented tie-break when two certs cover the same hostname).
+func (s *SettingsService) OriginCerts() ([]OriginCertRow, error) {
+	rows, err := s.db.Query("SELECT cert_path, key_path FROM origin_certs ORDER BY added_at, cert_path")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OriginCertRow
+	for rows.Next() {
+		var r OriginCertRow
+		if err := rows.Scan(&r.CertPath, &r.KeyPath); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AddOriginCert registers a cert+key pair (both absolute paths).
+func (s *SettingsService) AddOriginCert(certPath, keyPath string) error {
+	certPath, keyPath = strings.TrimSpace(certPath), strings.TrimSpace(keyPath)
+	if certPath == "" || keyPath == "" {
+		return fmt.Errorf("certificate and key paths are both required")
+	}
+	if err := validateOptionalAbsPath(certPath); err != nil {
+		return err
+	}
+	if err := validateOptionalAbsPath(keyPath); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO origin_certs (cert_path, key_path, added_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(cert_path) DO UPDATE SET key_path = excluded.key_path`, certPath, keyPath)
+	return err
+}
+
+// DeleteOriginCert unregisters a cert. Hosts already rendered with it keep their
+// stored path until they're switched again (the file on disk is untouched).
+func (s *SettingsService) DeleteOriginCert(certPath string) error {
+	_, err := s.db.Exec("DELETE FROM origin_certs WHERE cert_path = ?", strings.TrimSpace(certPath))
+	return err
+}
+
 // --- on-demand TLS ask allowlist (persisted) ---
 //
 // Caddy consults /internal/tls-ask on HANDSHAKES for any hostname not in its cert

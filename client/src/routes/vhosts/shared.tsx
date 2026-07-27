@@ -62,6 +62,39 @@ export type Upstream = {
     target: string; // 127.0.0.1:<port>
 };
 
+// OriginCert is one registered Cloudflare Origin certificate. `covers` is parsed
+// from the PEM's SANs server-side — it's what makes automatic selection possible.
+export type OriginCert = {
+    certPath: string;
+    keyPath: string;
+    covers?: string[];
+    expires?: string;
+    error?: string;
+};
+
+// originCertFor mirrors the backend's selection: the registered cert whose SANs
+// cover `host`, preferring an exact match over a wildcard, else registration order.
+// Used to preview the choice in the UI; the backend decides authoritatively.
+export function originCertFor(host: string, certs: OriginCert[]): OriginCert | undefined {
+    const h = host.trim().toLowerCase();
+    let best: OriginCert | undefined;
+    let bestScore = -1;
+    for (const c of certs) {
+        if (c.error) continue;
+        for (const name of c.covers ?? []) {
+            const n = name.toLowerCase();
+            let score = -1;
+            if (n === h) score = 2;
+            else if (n.startsWith("*.") && h.endsWith(n.slice(1)) && h.split(".").length === n.split(".").length) score = 1;
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+    }
+    return best;
+}
+
 export type ManageSets = {
     systemHosts: ManageRow[];
     redirects: ManageRow[];
@@ -87,8 +120,7 @@ export type VhostState = {
     vhostsDir: string;
     liveReload: boolean;
     onDemandTls?: boolean;
-    originCert?: string; // global Cloudflare Origin cert path (cf_origin hosts)
-    originKey?: string;
+    originCerts?: OriginCert[]; // registered Cloudflare Origin certs (no "default")
     message?: string;
     error?: string;
     dryRun?: DryRun;

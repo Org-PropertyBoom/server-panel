@@ -204,32 +204,145 @@ func (v *VhostEngineService) SetOnDemandTLS(enabled bool) error {
 	return v.settings.Set(onDemandTLSSettingKey, strconv.FormatBool(enabled))
 }
 
-const (
-	originCertPathKey = "vhost_origin_cert_path"
-	originKeyPathKey  = "vhost_origin_key_path"
-)
-
-// OriginCertPaths returns the global default Cloudflare Origin cert + key paths
-// used by cf_origin hosts that don't set their own. One cert can list hostnames
-// from both zones (propertyweb.co + propertyboom.co).
-func (v *VhostEngineService) OriginCertPaths() (cert, key string) {
-	return v.settings.Get(originCertPathKey, ""), v.settings.Get(originKeyPathKey, "")
+// OriginCert is one registered Cloudflare Origin certificate, with the hostnames
+// it covers parsed from its PEM. Covers/Error are derived, not stored.
+type OriginCert struct {
+	CertPath string   `json:"certPath"`
+	KeyPath  string   `json:"keyPath"`
+	Covers   []string `json:"covers,omitempty"` // SAN DNS names (or CN if no SANs)
+	Expires  string   `json:"expires,omitempty"`
+	Error    string   `json:"error,omitempty"` // unreadable/unparseable PEM
 }
 
-// SetOriginCertPaths persists the global default Origin cert + key paths (absolute).
-// Takes effect on the next Reconcile.
-func (v *VhostEngineService) SetOriginCertPaths(cert, key string) error {
-	cert, key = strings.TrimSpace(cert), strings.TrimSpace(key)
-	if cert != "" && !filepath.IsAbs(cert) {
-		return errors.New("origin cert path must be absolute")
+// OriginCerts returns the registered Origin certificates with their coverage read
+// from disk. There is deliberately NO "default" entry — the panel selects by
+// hostname coverage instead (see SelectOriginCertFor).
+func (v *VhostEngineService) OriginCerts() []OriginCert {
+	rows, err := v.settings.OriginCerts()
+	if err != nil {
+		return nil
 	}
-	if key != "" && !filepath.IsAbs(key) {
-		return errors.New("origin key path must be absolute")
+	out := make([]OriginCert, 0, len(rows))
+	for _, r := range rows {
+		entry := OriginCert{CertPath: r.CertPath, KeyPath: r.KeyPath}
+		cert, perr := parseOriginCert(r.CertPath)
+		if perr != nil {
+			entry.Error = perr.Error()
+		} else {
+			entry.Covers = certCoveredNames(cert)
+			entry.Expires = cert.NotAfter.Format("2006-01-02")
+		}
+		out = append(out, entry)
 	}
-	if err := v.settings.Set(originCertPathKey, cert); err != nil {
+	return out
+}
+
+// AddOriginCert registers a cert+key pair after verifying the PEM is readable and
+// parseable — so a typo is caught at registration, not when a host breaks.
+func (v *VhostEngineService) AddOriginCert(certPath, keyPath string) error {
+	certPath, keyPath = strings.TrimSpace(certPath), strings.TrimSpace(keyPath)
+	if certPath == "" || keyPath == "" {
+		return errors.New("certificate and key paths are both required")
+	}
+	if !filepath.IsAbs(certPath) || !filepath.IsAbs(keyPath) {
+		return errors.New("certificate and key paths must be absolute")
+	}
+	if _, err := parseOriginCert(certPath); err != nil {
 		return err
 	}
-	return v.settings.Set(originKeyPathKey, key)
+	if _, err := os.Stat(keyPath); err != nil {
+		return fmt.Errorf("cannot read private key at %s: %w", keyPath, err)
+	}
+	return v.settings.AddOriginCert(certPath, keyPath)
+}
+
+// DeleteOriginCert unregisters an Origin certificate.
+func (v *VhostEngineService) DeleteOriginCert(certPath string) error {
+	return v.settings.DeleteOriginCert(certPath)
+}
+
+// SelectOriginCertFor picks the registered Origin certificate that covers host,
+// using the same x509 hostname matching as the switch-time guard. This replaces the
+// old "global default + per-host override" pair: with peer zones there is no
+// principled default, so the panel derives the right cert from the hostname.
+//
+// Ties (two registered certs both covering the host) are broken deterministically:
+// an EXACT SAN match beats a wildcard match; otherwise registration order wins.
+// Returns a descriptive error when nothing covers the host.
+func (v *VhostEngineService) SelectOriginCertFor(host string) (certPath, keyPath string, err error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	registered := v.OriginCerts()
+	if len(registered) == 0 {
+		return "", "", errors.New("no Origin certificates registered — add one under System → Origin certs")
+	}
+	bestScore := -1
+	var allCovers []string
+	for _, entry := range registered {
+		if entry.Error != "" {
+			continue
+		}
+		allCovers = append(allCovers, entry.Covers...)
+		cert, perr := parseOriginCert(entry.CertPath)
+		if perr != nil || cert.VerifyHostname(host) != nil {
+			continue
+		}
+		score := 1 // wildcard/CN match
+		for _, name := range cert.DNSNames {
+			if strings.EqualFold(name, host) {
+				score = 2 // exact SAN match wins
+				break
+			}
+		}
+		if score > bestScore {
+			bestScore, certPath, keyPath = score, entry.CertPath, entry.KeyPath
+		}
+	}
+	if bestScore < 0 {
+		return "", "", fmt.Errorf("no registered Origin cert covers %s (registered certs cover: %s)", host, strings.Join(dedupeStrings(allCovers), ", "))
+	}
+	return certPath, keyPath, nil
+}
+
+// resolveTLSModeCerts fills in the cert/key for every cf_origin host that doesn't
+// name one explicitly, by selecting the registered cert covering that hostname.
+// Hosts with no covering cert are left empty and get skipped (with a reason) at
+// plan time rather than rendering a broken `tls` line.
+func (v *VhostEngineService) resolveTLSModeCerts(modes map[string]caddydb.TLSOverride) {
+	for host, ov := range modes {
+		if ov.Mode != TLSModeCFOrigin || (ov.CertPath != "" && ov.KeyPath != "") {
+			continue
+		}
+		cert, key, err := v.SelectOriginCertFor(host)
+		if err != nil {
+			continue // left empty on purpose — plan.go reports it as a skip
+		}
+		ov.CertPath, ov.KeyPath = cert, key
+		modes[host] = ov
+	}
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// certCoveredNames lists the hostnames a certificate is valid for.
+func certCoveredNames(cert *x509.Certificate) []string {
+	if len(cert.DNSNames) > 0 {
+		return cert.DNSNames
+	}
+	if cert.Subject.CommonName != "" {
+		return []string{cert.Subject.CommonName}
+	}
+	return nil
 }
 
 // SetHostTLSMode sets a host's TLS mode (ondemand | cf_origin) with optional
@@ -244,17 +357,21 @@ func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, cer
 	if host == "" {
 		return reconcile.Result{Error: "host is required"}, errors.New("host is required")
 	}
-	// Guard: for cf_origin, the EFFECTIVE cert (per-host override, else the global
-	// default) must actually cover this hostname — otherwise a proxied host would
-	// serve the wrong zone's Origin cert and fail with an opaque TLS error. Block
-	// early with a clear message instead of discovering it as a broken site.
+	// For cf_origin: either the operator named a cert explicitly (escape hatch — then
+	// verify it covers the host), or the panel SELECTS the registered cert that covers
+	// this hostname. Selection makes the wrong-zone mistake impossible by construction
+	// rather than catching it after the fact.
 	if strings.EqualFold(strings.TrimSpace(mode), TLSModeCFOrigin) {
-		cert := strings.TrimSpace(certPath)
-		if cert == "" {
-			cert, _ = v.OriginCertPaths()
-		}
-		if err := verifyOriginCertCoversHost(cert, host); err != nil {
-			return reconcile.Result{Error: err.Error()}, err
+		if strings.TrimSpace(certPath) != "" {
+			if err := verifyOriginCertCoversHost(strings.TrimSpace(certPath), host); err != nil {
+				return reconcile.Result{Error: err.Error()}, err
+			}
+		} else {
+			selCert, selKey, serr := v.SelectOriginCertFor(host)
+			if serr != nil {
+				return reconcile.Result{Error: serr.Error()}, serr
+			}
+			certPath, keyPath = selCert, selKey
 		}
 	}
 	if err := v.settings.SetHostTLSMode(host, mode, certPath, keyPath); err != nil {
@@ -263,33 +380,38 @@ func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, cer
 	return v.Reconcile(ctx)
 }
 
-// verifyOriginCertCoversHost reads the PEM cert at certPath and checks it is valid
-// for host (SAN/CN name match, wildcard-aware). Guards against handing a host the
-// wrong zone's Origin cert. A missing/unreadable/unparseable cert, or a name that
-// the cert doesn't cover, returns a clear error. Runs on the host, where the cert
-// files live.
-func verifyOriginCertCoversHost(certPath, host string) error {
+// parseOriginCert reads and parses the PEM certificate at path. Runs on the host,
+// where the cert files live.
+func parseOriginCert(certPath string) (*x509.Certificate, error) {
 	if certPath == "" {
-		return errors.New("no Origin cert configured — set a per-host cert/key path or the global default first")
+		return nil, errors.New("no certificate path given")
 	}
 	data, err := os.ReadFile(certPath)
 	if err != nil {
-		return fmt.Errorf("cannot read Origin cert at %s: %w", certPath, err)
+		return nil, fmt.Errorf("cannot read Origin cert at %s: %w", certPath, err)
 	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return fmt.Errorf("Origin cert at %s is not valid PEM", certPath)
+		return nil, fmt.Errorf("Origin cert at %s is not valid PEM", certPath)
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("cannot parse Origin cert at %s: %w", certPath, err)
+		return nil, fmt.Errorf("cannot parse Origin cert at %s: %w", certPath, err)
+	}
+	return cert, nil
+}
+
+// verifyOriginCertCoversHost checks the cert at certPath is valid for host (SAN/CN,
+// wildcard-aware). Used for the per-host escape-hatch path, where the operator names
+// a cert explicitly rather than letting the registry select one.
+func verifyOriginCertCoversHost(certPath, host string) error {
+	cert, err := parseOriginCert(certPath)
+	if err != nil {
+		return err
 	}
 	if err := cert.VerifyHostname(host); err != nil {
-		covers := strings.Join(cert.DNSNames, ", ")
-		if covers == "" {
-			covers = cert.Subject.CommonName
-		}
-		return fmt.Errorf("the Origin cert at %s does not cover %s (it covers: %s) — use the right zone's cert", certPath, host, covers)
+		return fmt.Errorf("the Origin cert at %s does not cover %s (it covers: %s) — use the right zone's cert",
+			certPath, host, strings.Join(certCoveredNames(cert), ", "))
 	}
 	return nil
 }
@@ -472,9 +594,8 @@ type VhostStateResult struct {
 	Source      string                  `json:"source,omitempty"`
 	VhostsDir   string                  `json:"vhostsDir"`
 	LiveReload  bool                    `json:"liveReload"`
-	OnDemandTLS bool                    `json:"onDemandTls"`          // host files render tls{on_demand} (traffic-driven issuance)
-	OriginCert  string                  `json:"originCert,omitempty"` // global default Cloudflare Origin cert path (cf_origin hosts)
-	OriginKey   string                  `json:"originKey,omitempty"`  // global default Cloudflare Origin key path
+	OnDemandTLS bool                    `json:"onDemandTls"`           // host files render tls{on_demand} (traffic-driven issuance)
+	OriginCerts []OriginCert            `json:"originCerts,omitempty"` // registered Cloudflare Origin certs + what they cover
 	Message     string                  `json:"message,omitempty"`
 	Error       string                  `json:"error,omitempty"`
 	DryRun      *reconcile.DryRunResult `json:"dryRun,omitempty"`
@@ -507,7 +628,7 @@ type PinnedRow struct {
 // anything. Failure modes are returned in the result (never a 500).
 func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	out := VhostStateResult{VhostsDir: v.cfg.VhostsDir, LiveReload: v.LiveReloadEnabled(), OnDemandTLS: v.OnDemandTLSEnabled(), HealthOn: v.health.Enabled()}
-	out.OriginCert, out.OriginKey = v.OriginCertPaths()
+	out.OriginCerts = v.OriginCerts()
 	out.Health = v.health.Snapshot()
 	out.Protected, out.ProtectedWarning = v.protectedRows()
 
@@ -536,7 +657,7 @@ func (v *VhostEngineService) State(ctx context.Context) VhostStateResult {
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // edge-disabled tenants → shown "disabled"
 	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // render tls{on_demand} to match reconcile
 	snap.TLSModes, _ = v.settings.AllHostTLSModes()        // per-host cf_origin overrides
-	snap.DefaultOriginCert, snap.DefaultOriginKey = v.OriginCertPaths()
+	v.resolveTLSModeCerts(snap.TLSModes)
 
 	dry, err := v.engine.DryRun(snap)
 	if err != nil {
@@ -786,7 +907,7 @@ func (v *VhostEngineService) Reconcile(ctx context.Context) (reconcile.Result, e
 	snap.SuppressedHosts, _ = v.settings.SuppressedHosts() // panel-local edge-disable
 	snap.OnDemandTLS = v.OnDemandTLSEnabled()              // panel-local; renders tls{on_demand}
 	snap.TLSModes, _ = v.settings.AllHostTLSModes()        // panel-local; per-host cf_origin overrides
-	snap.DefaultOriginCert, snap.DefaultOriginKey = v.OriginCertPaths()
+	v.resolveTLSModeCerts(snap.TLSModes)
 	return v.engine.Reconcile(ctx, snap)
 }
 

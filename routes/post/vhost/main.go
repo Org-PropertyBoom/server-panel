@@ -368,28 +368,45 @@ func TLSModeHandler(sessions *services.SessionService, engine *services.VhostEng
 	})
 }
 
-// OriginCertHandler persists the global default Cloudflare Origin cert + key paths
-// (absolute) that cf_origin hosts fall back to. Takes effect on the next Reconcile.
+// OriginCertHandler manages the Cloudflare Origin certificate REGISTRY: POST adds a
+// cert+key pair (validated by parsing the PEM), DELETE unregisters one. There is no
+// "default" entry — the panel selects the registered cert whose SANs cover a host
+// when that host is switched to cf_origin. Returns the registry with coverage.
 func OriginCertHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !authed(sessions, r) {
 			http.Error(w, "session invalid", http.StatusUnauthorized)
 			return
 		}
-		var body struct {
-			Cert string `json:"cert"`
-			Key  string `json:"key"`
-		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+		switch r.Method {
+		case http.MethodPost:
+			var body struct {
+				Cert string `json:"cert"`
+				Key  string `json:"key"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			if err := engine.AddOriginCert(body.Cert, body.Key); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		case http.MethodDelete:
+			cert := strings.TrimSpace(r.URL.Query().Get("cert"))
+			if cert == "" {
+				http.Error(w, "cert path is required", http.StatusBadRequest)
+				return
+			}
+			if err := engine.DeleteOriginCert(cert); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if err := engine.SetOriginCertPaths(body.Cert, body.Key); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cert, key := engine.OriginCertPaths()
-		writeJSON(w, map[string]string{"originCert": cert, "originKey": key})
+		writeJSON(w, map[string]any{"originCerts": engine.OriginCerts()})
 	})
 }
 

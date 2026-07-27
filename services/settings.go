@@ -73,6 +73,27 @@ func NewSettingsService() (*SettingsService, error) {
 	// on-demand template). "cf_origin" renders a static `tls <cert> <key>` instead — for
 	// hosts proxied through Cloudflare, which can't complete an ACME challenge (it
 	// terminates at the CF edge). cert_path/key_path override the global default paths.
+	// Registered Cloudflare Origin certificates. A LIST, deliberately with no
+	// "default": propertyweb.co and propertyboom.co are peer zones, so designating
+	// one as default would be arbitrary. The panel selects the entry whose PEM
+	// covers a given hostname (x509 SAN match) when a host is switched to cf_origin.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS origin_certs (
+		cert_path TEXT PRIMARY KEY,
+		key_path TEXT NOT NULL,
+		added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Migrate the legacy single "global default" pair into the registry as its first
+	// entry, so existing cf_origin hosts (grafana, media) keep working unchanged.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO origin_certs (cert_path, key_path)
+		SELECT c.value, k.value FROM settings c, settings k
+		WHERE c.key = 'vhost_origin_cert_path' AND k.key = 'vhost_origin_key_path'
+		  AND c.value != '' AND k.value != ''`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	// Hosts previously authorized for on-demand TLS. Caddy consults /internal/tls-ask
 	// on HANDSHAKES (not just at issuance), and the endpoint is fail-closed — so this
 	// allowlist is PERSISTED and re-read at boot, letting the panel answer 200 for

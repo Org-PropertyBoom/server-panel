@@ -3,14 +3,14 @@ import { AlertTriangle, Loader2, Lock, Pencil, Pin, PinOff, Plus, Power, PowerOf
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, Pill, type PinnedRow, setHostTlsMode, suppressHost, summarizeError, type Upstream, ViewHeader } from "./shared";
+import { Field, FormActions, HostLink, inputCls, type ManageRow, Modal, type OriginCert, originCertFor, Pill, type PinnedRow, setHostTlsMode, suppressHost, summarizeError, type Upstream, ViewHeader } from "./shared";
 
 // SystemView manages platform_hosts — panel-owned reverse proxies to ANY running
 // container (not just the code stacks). Full CRUD; live on the next global reconcile.
 // The pinned domains (derived from the ACTUAL Caddyfile) show as read-only rows on
 // top — they ARE App/System hosts, just static blocks, not DB-reconciled — with a
 // drift flag vs what the reload actually guards.
-export default function SystemView({ rows, upstreams, pinned, pinnedWarning, originCert, originKey, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; originCert?: string; originKey?: string; onSaved: () => void }) {
+export default function SystemView({ rows, upstreams, pinned, pinnedWarning, originCerts, onSaved }: { rows: ManageRow[]; upstreams: Upstream[]; pinned: PinnedRow[]; pinnedWarning?: string; originCerts: OriginCert[]; onSaved: () => void }) {
     const [edit, setEdit] = useState<ManageRow | null>(null);
     const [removeBlock, setRemoveBlock] = useState<PinnedRow | null>(null);
     const [removing, setRemoving] = useState(false);
@@ -21,7 +21,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
     const [tlsRow, setTlsRow] = useState<ManageRow | null>(null); // TLS-mode confirm target
     const [tlsBusy, setTlsBusy] = useState("");
     const [originOpen, setOriginOpen] = useState(false);
-    const originConfigured = Boolean(originCert && originKey);
+    const originConfigured = originCerts.length > 0;
 
     // Switch a host between on-demand LE and a Cloudflare Origin cert (cf_origin),
     // then reconcile. cf_origin is for hosts proxied through Cloudflare. certPath/
@@ -123,9 +123,9 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                 subtitle="platform_hosts — panel-owned reverse proxies. Edits save to the database; they go live on the next reconcile."
                 actions={
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOriginOpen(true)} title="Cloudflare Origin cert paths (for cf_origin hosts)">
+                        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOriginOpen(true)} title="Registered Cloudflare Origin certificates (selected automatically by hostname)">
                             <Shield className={`h-3.5 w-3.5 ${originConfigured ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
-                            Origin cert
+                            Origin certs{originConfigured ? ` (${originCerts.length})` : ""}
                         </Button>
                         <Button
                             variant="outline"
@@ -139,10 +139,10 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                     </div>
                 }
             />
-            {rows.some((r) => r.tlsMode === "cf_origin") && !originConfigured ? (
+            {rows.some((r) => r.tlsMode === "cf_origin" && !r.tlsCertPath && !originCertFor(r.host, originCerts)) ? (
                 <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>A host is set to <b>CF Origin</b> but no Origin cert/key path is configured — those hosts are skipped at reconcile. Set the paths via <b>Origin cert</b>.</span>
+                    <span>A host is set to <b>CF Origin</b> but no registered certificate covers it — those hosts are skipped at reconcile. Register the right zone's cert under <b>Origin certs</b>.</span>
                 </div>
             ) : null}
             {pinnedWarning ? (
@@ -240,9 +240,15 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                                                 <span className="inline-flex w-fit items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400" title="Serves a static Cloudflare Origin certificate (proxied through Cloudflare)">
                                                     <ShieldCheck className="h-3 w-3" /> CF Origin
                                                 </span>
-                                                <span className="text-[10px] text-muted-foreground" title={r.tlsCertPath || originCert || "no cert path set"}>
-                                                    {r.tlsCertPath ? certBasename(r.tlsCertPath) : originConfigured ? "default cert" : "⚠ no cert"}
-                                                </span>
+                                                {(() => {
+                                                    const sel = r.tlsCertPath ? undefined : originCertFor(r.host, originCerts);
+                                                    const path = r.tlsCertPath || sel?.certPath;
+                                                    return (
+                                                        <span className="text-[10px] text-muted-foreground" title={path ? `${path}${sel ? ` (auto-selected — covers ${(sel.covers ?? []).join(", ")})` : " (pinned per-host)"}` : "no registered cert covers this host"}>
+                                                            {path ? certBasename(path) : "⚠ no cert"}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         ) : (
                                             <span className="text-[11px] text-muted-foreground" title="On-demand Let's Encrypt (issued on first visit, authorized by the tls-ask endpoint)">On-demand</span>
@@ -390,15 +396,14 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
             {tlsRow ? (
                 <TlsModeModal
                     row={tlsRow}
-                    originCert={originCert ?? ""}
-                    originKey={originKey ?? ""}
+                    originCerts={originCerts}
                     busy={Boolean(tlsBusy)}
                     onApply={applyTlsMode}
                     onClose={() => setTlsRow(null)}
                 />
             ) : null}
 
-            {originOpen ? <OriginCertModal cert={originCert ?? ""} keyPath={originKey ?? ""} onClose={() => setOriginOpen(false)} onSaved={() => { setOriginOpen(false); onSaved(); }} /> : null}
+            {originOpen ? <OriginCertsModal certs={originCerts} onClose={() => setOriginOpen(false)} onChanged={onSaved} /> : null}
         </div>
     );
 }
@@ -409,30 +414,28 @@ function certBasename(path: string): string {
     return parts[parts.length - 1] || path;
 }
 
-// TlsModeModal confirms switching a host's TLS mode. Switching TO cf_origin exposes
-// optional per-host Certificate/Private-key path fields (empty = the global default)
-// and shows the EFFECTIVE cert the host will use, so a wrong-zone mismatch is obvious
-// before it's applied (the backend also blocks a cert that doesn't cover the host).
+// TlsModeModal confirms switching a host's TLS mode. Switching TO cf_origin shows the
+// certificate the panel AUTO-SELECTED for this hostname (matched against each
+// registered cert's SANs) — no default, no typing. An optional per-host path override
+// remains as an escape hatch for unusual cases.
 function TlsModeModal({
     row,
-    originCert,
-    originKey,
+    originCerts,
     busy,
     onApply,
     onClose,
 }: {
     row: ManageRow;
-    originCert: string;
-    originKey: string;
+    originCerts: OriginCert[];
     busy: boolean;
     onApply: (host: string, mode: string, certPath?: string, keyPath?: string) => void;
     onClose: () => void;
 }) {
     const toCF = row.tlsMode !== "cf_origin";
+    const [override, setOverride] = useState(false);
     const [cert, setCert] = useState(row.tlsCertPath ?? "");
     const [key, setKey] = useState(row.tlsKeyPath ?? "");
-    const effectiveCert = cert.trim() || originCert;
-    const effectiveKey = key.trim() || originKey;
+    const selected = originCertFor(row.host, originCerts);
 
     return (
         <Modal onClose={() => (busy ? null : onClose())} title={toCF ? `Switch ${row.host} to Cloudflare Origin cert?` : `Switch ${row.host} back to on-demand?`}>
@@ -443,27 +446,42 @@ function TlsModeModal({
                         certificate. Use this <b>only for a host proxied through Cloudflare</b>: a proxied host can't complete an ACME challenge
                         (it terminates at the CF edge), so on-demand LE would fail. The two modes are mutually exclusive.
                     </p>
-                    <div className="mt-3 space-y-2">
-                        <Field label="Certificate path" hint="Leave empty to use the global default. Set a per-host path when this host is on a different zone's Origin cert (e.g. propertyboom vs propertyweb).">
-                            <input value={cert} onChange={(e) => setCert(e.target.value)} placeholder={originCert || "/etc/caddy/cf-origin/…pem"} className={`${inputCls} font-mono`} />
-                        </Field>
-                        <Field label="Private key path">
-                            <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={originKey || "/etc/caddy/cf-origin/…key"} className={`${inputCls} font-mono`} />
-                        </Field>
-                    </div>
-                    {effectiveCert ? (
-                        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                            effective: {effectiveCert} + {effectiveKey}
-                            {cert.trim() ? " (per-host)" : " (global default)"}
-                        </p>
+                    {selected ? (
+                        <div className="mt-3 rounded-md border border-sky-500/25 bg-sky-500/[0.07] px-3 py-2">
+                            <p className="text-xs text-foreground">
+                                Will use <b className="font-mono">{certBasename(selected.certPath)}</b>
+                            </p>
+                            <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                                covers {(selected.covers ?? []).join(", ")}
+                                {selected.expires ? ` · expires ${selected.expires}` : ""}
+                            </p>
+                            <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground/70">{selected.certPath}</p>
+                        </div>
                     ) : (
                         <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span>No cert path — set one here or a global default under <b>Origin cert</b>, or this is rejected.</span>
+                            <span>
+                                No registered certificate covers <b>{row.host}</b>. Register this zone's Origin cert under <b>Origin certs</b> — or
+                                name one explicitly below. Applying without either is refused.
+                            </span>
                         </div>
                     )}
+                    <button type="button" onClick={() => setOverride((v) => !v)} className="mt-2 text-[11px] font-medium text-primary hover:underline">
+                        {override ? "Use the auto-selected certificate" : "Name a certificate explicitly (advanced)"}
+                    </button>
+                    {override ? (
+                        <div className="mt-2 space-y-2">
+                            <Field label="Certificate path" hint="Escape hatch for unusual cases — normally the panel picks the covering cert for you.">
+                                <input value={cert} onChange={(e) => setCert(e.target.value)} placeholder="/etc/caddy/cf-origin/…pem" className={`${inputCls} font-mono`} />
+                            </Field>
+                            <Field label="Private key path">
+                                <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="/etc/caddy/cf-origin/…key" className={`${inputCls} font-mono`} />
+                            </Field>
+                        </div>
+                    ) : null}
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                        The cert must cover <b>{row.host}</b> — the panel verifies this and refuses a wrong-zone cert. Reconciles immediately (validated adapt → reload); reversible.
+                        The certificate must cover <b>{row.host}</b> — the panel verifies this and refuses a wrong-zone cert. Reconciles immediately
+                        (validated adapt → reload); reversible.
                     </p>
                 </>
             ) : (
@@ -474,7 +492,12 @@ function TlsModeModal({
             )}
             <div className="mt-5 flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button size="sm" className="gap-2" onClick={() => onApply(row.host, toCF ? "cf_origin" : "ondemand", cert.trim(), key.trim())} disabled={busy}>
+                <Button
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => onApply(row.host, toCF ? "cf_origin" : "ondemand", override ? cert.trim() : "", override ? key.trim() : "")}
+                    disabled={busy}
+                >
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
                     {toCF ? "Use CF Origin cert" : "Use on-demand"}
                 </Button>
@@ -483,13 +506,15 @@ function TlsModeModal({
     );
 }
 
-// OriginCertModal sets the global Cloudflare Origin cert + key paths (absolute) that
-// cf_origin hosts fall back to. One cert can list hostnames from both zones.
-function OriginCertModal({ cert, keyPath, onClose, onSaved }: { cert: string; keyPath: string; onClose: () => void; onSaved: () => void }) {
-    const [c, setC] = useState(cert);
-    const [k, setK] = useState(keyPath);
+// OriginCertsModal manages the REGISTRY of Cloudflare Origin certificates. There is
+// deliberately no "default" — propertyweb.co and propertyboom.co are peer zones, so
+// the panel selects by hostname coverage instead of privileging one of them.
+function OriginCertsModal({ certs, onClose, onChanged }: { certs: OriginCert[]; onClose: () => void; onChanged: () => void }) {
+    const [c, setC] = useState("");
+    const [k, setK] = useState("");
     const [saving, setSaving] = useState(false);
-    const save = async () => {
+
+    const add = async () => {
         setSaving(true);
         try {
             const res = await fetch("/post/vhost/origin-cert", {
@@ -501,30 +526,85 @@ function OriginCertModal({ cert, keyPath, onClose, onSaved }: { cert: string; ke
                 toast.error((await res.text()).trim() || res.statusText);
                 return;
             }
-            toast.success("Origin cert paths saved — Reconcile to apply");
-            onSaved();
+            toast.success("Certificate registered");
+            setC("");
+            setK("");
+            onChanged();
         } catch (err) {
-            toast.error(`Save failed: ${String(err)}`);
+            toast.error(`Register failed: ${String(err)}`);
         } finally {
             setSaving(false);
         }
     };
+
+    const remove = async (certPath: string) => {
+        try {
+            const res = await fetch(`/post/vhost/origin-cert?cert=${encodeURIComponent(certPath)}`, { method: "DELETE" });
+            if (!res.ok) {
+                toast.error((await res.text()).trim() || res.statusText);
+                return;
+            }
+            toast.success("Certificate unregistered");
+            onChanged();
+        } catch (err) {
+            toast.error(`Remove failed: ${String(err)}`);
+        }
+    };
+
     return (
-        <Modal onClose={onClose} title="Cloudflare Origin certificate">
+        <Modal onClose={onClose} title="Cloudflare Origin certificates">
             <p className="text-xs text-muted-foreground">
-                Absolute paths to the Cloudflare Origin cert + key on this host. Used by every <b>CF Origin</b> host that doesn't set its own.
-                One Origin cert can list hostnames from both zones (propertyweb.co + propertyboom.co). Create it in the Cloudflare dashboard
-                (SSL/TLS → Origin Server) and install the files on the host first.
+                Register one certificate per Cloudflare zone (Origin CA certs are per-zone). When a host is switched to <b>CF Origin</b>, the panel
+                picks the registered certificate whose names cover that hostname — no default, nothing to type. Create them in the Cloudflare
+                dashboard (SSL/TLS → Origin Server) and install the files on this host first.
             </p>
-            <div className="mt-3 space-y-3">
+
+            <div className="mt-3 space-y-1.5">
+                {certs.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+                        No certificates registered yet.
+                    </p>
+                ) : (
+                    certs.map((entry) => (
+                        <div key={entry.certPath} className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+                            <div className="min-w-0">
+                                <p className="font-mono text-[11px] font-medium text-foreground">{certBasename(entry.certPath)}</p>
+                                {entry.error ? (
+                                    <p className="mt-0.5 flex items-start gap-1 text-[11px] text-destructive">
+                                        <AlertTriangle className="mt-px h-3 w-3 shrink-0" /> {entry.error}
+                                    </p>
+                                ) : (
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                        covers {(entry.covers ?? []).join(", ")}
+                                        {entry.expires ? ` · expires ${entry.expires}` : ""}
+                                    </p>
+                                )}
+                                <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground/60">{entry.certPath}</p>
+                            </div>
+                            <button onClick={() => remove(entry.certPath)} className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Unregister">
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
+
+            <div className="mt-4 space-y-2 border-t border-border pt-3">
+                <span className="text-xs font-medium text-foreground">Register a certificate</span>
                 <Field label="Certificate path">
-                    <input value={c} onChange={(e) => setC(e.target.value)} placeholder="/etc/caddy/cf-origin/origin.pem" className={`${inputCls} font-mono`} autoFocus />
+                    <input value={c} onChange={(e) => setC(e.target.value)} placeholder="/etc/caddy/cf-origin/propertyboom.pem" className={`${inputCls} font-mono`} />
                 </Field>
                 <Field label="Private key path">
-                    <input value={k} onChange={(e) => setK(e.target.value)} placeholder="/etc/caddy/cf-origin/origin.key" className={`${inputCls} font-mono`} />
+                    <input value={k} onChange={(e) => setK(e.target.value)} placeholder="/etc/caddy/cf-origin/propertyboom.key" className={`${inputCls} font-mono`} />
                 </Field>
+                <div className="flex justify-end gap-2 pt-1">
+                    <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+                    <Button size="sm" className="gap-2" onClick={add} disabled={saving || !c.trim() || !k.trim()}>
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        Register
+                    </Button>
+                </div>
             </div>
-            <FormActions saving={saving} onCancel={onClose} onSave={save} disabled={false} />
         </Modal>
     );
 }

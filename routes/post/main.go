@@ -104,6 +104,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("POST /post/vhost/suppress", postOnly(deps.Startup, postvhost.SuppressHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/tls-mode", postOnly(deps.Startup, postvhost.TLSModeHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/origin-cert", postOnly(deps.Startup, postvhost.OriginCertHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("DELETE /post/vhost/origin-cert", postOnly(deps.Startup, postvhost.OriginCertHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/vhost/", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
 	mux.Handle("GET /post/terminal", postOnly(deps.Startup, terminal.Handler(deps.Sessions)))
