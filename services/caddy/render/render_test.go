@@ -86,7 +86,11 @@ func TestRender_ValidationBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "http://tenant.example.com {\n" +
-		"    handle /.well-known/pki-validation/* {\n" +
+		"    handle_path /.well-known/acme-challenge/* {\n" +
+		"        root * /var/www/acme-validation\n" +
+		"        file_server\n" +
+		"    }\n" +
+		"    handle_path /.well-known/pki-validation/* {\n" +
 		"        root * /var/www/acme-validation\n" +
 		"        file_server\n" +
 		"    }\n" +
@@ -97,6 +101,11 @@ func TestRender_ValidationBlock(t *testing.T) {
 		"tenant.example.com {\n    reverse_proxy 127.0.0.1:8002\n}\n"
 	if body != want {
 		t.Errorf("body = %q, want %q", body, want)
+	}
+	// The ACME path is what Cloudflare actually fetches (standard HTTP-01 shape:
+	// extensionless token filename, body = token.thumbprint, two tokens per host).
+	if !strings.Contains(body, "/.well-known/acme-challenge/") {
+		t.Error("must serve the acme-challenge path — that's what Cloudflare fetches")
 	}
 }
 

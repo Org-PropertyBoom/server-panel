@@ -182,6 +182,50 @@ the path at all). **Do not put the panel's own domain on on-demand** — that's 
 circular dependency (panel down → its domain can't get a cert → can't reach the panel
 to fix it); keep `cp.propertyweb.co` a static/pinned block.
 
+## ⚠ The validation path shares Caddy's ACME challenge path
+
+Every rendered vhost serves `/.well-known/acme-challenge/` and
+`/.well-known/pki-validation/` over plain HTTP from a flat shared directory
+(`/var/www/acme-validation`, `CADDY_VALIDATION_DIR`). This proves ownership for a
+Cloudflare for SaaS custom hostname from the server we control, so the domain's
+owner never touches DNS — their only action is the final A-record change.
+
+**`/.well-known/acme-challenge/` is also the path Caddy uses for its own Let's
+Encrypt HTTP-01 challenges**, which every managed host depends on. Our file_server
+does NOT shadow them:
+
+- Caddy checks for an active challenge in `Server.ServeHTTP` —
+  `if s.tlsApp.HandleHTTPChallenge(w, r) { return }` — **before any route
+  matching**. Its own challenge therefore always wins, regardless of site config.
+- `HandleHTTPChallenge` returns false only when no issuer has a live challenge for
+  that host; the request then falls through to the site's routes.
+- So the file_server is strictly a **fallback** for tokens Caddy isn't solving.
+
+This is reasoned from Caddy's request path, **not measured**. Before trusting it on
+a box where issuance matters, run the acceptance test below — the test is
+"issuance still works", not merely "the token file is served".
+
+### Acceptance test (run after deploy + reconcile)
+
+```bash
+# 1. A placed token is served over PLAIN http (no 308)
+printf 'test-body' | sudo tee /var/www/acme-validation/test-token >/dev/null
+sudo chmod 644 /var/www/acme-validation/test-token
+curl -s http://<tenant-domain>/.well-known/acme-challenge/test-token   # -> test-body
+
+# 2. THE ONE THAT MATTERS — Let's Encrypt issuance still works.
+#    Point an unused DNS-only hostname at the box, visit it to trigger on-demand,
+#    and confirm a cert is obtained.
+sudo journalctl -u caddy -f | grep -iE 'obtaining|certificate obtained|challenge|error'
+curl -sI https://<throwaway-host>
+# expect: "certificate obtained successfully" — NOT a challenge failure
+```
+
+If issuance breaks, unset `CADDY_VALIDATION_DIR` (or set it empty) and reconcile:
+rendering returns byte-identical to before and HTTP validation is simply unavailable.
+TXT validation still works and costs only a worse client experience — **that trade is
+correct; never risk renewal for 110 hosts to save a client two DNS records.**
+
 ## Key gotchas (do not skip)
 
 - **Proxying breaks on-demand LE for that host.** Once a domain is proxied through

@@ -23,6 +23,15 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-27 - FIX: validation path is acme-challenge, not pki-validation (+ ACME precedence)
+
+- Correction (hub, with live evidence from the Add Custom Hostname screen): Cloudflare fetches `/.well-known/acme-challenge/<token>` — standard HTTP-01 shape, extensionless token filename, body = `token.thumbprint`, and **TWO tokens per hostname** (SSL.com issues a pair), so the handler must serve multiple files. c6c050e's `pki-validation` path was wrong.
+- ⚠ THE RISK: that is the SAME path Caddy uses for its own Let's Encrypt HTTP-01 challenges, which all 110 hosts depend on. A naive path swap could shadow issuance platform-wide.
+- WHY IT'S SAFE: Caddy checks for an active challenge in `Server.ServeHTTP` — `if s.tlsApp.HandleHTTPChallenge(w, r) { return }` — **before any route matching**, so its own challenge always wins regardless of site config. That call returns false only when no issuer has a live challenge for the host, and the request then falls through to the site's routes. Our file_server is therefore strictly a FALLBACK. **This is reasoned from Caddy's request path, NOT measured** — the issuance acceptance test in `docs/tls-scaling.md` is what proves it live, and it must be run before trusting this.
+- Both paths served (hub point 4 — pki-validation kept, it's free) from the SAME flat dir via `handle_path`, which strips the prefix: a token at `<root>/<token>` answers either path. Tests updated + a guard asserting the acme-challenge path is present.
+- ESCAPE HATCH IF ISSUANCE BREAKS: set `CADDY_VALIDATION_DIR` empty + reconcile → rendering is byte-identical to before and HTTP validation is simply unavailable. TXT still works (Owner has already migrated 3 domains with it). Documented explicitly: never risk renewal for 110 hosts to save a client two DNS records.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; render+reconcile tests pass.
+
 ### 2026-07-27 - Serve /.well-known/pki-validation on every vhost (CF for SaaS ownership proof)
 
 - Goal (hub): adding a tenant domain as a Cloudflare for SaaS Custom Hostname needs ownership proof. TXT validation = asking a non-technical CLIENT for 3 cryptic records, then separately an A-record change (2 touchpoints × ~80 clients). HTTP validation = Cloudflare fetches `http://<domain>/.well-known/pki-validation/<token>.txt`, and we control the SERVER for every one of these domains — so the Owner supplies the proof himself and the client's only action is the final A record. 1 touchpoint.

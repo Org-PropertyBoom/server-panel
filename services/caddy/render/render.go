@@ -74,25 +74,44 @@ type Host struct {
 	ValidationRoot string
 }
 
-// validationBlock renders the plain-HTTP ownership-validation site for a host.
+// validationBlock renders the plain-HTTP domain-ownership validation site for a
+// host, used to prove ownership for a Cloudflare for SaaS custom hostname without
+// the domain's owner touching DNS.
 //
-// It must be an EXPLICIT `http://<host>` block: with only the normal site block,
-// Caddy's automatic HTTPS would 308 the validator to https, and at validation time
-// the domain may not have a usable certificate yet — so the fetch would fail. By
-// taking over the HTTP site we must re-create the redirect ourselves, which the
-// second handle does, leaving every non-validation request behaving exactly as
-// before. (Caddy still answers its own ACME HTTP-01 challenges ahead of these
-// routes, so issuance is unaffected.) Skipped for wildcard hosts.
+// EXPLICIT `http://<host>` block: with only the normal site block, Caddy's
+// automatic HTTPS would 308 the validator to https, and at validation time the
+// domain may not have a usable certificate yet — so the fetch would fail. Taking
+// over the HTTP site means Caddy no longer generates that redirect, so the trailing
+// handle re-creates it; every non-validation request behaves exactly as before.
+//
+// ⚠ /.well-known/acme-challenge/ IS ALSO THE PATH CADDY USES FOR ITS OWN LET'S
+// ENCRYPT HTTP-01 CHALLENGES, which all managed hosts depend on. This does not
+// shadow them: Caddy checks for an active challenge in Server.ServeHTTP —
+// `if s.tlsApp.HandleHTTPChallenge(w, r) { return }` — BEFORE any route matching,
+// so its own challenge always wins. That call returns false only when no issuer has
+// a live challenge for the host, and the request then falls through to these
+// routes. So the file_server is strictly a FALLBACK for tokens Caddy isn't
+// currently solving. (Reasoned from Caddy's request path, not measured on the host
+// — see docs/tls-scaling.md for the issuance acceptance test that proves it live.)
+//
+// Both well-known paths are served from the same flat directory via handle_path,
+// which strips the prefix: a token dropped at <root>/<token> answers either path.
+// ACME tokens are extensionless (body = token.thumbprint); pki-validation files are
+// <token>.txt. Skipped for wildcard hosts.
 func validationBlock(host, root string) string {
 	root = strings.TrimSpace(root)
 	if root == "" || strings.HasPrefix(normalizeHost(host), "*.") {
 		return ""
 	}
+	serve := func(prefix string) string {
+		return "    handle_path " + prefix + "/* {\n" +
+			"        root * " + root + "\n" +
+			"        file_server\n" +
+			"    }\n"
+	}
 	return "http://" + host + " {\n" +
-		"    handle /.well-known/pki-validation/* {\n" +
-		"        root * " + root + "\n" +
-		"        file_server\n" +
-		"    }\n" +
+		serve("/.well-known/acme-challenge") +
+		serve("/.well-known/pki-validation") +
 		"    handle {\n" +
 		"        redir https://{host}{uri} 308\n" +
 		"    }\n" +
