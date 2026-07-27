@@ -23,6 +23,18 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-27 - Serve /.well-known/pki-validation on every vhost (CF for SaaS ownership proof)
+
+- Goal (hub): adding a tenant domain as a Cloudflare for SaaS Custom Hostname needs ownership proof. TXT validation = asking a non-technical CLIENT for 3 cryptic records, then separately an A-record change (2 touchpoints × ~80 clients). HTTP validation = Cloudflare fetches `http://<domain>/.well-known/pki-validation/<token>.txt`, and we control the SERVER for every one of these domains — so the Owner supplies the proof himself and the client's only action is the final A record. 1 touchpoint.
+- Render: new `Host.ValidationRoot` → `validationBlock()` emits an **explicit `http://<host>` site** serving `/.well-known/pki-validation/*` from a shared dir (`root` + `file_server`), with a second `handle` re-creating the HTTPS redirect. **Why explicit http://**: with only the normal site block, Caddy's automatic HTTPS would 308 the validator to https, and at validation time the domain may have NO usable cert — the fetch would fail. Taking over the HTTP site means we must re-create the redirect ourselves, which the second handle does, so every non-validation request behaves exactly as before. Caddy still answers its own ACME HTTP-01 challenges ahead of these routes, so issuance is unaffected. Applies to tenant + system + redirect hosts; skipped for wildcards.
+- Config: `Config.ValidationDir`, default `/var/www/acme-validation`, env `CADDY_VALIDATION_DIR` (set empty to disable). plan.go sets it per host.
+- Directory: `ensureValidationDir()` at engine construction — `MkdirAll` + explicit `Chmod 0755`. The chmod matters: we run as root and MkdirAll respects umask, so a default-mode dir (or a non-world-readable token file) is unreadable by the `caddy` user → confusing 403/404. The hub reported this biting twice.
+- NO toggle, deliberately: an empty directory serves 404s, so it's inert until used, and there's no reason to ever turn it off. Consistent with the Owner's "one canonical mechanism, no parallel paths" principle (same session as removing the cert escape hatch).
+- Nice-to-have (token-writing UI) NOT built as a separate feature — the Files explorer's new create-file flow already does it: New file → folder `/var/www/acme-validation` → name `<token>.txt` → paste contents → Save (creates 0644, world-readable). One mechanism, no duplicate UI.
+- Tests: `TestRender_ValidationBlock` (exact bytes), `TestRender_ValidationBlock_OffAndWildcard` (unset root ⇒ byte-identical to before = purely additive; wildcard skipped). All pre-existing golden snippet tests still pass unchanged.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; render+reconcile+config tests pass; services test compiles for linux; client tsc 0.
+- VERIFY ON DEPLOY: `curl -s http://<any-tenant-domain>/.well-known/pki-validation/test.txt` returns a placed file over plain HTTP, while the site keeps serving normally.
+
 ### 2026-07-26 - Origin cert REGISTRY: auto-select by hostname coverage (replaces default+override)
 
 - Goal (Owner-raised via hub, and correct): `propertyweb.co` and `propertyboom.co` are PEER zones. Designating one "the global default" and the other "the per-host override" was arbitrary — no principled reason propertyweb wins, a third zone worsens the asymmetry, and every propertyboom host would need a manual path the panel can derive itself.

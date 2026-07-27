@@ -39,6 +39,12 @@ type Config struct {
 	StackPorts map[string]string
 	// Encode is the response-compression policy for proxied vhosts ("zstd gzip"); "" = off.
 	Encode string
+	// ValidationDir is the single shared directory every vhost serves at
+	// /.well-known/pki-validation/ over PLAIN HTTP. It lets us prove domain ownership
+	// for a Cloudflare for SaaS custom hostname from the SERVER — which we control —
+	// instead of asking the domain's owner to add TXT records. Must be plain HTTP:
+	// the domain may not have a usable certificate yet at validation time. "" = off.
+	ValidationDir string
 	// SecurityHeaders is the edge-header policy for TENANT vhosts only; nil = off.
 	SecurityHeaders *SecurityHeaders
 }
@@ -50,6 +56,7 @@ func defaults() Config {
 		CaddyAdminURL:  "http://localhost:2019",
 		BackupDir:      "/var/lib/ppt-server-panel/caddy-backups",
 		KnownHostsFile: "/var/lib/ppt-server-panel/vhost-known-hosts.json",
+		ValidationDir:  "/var/www/acme-validation",
 		PanelDomain:    "cp.propertyweb.co",
 		StackPorts: map[string]string{
 			// From design-templates/docs/stack-deploy-ports.md (host:port so the
@@ -85,6 +92,9 @@ func Load() Config {
 	}
 	if v, ok := os.LookupEnv("CADDY_ENCODE"); ok {
 		cfg.Encode = v
+	}
+	if v, ok := os.LookupEnv("CADDY_VALIDATION_DIR"); ok {
+		cfg.ValidationDir = v // set empty to turn the validation path off entirely
 	}
 	return cfg
 }

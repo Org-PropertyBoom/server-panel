@@ -66,6 +66,37 @@ type Host struct {
 	// (it terminates at the CF edge, never reaching Caddy).
 	TLSCertPath string
 	TLSKeyPath  string
+	// ValidationRoot, when set, emits an explicit `http://<host>` block that serves
+	// /.well-known/pki-validation/ from that shared directory over PLAIN HTTP and
+	// redirects everything else to HTTPS (preserving Caddy's normal behaviour).
+	// It lets us prove domain ownership for a Cloudflare for SaaS custom hostname
+	// from the server we control, instead of asking the domain owner for TXT records.
+	ValidationRoot string
+}
+
+// validationBlock renders the plain-HTTP ownership-validation site for a host.
+//
+// It must be an EXPLICIT `http://<host>` block: with only the normal site block,
+// Caddy's automatic HTTPS would 308 the validator to https, and at validation time
+// the domain may not have a usable certificate yet — so the fetch would fail. By
+// taking over the HTTP site we must re-create the redirect ourselves, which the
+// second handle does, leaving every non-validation request behaving exactly as
+// before. (Caddy still answers its own ACME HTTP-01 challenges ahead of these
+// routes, so issuance is unaffected.) Skipped for wildcard hosts.
+func validationBlock(host, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" || strings.HasPrefix(normalizeHost(host), "*.") {
+		return ""
+	}
+	return "http://" + host + " {\n" +
+		"    handle /.well-known/pki-validation/* {\n" +
+		"        root * " + root + "\n" +
+		"        file_server\n" +
+		"    }\n" +
+		"    handle {\n" +
+		"        redir https://{host}{uri} 308\n" +
+		"    }\n" +
+		"}\n\n"
 }
 
 // tlsBlock renders the `tls` line for a site, 4-space indented. The two modes are
@@ -128,13 +159,15 @@ func Render(h Host) (name string, contents string, err error) {
 		if up == "" {
 			return "", "", fmt.Errorf("render: %s host %q has no upstream target", h.Kind, host)
 		}
-		return FileName(host), proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
+		return FileName(host), validationBlock(host, h.ValidationRoot) +
+			proxySnippet(host, up, strings.TrimSpace(h.Encode), h.HeaderBlock, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
 	case KindRedirect:
 		target := strings.TrimSpace(h.Target)
 		if target == "" {
 			return "", "", fmt.Errorf("render: redirect host %q has no target URL", host)
 		}
-		return FileName(host), redirectSnippet(host, target, h.RedirectCode, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
+		return FileName(host), validationBlock(host, h.ValidationRoot) +
+			redirectSnippet(host, target, h.RedirectCode, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
 	default:
 		return "", "", fmt.Errorf("render: unknown kind %d for host %q", h.Kind, host)
 	}

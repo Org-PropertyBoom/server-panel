@@ -1,6 +1,9 @@
 package render
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The golden snippet bytes below are copied from property-team
 // CaddyVhostsService (vhostSnippet / systemSnippet / redirectSnippet). The engine
@@ -68,6 +71,51 @@ func TestRender_OnDemandTLS(t *testing.T) {
 	rwant := "old.example.com {\n    tls {\n        on_demand\n        issuer acme\n    }\n    redir https://new.example.com 301\n}\n"
 	if rbody != rwant {
 		t.Errorf("redirect body = %q, want %q", rbody, rwant)
+	}
+}
+
+func TestRender_ValidationBlock(t *testing.T) {
+	// The validation site must be an explicit http:// block (plain HTTP — the domain
+	// may not have a usable cert yet), serving only the pki-validation path and
+	// redirecting everything else to HTTPS exactly as Caddy would have.
+	_, body, err := Render(Host{
+		Host: "tenant.example.com", Kind: KindTenant, Target: "127.0.0.1:8002",
+		ValidationRoot: "/var/www/acme-validation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "http://tenant.example.com {\n" +
+		"    handle /.well-known/pki-validation/* {\n" +
+		"        root * /var/www/acme-validation\n" +
+		"        file_server\n" +
+		"    }\n" +
+		"    handle {\n" +
+		"        redir https://{host}{uri} 308\n" +
+		"    }\n" +
+		"}\n\n" +
+		"tenant.example.com {\n    reverse_proxy 127.0.0.1:8002\n}\n"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
+func TestRender_ValidationBlock_OffAndWildcard(t *testing.T) {
+	// No root configured → byte-identical to before (purely additive).
+	_, body, err := Render(Host{Host: "a.example.com", Kind: KindTenant, Target: "127.0.0.1:8002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != "a.example.com {\n    reverse_proxy 127.0.0.1:8002\n}\n" {
+		t.Errorf("unset root must not change rendering, got %q", body)
+	}
+	// Wildcards are skipped (an http://*.x block isn't useful for HTTP validation).
+	_, wbody, err := Render(Host{Host: "*.example.com", Kind: KindTenant, Target: "127.0.0.1:8002", ValidationRoot: "/var/www/acme-validation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(wbody, "http://") {
+		t.Errorf("wildcard must not get a validation block, got %q", wbody)
 	}
 }
 

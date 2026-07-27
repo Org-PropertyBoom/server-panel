@@ -126,6 +126,7 @@ func BuildPlanWithKnown(cfg config.Config, snap db.Snapshot, folderNames []strin
 			skips = append(skips, Skip{r.Table, host, reason})
 			continue
 		}
+		h.ValidationRoot = cfg.ValidationDir // plain-HTTP domain-ownership proof path
 		// Per-host TLS mode: cf_origin renders a static Origin cert (mutually
 		// exclusive with on_demand — a CF-proxied host can't do ACME); anything
 		// else falls back to the gated on-demand behavior. Cert/key are already

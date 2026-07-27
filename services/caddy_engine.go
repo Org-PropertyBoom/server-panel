@@ -73,7 +73,23 @@ func (v *VhostEngineService) TenantHosts(ctx context.Context) ([]string, error) 
 func NewVhostEngineService(sources *DataSourceService, settings *SettingsService) *VhostEngineService {
 	cfg := caddyconfig.Load()
 	engine := reconcile.NewEngine(cfg, caddyctl.Adapter{}, caddyctl.NewClient(cfg.CaddyAdminURL))
+	ensureValidationDir(cfg.ValidationDir)
 	return &VhostEngineService{sources: sources, settings: settings, cfg: cfg, engine: engine, containers: NewContainerService(), certAskCache: map[string]time.Time{}}
+}
+
+// ensureValidationDir creates the shared domain-ownership validation directory if
+// missing. 0755 matters: we run as root, so a default-umask directory (or a token
+// file that isn't world-readable) is unreadable by the `caddy` user and validation
+// fails with a confusing 403/404. Best-effort — a missing directory just means
+// file_server returns 404 until it exists.
+func ensureValidationDir(dir string) {
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.Chmod(dir, 0o755) // MkdirAll respects umask; force the readable mode
 }
 
 // Upstream is one reverse-proxy target a system host can point at — synced from a
