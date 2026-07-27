@@ -14,6 +14,7 @@ import {
     AlertCircle,
     RefreshCw,
     Search,
+    FilePlus,
     Pencil,
     Trash2,
     X,
@@ -61,6 +62,10 @@ export default function FilesRoute() {
     const [fileMeta, setFileMeta] = useState<FileMeta | null>(null);
     const [showDetails, setShowDetails] = useState(true);
     const [revealTarget, setRevealTarget] = useState("");
+
+    // New file/folder modal
+    const [createOpen, setCreateOpen] = useState(false);
+    const [createDir, setCreateDir] = useState("/");
 
     // Initialize root / home directory
     const initExplorer = async () => {
@@ -204,6 +209,23 @@ export default function FilesRoute() {
         setExpanded((prev) => ({ ...prev, [parent]: items }));
     };
 
+    // Create a new file or folder in dir, refresh + expand that folder in the tree,
+    // and open the new file in the editor so it's immediately editable.
+    const createEntry = async (dir: string, name: string, kind: "file" | "dir") => {
+        const res = await fetch(apiEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir, name, kind }),
+        });
+        if (!res.ok) throw new Error((await res.text()).trim() || "Failed to create");
+        const items = await fetchFolderContents(dir);
+        setExpanded((prev) => ({ ...prev, [dir]: items }));
+        if (kind === "file") {
+            const path = `${dir === "/" ? "" : dir}/${name}`;
+            handleSelectNode({ name, path, isDir: false, size: 0, modTime: "" });
+        }
+    };
+
     // Rename a file in place: rename it, re-point the editor if it was open, and
     // refresh its folder in the tree so the node shows the new name.
     const renameFile = async (path: string, newName: string) => {
@@ -251,14 +273,27 @@ export default function FilesRoute() {
                         <span className="text-xs font-semibold text-muted-foreground">
                             Explorer
                         </span>
-                        <button
-                            onClick={initExplorer}
-                            className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                            title="Refresh Explorer"
-                            disabled={isLoading}
-                        >
-                            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
-                        </button>
+                        <div className="flex items-center gap-0.5">
+                            <button
+                                onClick={() => {
+                                    const parent = selectedFile ? selectedFile.path.slice(0, selectedFile.path.lastIndexOf("/")) || "/" : "/";
+                                    setCreateDir(parent);
+                                    setCreateOpen(true);
+                                }}
+                                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                title="New file or folder"
+                            >
+                                <FilePlus className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                                onClick={initExplorer}
+                                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                title="Refresh Explorer"
+                                disabled={isLoading}
+                            >
+                                <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto py-2 px-2">
@@ -314,7 +349,114 @@ export default function FilesRoute() {
                     <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} onDelete={deleteFile} onRename={renameFile} />
                 ) : null}
             </div>
+
+            {createOpen ? (
+                <CreateEntryModal
+                    dir={createDir}
+                    onDirChange={setCreateDir}
+                    onClose={() => setCreateOpen(false)}
+                    onCreate={createEntry}
+                />
+            ) : null}
         </DashboardLayout>
+    );
+}
+
+// CreateEntryModal creates a new empty file (or folder) in a chosen directory. The
+// folder is pre-filled from the current selection and stays editable, so a file can
+// be created anywhere without first navigating there. A new file opens straight in
+// the editor, so "create then write" is one flow.
+function CreateEntryModal({
+    dir,
+    onDirChange,
+    onClose,
+    onCreate,
+}: {
+    dir: string;
+    onDirChange: (dir: string) => void;
+    onClose: () => void;
+    onCreate: (dir: string, name: string, kind: "file" | "dir") => Promise<void>;
+}) {
+    const [name, setName] = useState("");
+    const [kind, setKind] = useState<"file" | "dir">("file");
+    const [busy, setBusy] = useState(false);
+
+    const submit = async () => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        setBusy(true);
+        try {
+            await onCreate(dir.trim() || "/", trimmed, kind);
+            toast.success(`${trimmed} created`);
+            onClose();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Create failed");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (busy ? null : onClose())}>
+            <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h2 className="text-sm font-semibold text-foreground">New {kind === "dir" ? "folder" : "file"}</h2>
+
+                <div className="mt-3 inline-flex rounded-md border border-border p-0.5">
+                    {(["file", "dir"] as const).map((k) => (
+                        <button
+                            key={k}
+                            onClick={() => setKind(k)}
+                            className={`rounded px-2.5 py-1 text-xs font-medium ${kind === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                            {k === "file" ? "File" : "Folder"}
+                        </button>
+                    ))}
+                </div>
+
+                <label className="mt-3 block">
+                    <span className="mb-1 block text-[11px] uppercase tracking-wide text-muted-foreground">In folder</span>
+                    <input
+                        value={dir}
+                        onChange={(e) => onDirChange(e.target.value)}
+                        spellCheck={false}
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-primary"
+                    />
+                </label>
+
+                <label className="mt-3 block">
+                    <span className="mb-1 block text-[11px] uppercase tracking-wide text-muted-foreground">Name</span>
+                    <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") submit();
+                            if (e.key === "Escape") onClose();
+                        }}
+                        placeholder={kind === "dir" ? "my-folder" : "notes.txt"}
+                        autoFocus
+                        spellCheck={false}
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+                    />
+                </label>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {kind === "dir" ? "Creates an empty folder." : "Creates an empty file and opens it in the editor."} Won't overwrite an existing entry.
+                </p>
+
+                <div className="mt-5 flex justify-end gap-2">
+                    <button onClick={onClose} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={submit}
+                        disabled={busy || !name.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                    >
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus className="h-4 w-4" />}
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }
 

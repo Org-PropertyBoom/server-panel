@@ -53,6 +53,32 @@ func Handler(sessions *services.SessionService) http.Handler {
 			return
 		}
 
+		if r.Method == http.MethodPost {
+			var body struct {
+				Dir     string `json:"dir"`
+				Name    string `json:"name"`
+				Kind    string `json:"kind"` // "dir" creates a folder; anything else a file
+				Content string `json:"content"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Dir) == "" || strings.TrimSpace(body.Name) == "" {
+				http.Error(w, "dir and name are required", http.StatusBadRequest)
+				return
+			}
+			if err := services.CreatePath(body.Dir, body.Name, body.Content, body.Kind == "dir", homeDir, true); err != nil {
+				switch {
+				case errors.Is(err, services.ErrAccessDenied):
+					http.Error(w, "access denied", http.StatusForbidden)
+				case errors.Is(err, services.ErrProtectedPath):
+					http.Error(w, err.Error(), http.StatusForbidden)
+				default:
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+
 		if r.Method == http.MethodPatch {
 			var body struct {
 				Path    string `json:"path"`

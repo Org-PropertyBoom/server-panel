@@ -118,6 +118,59 @@ func DeleteFile(filePath, homeDir string, isRoot bool) error {
 	return os.Remove(filePath)
 }
 
+// CreatePath creates a new empty file (or directory) named name inside dirPath.
+// Like RenameFile it takes a BARE name, never a path, so it can't create entries
+// outside the chosen directory. Refuses the deny-list, refuses to overwrite an
+// existing entry, and requires dirPath to be an existing directory. Optional
+// initial content is written for files (same binary/size guards as an edit).
+func CreatePath(dirPath, name, content string, isDir bool, homeDir string, isRoot bool) error {
+	dirPath = filepath.Clean(dirPath)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		return errors.New("name must be a file name, not a path")
+	}
+	if !isRoot {
+		cleanHome := filepath.Clean(homeDir)
+		if dirPath != cleanHome && !strings.HasPrefix(dirPath, cleanHome+string(filepath.Separator)) {
+			return ErrAccessDenied
+		}
+	}
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("target is not a directory")
+	}
+	target := filepath.Join(dirPath, name)
+	if isProtectedFilePath(target) {
+		return ErrProtectedPath
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return fmt.Errorf("%s already exists", name)
+	}
+	if isDir {
+		return os.Mkdir(target, 0o755)
+	}
+	if strings.ContainsRune(content, 0) {
+		return errors.New("refusing to write binary content")
+	}
+	if len(content) > maxEditableFileSize {
+		return errors.New("file too large to save")
+	}
+	// O_EXCL: fail rather than clobber if something appeared since the check above.
+	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return err
+}
+
 // RenameFile renames a file or directory IN PLACE (same parent directory) — it
 // takes a bare new name, never a path, so it can't be used to move things around
 // the filesystem or escape the caller's jail. Refuses the deny-list on both the
