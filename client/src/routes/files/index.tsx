@@ -93,6 +93,19 @@ export default function FilesRoute() {
         }
     }, [openTabs]);
 
+    // Captured during the FIRST RENDER, before any effect runs. The effect below
+    // fires on mount with selectedFile still null and clears the stored path, so
+    // reading it later (from the restore effect) would always come back empty.
+    const restoreTarget = useRef<string>(
+        (() => {
+            try {
+                return window.localStorage.getItem(ACTIVE_FILE_KEY) ?? "";
+            } catch {
+                return "";
+            }
+        })(),
+    );
+
     useEffect(() => {
         try {
             if (selectedFile) window.localStorage.setItem(ACTIVE_FILE_KEY, selectedFile.path);
@@ -304,12 +317,9 @@ export default function FilesRoute() {
         // revealed in place. A file that's since been deleted surfaces as a normal
         // read error rather than silently vanishing.
         initExplorer().then(() => {
-            let active = "";
-            try {
-                active = window.localStorage.getItem(ACTIVE_FILE_KEY) ?? "";
-            } catch {
-                return;
-            }
+            // Prefer the file that was active; otherwise fall back to the first open
+            // tab, so restored tabs are never shown against an empty editor pane.
+            const active = restoreTarget.current || openTabs[0]?.path || "";
             if (!active) return;
             openFileByPath(active, active.slice(active.lastIndexOf("/") + 1)).catch(() => undefined);
         });
