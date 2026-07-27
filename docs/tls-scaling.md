@@ -158,6 +158,22 @@ Mitigation shipped (see `services/caddy_engine.go` + `tls_ask_allow` table):
 - Genuinely **unknown hosts stay fail-closed** — that's the abuse guard that killed the
   ACME storm.
 
+**VERIFIED 2026-07-27:** 60 unbroken `200`s across a live
+`systemctl restart ppt-server-panel@root`. Panel restarts no longer affect TLS.
+
+Re-running the acceptance test (these gotchas cost several attempts):
+
+```bash
+( for i in $(seq 1 60); do curl -s -o /dev/null -w "%{http_code} " -A '<full browser UA>' https://<host>; sleep 1; done ) & sleep 5; systemctl restart ppt-server-panel@root; wait
+```
+
+- Run it from **real SSH / EC2 Instance Connect — NOT the panel's own web terminal**.
+  That shell is a child of the panel process and dies with the restart.
+- `sudo -i` first: otherwise `systemctl` hits a polkit prompt and times out.
+- Once a host is **Proxied**, plain `curl` gets **403** from Cloudflare bot
+  protection — send a FULL browser User-Agent (a bare `Mozilla/5.0` is not enough).
+  A 403 still proves TLS succeeded; `000` is the failure signal to watch for.
+
 **Residual risk:** while the panel process is fully **down** (not warming — down), the
 ask is unreachable and Caddy refuses for hosts not in its own cert cache. The panel
 cannot fix that from inside itself. Real mitigations: keep restarts short, and for
