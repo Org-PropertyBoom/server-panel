@@ -73,6 +73,18 @@ func NewSettingsService() (*SettingsService, error) {
 	// on-demand template). "cf_origin" renders a static `tls <cert> <key>` instead — for
 	// hosts proxied through Cloudflare, which can't complete an ACME challenge (it
 	// terminates at the CF edge). cert_path/key_path override the global default paths.
+	// Hosts previously authorized for on-demand TLS. Caddy consults /internal/tls-ask
+	// on HANDSHAKES (not just at issuance), and the endpoint is fail-closed — so this
+	// allowlist is PERSISTED and re-read at boot, letting the panel answer 200 for
+	// already-known-good hosts while it is restarting or still warming up. Without it,
+	// a routine panel restart takes HTTPS down for every on-demand host.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tls_ask_allow (
+		host TEXT PRIMARY KEY,
+		allowed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS vhost_tls_modes (
 		host TEXT PRIMARY KEY,
 		mode TEXT NOT NULL DEFAULT 'ondemand',

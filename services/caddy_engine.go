@@ -39,7 +39,8 @@ type VhostEngineService struct {
 	containers *ContainerService   // for the system-host upstream picker (running containers + published ports)
 
 	certAskMu    sync.Mutex           // guards the on-demand-TLS ask cache
-	certAskCache map[string]time.Time // host -> when authorized (positive answers only, short TTL)
+	certAskCache map[string]time.Time // host -> when authorized (positive answers only)
+	certAskOnce  sync.Once            // loads the PERSISTED allowlist on first use
 }
 
 // AttachHealth wires the reachability probe so State can surface it. Set once at
@@ -293,16 +294,38 @@ func verifyOriginCertCoversHost(certPath, host string) error {
 	return nil
 }
 
-// certAskCacheTTL is how long a positive ask answer is trusted before re-checking
-// the DB. Short, because a host can be disabled/suppressed at any time.
-const certAskCacheTTL = 45 * time.Second
+// certAskCacheTTL is how long a previously-authorized host keeps answering 200
+// without re-checking the shared DB.
+//
+// This is deliberately LONG (12h default, override with TLS_ASK_CACHE_HOURS).
+// Caddy consults the ask endpoint on HANDSHAKES for any hostname not in its cert
+// cache — not only when issuing — and the endpoint is fail-closed. With a short
+// TTL, any panel restart or data-source blip becomes a platform-wide HTTPS outage
+// (observed 2026-07-26: a "Check Update" restart took go3, laravel3 and the panel
+// domain to curl 000 simultaneously). The allowlist is also PERSISTED, so a
+// restart re-reads it and keeps answering for known-good hosts while warming up.
+//
+// Staleness is handled by explicit invalidation instead of a short clock: the
+// operator's disable/suppress path evicts the host immediately. Genuinely UNKNOWN
+// hosts are still fail-closed — that's the abuse guard that killed the ACME storm.
+func certAskCacheTTL() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("TLS_ASK_CACHE_HOURS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Hour
+		}
+	}
+	return 12 * time.Hour
+}
 
 // CertAllowed is the authorization decision behind the Caddy `ask` endpoint: may
-// Caddy obtain an on-demand cert for host? True ONLY for a known, active,
-// non-suppressed host (protected/panel domains are always allowed). FAIL-CLOSED:
-// any DB error returns (false, err) so a DB blip only pauses NEW issuance —
-// existing certs keep serving from Caddy's storage. Positive answers are cached
-// briefly; negatives and errors are NOT cached, so a fresh enable+visit works.
+// Caddy serve/obtain an on-demand cert for host? True for a known, active,
+// non-suppressed host (protected/panel domains always allowed).
+//
+// Order matters for availability: the PERSISTED allowlist is consulted FIRST, so a
+// host that was valid recently keeps answering 200 even when the shared DB is
+// unreachable or the panel has just restarted. Only a cache MISS touches the DB,
+// and only then is the answer fail-closed — an unknown host is refused. Negatives
+// and errors are never cached, so a fresh enable + visit works immediately.
 func (v *VhostEngineService) CertAllowed(ctx context.Context, host string) (bool, error) {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
@@ -314,6 +337,7 @@ func (v *VhostEngineService) CertAllowed(ctx context.Context, host string) (bool
 			return true, nil
 		}
 	}
+	// Known-good fast path — no DB, survives restarts.
 	if v.certAskCached(host) {
 		return true, nil
 	}
@@ -336,31 +360,64 @@ func (v *VhostEngineService) CertAllowed(ctx context.Context, host string) (bool
 	return allowed, nil
 }
 
+// certAskLoad reads the persisted allowlist into memory ONCE, on first use. Doing
+// it lazily keeps boot fast and failure-free; a read error just leaves the cache
+// empty (every host then takes the DB path, i.e. today's behavior).
+func (v *VhostEngineService) certAskLoad() {
+	v.certAskOnce.Do(func() {
+		persisted, err := v.settings.TLSAskAllowlist()
+		if err != nil || len(persisted) == 0 {
+			return
+		}
+		v.certAskMu.Lock()
+		defer v.certAskMu.Unlock()
+		for h, at := range persisted {
+			v.certAskCache[h] = at
+		}
+	})
+}
+
 func (v *VhostEngineService) certAskCached(host string) bool {
+	v.certAskLoad()
 	v.certAskMu.Lock()
 	defer v.certAskMu.Unlock()
 	at, ok := v.certAskCache[host]
 	if !ok {
 		return false
 	}
-	if time.Since(at) > certAskCacheTTL {
+	if time.Since(at) > certAskCacheTTL() {
 		delete(v.certAskCache, host)
 		return false
 	}
 	return true
 }
 
+// certAskStore records a host as authorized, in memory AND on disk so the answer
+// survives a panel restart (the restart window is exactly when a fail-closed ask
+// would otherwise drop TLS for every on-demand host).
 func (v *VhostEngineService) certAskStore(host string) {
+	ttl := certAskCacheTTL()
 	v.certAskMu.Lock()
-	defer v.certAskMu.Unlock()
 	now := time.Now()
 	v.certAskCache[host] = now
 	// Opportunistically evict expired entries so the map can't grow unbounded.
 	for h, at := range v.certAskCache {
-		if now.Sub(at) > certAskCacheTTL {
+		if now.Sub(at) > ttl {
 			delete(v.certAskCache, h)
 		}
 	}
+	v.certAskMu.Unlock()
+	_ = v.settings.SetTLSAskAllowed(host) // best-effort; memory cache still serves
+}
+
+// certAskEvict removes a host from the allowlist (memory + disk) so the ask starts
+// refusing it immediately — used when the operator disables/suppresses a host,
+// instead of waiting out the long TTL.
+func (v *VhostEngineService) certAskEvict(host string) {
+	v.certAskMu.Lock()
+	delete(v.certAskCache, host)
+	v.certAskMu.Unlock()
+	_ = v.settings.DeleteTLSAskAllowed(host)
 }
 
 // SystemHostForm / RedirectForm are the management-UI create/update payloads.
@@ -925,6 +982,10 @@ func (v *VhostEngineService) SuppressHost(ctx context.Context, host string, supp
 	}
 	if err := v.settings.SetHostSuppressed(host, suppressed); err != nil {
 		return reconcile.Result{Error: err.Error()}, err
+	}
+	// Disabling must stop cert issuance NOW, not after the allowlist TTL expires.
+	if suppressed {
+		v.certAskEvict(host)
 	}
 	return v.Reconcile(ctx)
 }

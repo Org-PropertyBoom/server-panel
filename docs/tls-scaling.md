@@ -134,6 +134,38 @@ Notes that shaped the call:
   data-residency), already leaning on CloudFront/ALB, wanted a single vendor/bill, or
   needed tight VPC/private-origin integration — none of which apply now.
 
+## ⚠ The ask endpoint is on the HANDSHAKE path (2026-07-26 outage)
+
+**Corrects an earlier assumption in this doc and in the original spec.** We reasoned
+"existing certs keep serving, a fail-closed ask only pauses NEW issuance." **That is
+false.** Caddy consults the `ask` endpoint on **handshakes** for any hostname not in
+its in-memory cert cache — not only at issuance. With a fail-closed ask, that makes
+the panel a **single point of failure for TLS across every on-demand host**.
+
+Observed: the Owner clicked **Check Update**; the panel restarted; during that window
+`/internal/tls-ask` failed and **go3, laravel3 and cp.propertyweb.co all returned curl
+`000` simultaneously**. It self-healed the moment the panel came back — but a routine
+panel deploy took HTTPS down platform-wide, and every future deploy would repeat it.
+
+Mitigation shipped (see `services/caddy_engine.go` + `tls_ask_allow` table):
+- Positive answers cached **12h** (was 45s; override `TLS_ASK_CACHE_HOURS`).
+- The allowlist is **persisted to SQLite and re-read at boot**, so a restart keeps
+  answering 200 for already-known-good hosts.
+- The allowlist is consulted **before** the DB, so a host valid recently still answers
+  while the panel is warming or the shared DB is unreachable.
+- Staleness is handled by **explicit eviction** (disable/suppress removes the host
+  immediately) rather than a short clock.
+- Genuinely **unknown hosts stay fail-closed** — that's the abuse guard that killed the
+  ACME storm.
+
+**Residual risk:** while the panel process is fully **down** (not warming — down), the
+ask is unreachable and Caddy refuses for hosts not in its own cert cache. The panel
+cannot fix that from inside itself. Real mitigations: keep restarts short, and for
+hosts that must never depend on the panel, use `cf_origin`/a static cert (no ask on
+the path at all). **Do not put the panel's own domain on on-demand** — that's a
+circular dependency (panel down → its domain can't get a cert → can't reach the panel
+to fix it); keep `cp.propertyweb.co` a static/pinned block.
+
 ## Key gotchas (do not skip)
 
 - **Proxying breaks on-demand LE for that host.** Once a domain is proxied through

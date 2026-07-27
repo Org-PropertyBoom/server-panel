@@ -4,9 +4,56 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	caddydb "ppt/server-panel/services/caddy/db"
 )
+
+// --- on-demand TLS ask allowlist (persisted) ---
+//
+// Caddy consults /internal/tls-ask on HANDSHAKES for any hostname not in its cert
+// cache — not only when issuing. The endpoint is fail-closed, so if the panel is
+// restarting (or its data source isn't ready) every on-demand host loses TLS. This
+// allowlist records hosts the panel HAS authorized, survives restarts, and is read
+// back at boot so those hosts keep answering 200 while the panel warms up.
+
+// TLSAskAllowlist loads the persisted allowlist (host -> when it was authorized).
+func (s *SettingsService) TLSAskAllowlist() (map[string]time.Time, error) {
+	rows, err := s.db.Query("SELECT host, allowed_at FROM tls_ask_allow")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var host string
+		var at time.Time
+		if err := rows.Scan(&host, &at); err != nil {
+			return nil, err
+		}
+		out[host] = at
+	}
+	return out, rows.Err()
+}
+
+// SetTLSAskAllowed records/refreshes a host as authorized for on-demand TLS.
+func (s *SettingsService) SetTLSAskAllowed(host string) error {
+	key := normalizeHostKey(host)
+	if key == "" {
+		return fmt.Errorf("host is required")
+	}
+	_, err := s.db.Exec(`INSERT INTO tls_ask_allow (host, allowed_at) VALUES (?, CURRENT_TIMESTAMP)
+		ON CONFLICT(host) DO UPDATE SET allowed_at = CURRENT_TIMESTAMP`, key)
+	return err
+}
+
+// DeleteTLSAskAllowed drops a host from the allowlist — called when the operator
+// disables/suppresses it, so the ask starts refusing immediately instead of waiting
+// out the cache TTL.
+func (s *SettingsService) DeleteTLSAskAllowed(host string) error {
+	_, err := s.db.Exec("DELETE FROM tls_ask_allow WHERE host = ?", normalizeHostKey(host))
+	return err
+}
 
 // Per-host TLS mode store — panel-local (server-panel's own SQLite). A host with
 // mode "cf_origin" serves a static Cloudflare Origin cert (`tls <cert> <key>`)
