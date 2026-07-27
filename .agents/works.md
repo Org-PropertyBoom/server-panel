@@ -23,6 +23,18 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-07-27 - Cutover Assistant Phase 1 (Edge column + gated per-tenant modal)
+
+- Spec (sole source of truth, re-read at that commit): design-templates `docs/panel-cutover-assistant.md` @ **1a5eb56** + `docs/cloudflare-tenant-cutover.md` @ 1a5eb56 (canonical client message templates — the modal RENDERS them, doesn't invent copy).
+- 🔴 HARD CONSTRAINT HONOURED: `website_hosts` is stack-owned and READ-ONLY. This feature is read + compose + display only. `services/dns_probe.go` performs DNS lookups (net resolver + `dig`) and NOTHING else — grep-verified: no `db.`, `Exec`, INSERT/UPDATE/DELETE, no Reconcile, no suppress, no Caddy write. Conservation clause honoured: nothing removed from /vhosts; every counter, toggle, nav item, chip, search and action still present.
+- Backend `services/dns_probe.go` (new): `Edges()` batch edge classification (Origin | Cloudflare | Elsewhere | NXDOMAIN) with a **6h cache + concurrency-16 pool** (`CUTOVER_DNS_CACHE_HOURS`); CF ranges by CIDR membership, origin IPs from `CUTOVER_ORIGIN_IPS` (default 52.76.29.0, 52.76.123.15, 3.1.252.222). `Cutover()` = Stage 1 fixed-label pre-flight (26 probes, concurrent) + live apex IP + MX/www detection + DNSSEC. `ZoneDiff()` = Stage 3, queries current NS vs target NS per label via `dig @ns`.
+- **DNSSEC gate FAILS CLOSED** — Go's resolver has no DS support so DS goes via `dig`; if dig is missing or the query errors, `DSChecked=false` and Stage 4 stays LOCKED. Reporting "no DS" on an unknown would be the single most destructive mistake on this path (nameserver switch under DNSSEC = domain unresolvable, not degraded).
+- Routes (root-only, postOnly): `POST /post/vhost/edge`, `GET /post/vhost/cutover?host=`, `POST /post/vhost/cutover/diff`. `dnsProbe` is a package-level SINGLETON — the cache is per-process state; a per-request service would re-resolve 103 hosts every view.
+- Frontend: `cutover-templates.ts` (verbatim transcription of the canonical templates; plain text, no markdown artefacts; `EMAIL_UNAFFECTED` auto-appended when MX found) + `cutover-modal.tsx` (Client name field; tabs A>C>B with B visibly de-emphasised; Tab A staged 1→4 with Stage 4 locked behind BOTH gates and a specific lock reason per failure; copy-message + per-record copy). `tenant.tsx`: Edge column between Upstream and Status, edge filter chips beside the stack chips, `Cutover…` action before `Disable`.
+- VERIFIED LIVE (standalone Go probe against real DNS): rynerkoh.com → **Cloudflare** (172.67.206.132, 104.21.69.82), raymondgiam.com → **Cloudflare**, apss.com.sg + didihomes.sg → **Origin** (52.76.123.15). Matches the spec's verification criterion exactly. Unit tests: CF/origin classification, full 26-label probe list vs spec, fqdn, sameAnswers (a dropped record must NOT match — the point of the gate).
+- OUT OF SCOPE as instructed: Phase 2 Cloudflare API (no token exists — TODO noted in the modal footer), bulk migrate, sending email.
+- Validation: `GOOS=linux go build ./...` 0; gofmt clean; services test compiles for linux; caddy tests pass; client tsc 0; `npm run build` OK. NOT deployed.
+
 ### 2026-07-27 - FIX: validation path is acme-challenge, not pki-validation (+ ACME precedence)
 
 - Correction (hub, with live evidence from the Add Custom Hostname screen): Cloudflare fetches `/.well-known/acme-challenge/<token>` — standard HTTP-01 shape, extensionless token filename, body = `token.thumbprint`, and **TWO tokens per hostname** (SSL.com issues a pair), so the handler must serve multiple files. c6c050e's `pki-validation` path was wrong.

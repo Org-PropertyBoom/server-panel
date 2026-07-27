@@ -408,6 +408,65 @@ func OriginCertHandler(sessions *services.SessionService, engine *services.Vhost
 	})
 }
 
+// EdgeHandler resolves where each tenant hostname's public DNS currently points
+// (Origin | Cloudflare | Elsewhere | NXDOMAIN). Answers are cached ~6h server-side,
+// so 103 hosts don't re-resolve on every page view. READ-ONLY: DNS lookups only.
+func EdgeHandler(sessions *services.SessionService, dns *services.DNSProbeService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Hosts []string `json:"hosts"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"edges": dns.Edges(r.Context(), body.Hosts)})
+	})
+}
+
+// CutoverHandler runs the Cutover Assistant pre-flight for ONE hostname: current
+// edge + apex IP, MX / www detection, the fixed-label scan, and the DNSSEC (DS)
+// check. READ-ONLY — website_hosts is stack-owned and never touched here.
+func CutoverHandler(sessions *services.SessionService, dns *services.DNSProbeService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		host := strings.TrimSpace(r.URL.Query().Get("host"))
+		if host == "" {
+			http.Error(w, "host is required", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, dns.Cutover(r.Context(), host))
+	})
+}
+
+// CutoverDiffHandler is the Stage 3 zone-diff gate: query the registrar's current
+// nameservers AND the target Cloudflare pair, and diff every pre-flight label. All
+// rows must match before a nameserver switch is safe. Needs no credentials.
+func CutoverDiffHandler(sessions *services.SessionService, dns *services.DNSProbeService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authed(sessions, r) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Host        string   `json:"host"`
+			Nameservers []string `json:"nameservers"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, dns.ZoneDiff(r.Context(), body.Host, body.Nameservers))
+	})
+}
+
 func authed(sessions *services.SessionService, r *http.Request) bool {
 	cookie, err := r.Cookie(services.SessionCookieName)
 	if err != nil {

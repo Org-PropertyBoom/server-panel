@@ -1,8 +1,32 @@
-import { useMemo, useState } from "react";
-import { ExternalLink, Loader2, Lock, Power, PowerOff, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ExternalLink, Loader2, Lock, Power, PowerOff, Search, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import { EmptyBanner, HostLink, type HostHealth, type HostRow, NoCertBadge, rowTint, StatusChip, suppressHost, summarizeError, UnreachableChip, ViewHeader } from "./shared";
+import CutoverModal from "./cutover-modal";
+
+// Edge = where the hostname's PUBLIC DNS currently points. Resolved server-side
+// and cached ~6h, so 103 hosts don't re-resolve on every page view.
+type EdgeInfo = { edge: string; ips?: string[] };
+
+const EDGE_TONE: Record<string, string> = {
+    Cloudflare: "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
+    Origin: "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    Elsewhere: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    NXDOMAIN: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+function EdgeChip({ info }: { info?: EdgeInfo }) {
+    if (!info?.edge) return <span className="text-[11px] text-muted-foreground/50">…</span>;
+    return (
+        <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${EDGE_TONE[info.edge] ?? "border-border text-muted-foreground"}`}
+            title={(info.ips ?? []).join(", ")}
+        >
+            {info.edge}
+        </span>
+    );
+}
 
 // Stack dashboard host per server_stack — the deep-link target for "Manage in
 // stack" (tenant rows are stack-owned; edits/deletes happen there, not here).
@@ -25,6 +49,32 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
     const [query, setQuery] = useState("");
     const [unreachableOnly, setUnreachableOnly] = useState(false);
     const [busy, setBusy] = useState("");
+    const [edges, setEdges] = useState<Record<string, EdgeInfo>>({});
+    const [edgeFilter, setEdgeFilter] = useState("");
+    const [cutover, setCutover] = useState<string>("");
+
+    // Resolve the Edge column once per host set. Non-blocking: the table renders
+    // immediately and chips fill in. The server caches ~6h, so revisits are free.
+    const hostKey = hosts.map((h) => h.hostname).join(",");
+    useEffect(() => {
+        const list = hosts.map((h) => h.hostname).filter(Boolean);
+        if (list.length === 0) return;
+        let cancelled = false;
+        fetch("/post/vhost/edge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ hosts: list }),
+        })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (!cancelled && d?.edges) setEdges(d.edges);
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [hostKey]);
 
     // Edge disable/enable: flips the panel-local suppress flag (no stack-DB write),
     // then reconciles so Caddy stops/starts serving the host.
@@ -49,10 +99,21 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
 
     const unreachableCount = useMemo(() => hosts.filter((h) => health[h.hostname]?.alert).length, [hosts, health]);
 
+    // Edge counts drive the filter chips alongside the stack chips.
+    const edgeCounts = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const h of hosts) {
+            const e = edges[h.hostname]?.edge;
+            if (e) counts.set(e, (counts.get(e) ?? 0) + 1);
+        }
+        return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    }, [hosts, edges]);
+
     const q = query.trim().toLowerCase();
     const filtered = hosts.filter(
         (h) =>
             (stack === "" || (h.stack || "—") === stack) &&
+            (edgeFilter === "" || edges[h.hostname]?.edge === edgeFilter) &&
             (q === "" || h.hostname.toLowerCase().includes(q)) &&
             (!unreachableOnly || !!health[h.hostname]?.alert),
     );
@@ -79,6 +140,10 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                         <Chip label="All" count={hosts.length} active={stack === ""} onClick={() => setStack("")} />
                         {stacks.map(([s, n]) => (
                             <Chip key={s} label={s} count={n} active={stack === s} onClick={() => setStack(s)} />
+                        ))}
+                        {edgeCounts.length > 0 ? <span className="mx-1 h-4 w-px bg-border" /> : null}
+                        {edgeCounts.map(([e, n]) => (
+                            <Chip key={e} label={e} count={n} active={edgeFilter === e} onClick={() => setEdgeFilter(edgeFilter === e ? "" : e)} />
                         ))}
                         <span className="flex-1" />
                         {unreachableCount > 0 ? (
@@ -119,6 +184,7 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                                             <th className="px-4 py-3 font-medium">Hostname</th>
                                             <th className="px-4 py-3 font-medium">Stack</th>
                                             <th className="px-4 py-3 font-medium">Upstream</th>
+                                            <th className="px-4 py-3 font-medium">Edge</th>
                                             <th className="px-4 py-3 font-medium">Status</th>
                                             <th className="px-4 py-3 text-right font-medium">Manage</th>
                                         </tr>
@@ -138,6 +204,9 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                                                     {h.upstream ? `→ ${h.upstream}` : h.status === "will_remove" ? "— disabled in DB" : "on disk only"}
                                                 </td>
                                                 <td className="px-4 py-3">
+                                                    <EdgeChip info={edges[h.hostname]} />
+                                                </td>
+                                                <td className="px-4 py-3">
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         <StatusChip status={h.status} />
                                                         {h.status === "disabled" ? <NoCertBadge /> : null}
@@ -146,6 +215,14 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center justify-end gap-1">
+                                                        <button
+                                                            onClick={() => setCutover(h.hostname)}
+                                                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                                                            title="Cutover assistant — pre-flight scan + client message for moving this domain to Cloudflare"
+                                                        >
+                                                            <Send className="h-3 w-3" />
+                                                            Cutover…
+                                                        </button>
                                                         <button
                                                             onClick={() => toggle(h.hostname, h.status !== "disabled")}
                                                             disabled={busy === h.hostname}
@@ -181,12 +258,15 @@ export default function TenantView({ hosts, health, onSaved }: { hosts: HostRow[
                             <div className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
                                 Showing {filtered.length} of {hosts.length}
                                 {stack ? ` · stack: ${stack}` : ""}
+                                {edgeFilter ? ` · edge: ${edgeFilter}` : ""}
                                 {unreachableOnly ? " · unreachable only" : ""}
                             </div>
                         </div>
                     )}
                 </>
             )}
+
+            {cutover ? <CutoverModal host={cutover} edge={edges[cutover]?.edge} onClose={() => setCutover("")} /> : null}
         </div>
     );
 }

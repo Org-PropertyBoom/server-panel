@@ -40,6 +40,10 @@ type Dependencies struct {
 	VhostEngine *services.VhostEngineService
 }
 
+// dnsProbe is a SINGLETON: its ~6h edge cache is per-process state that must
+// persist across requests, otherwise 103 tenant hosts re-resolve on every view.
+var dnsProbe = services.NewDNSProbeService()
+
 func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("OPTIONS /post/", postOnly(deps.Startup, http.HandlerFunc(noContent)))
 	mux.Handle("POST /post/login", postOnly(deps.Startup, postlogin.Handler(deps.Auth, deps.Sessions)))
@@ -105,6 +109,9 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("POST /post/vhost/unpin", postOnly(deps.Startup, postvhost.UnpinHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/suppress", postOnly(deps.Startup, postvhost.SuppressHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("POST /post/vhost/tls-mode", postOnly(deps.Startup, postvhost.TLSModeHandler(deps.Sessions, deps.VhostEngine)))
+	mux.Handle("POST /post/vhost/edge", postOnly(deps.Startup, postvhost.EdgeHandler(deps.Sessions, dnsProbe)))
+	mux.Handle("GET /post/vhost/cutover", postOnly(deps.Startup, postvhost.CutoverHandler(deps.Sessions, dnsProbe)))
+	mux.Handle("POST /post/vhost/cutover/diff", postOnly(deps.Startup, postvhost.CutoverDiffHandler(deps.Sessions, dnsProbe)))
 	mux.Handle("POST /post/vhost/origin-cert", postOnly(deps.Startup, postvhost.OriginCertHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("DELETE /post/vhost/origin-cert", postOnly(deps.Startup, postvhost.OriginCertHandler(deps.Sessions, deps.VhostEngine)))
 	mux.Handle("GET /post/vhost", postOnly(deps.Startup, postvhost.Handler(deps.Sessions, services.NewVHostService())))
