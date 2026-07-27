@@ -118,6 +118,45 @@ func DeleteFile(filePath, homeDir string, isRoot bool) error {
 	return os.Remove(filePath)
 }
 
+// RenameFile renames a file or directory IN PLACE (same parent directory) — it
+// takes a bare new name, never a path, so it can't be used to move things around
+// the filesystem or escape the caller's jail. Refuses the deny-list on both the
+// source and the destination, and refuses to overwrite an existing entry.
+func RenameFile(filePath, newName, homeDir string, isRoot bool) error {
+	filePath = filepath.Clean(filePath)
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return errors.New("new name is required")
+	}
+	// A bare name only: no separators, no traversal, no absolute paths.
+	if strings.ContainsAny(newName, `/\`) || newName == "." || newName == ".." {
+		return errors.New("new name must be a file name, not a path")
+	}
+	if !isRoot {
+		cleanHome := filepath.Clean(homeDir)
+		if !strings.HasPrefix(filePath, cleanHome+string(filepath.Separator)) {
+			return ErrAccessDenied
+		}
+	}
+	if isProtectedFilePath(filePath) {
+		return ErrProtectedPath
+	}
+	if _, err := os.Lstat(filePath); err != nil {
+		return err
+	}
+	target := filepath.Join(filepath.Dir(filePath), newName)
+	if target == filePath {
+		return nil // no-op rename
+	}
+	if isProtectedFilePath(target) {
+		return ErrProtectedPath
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return fmt.Errorf("%s already exists", newName)
+	}
+	return os.Rename(filePath, target)
+}
+
 type FileInfo struct {
 	Name    string    `json:"name"`
 	IsDir   bool      `json:"isDir"`

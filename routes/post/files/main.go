@@ -53,6 +53,30 @@ func Handler(sessions *services.SessionService) http.Handler {
 			return
 		}
 
+		if r.Method == http.MethodPatch {
+			var body struct {
+				Path    string `json:"path"`
+				NewName string `json:"newName"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Path) == "" {
+				http.Error(w, "path and newName are required", http.StatusBadRequest)
+				return
+			}
+			if err := services.RenameFile(body.Path, body.NewName, homeDir, true); err != nil {
+				switch {
+				case errors.Is(err, services.ErrAccessDenied):
+					http.Error(w, "access denied", http.StatusForbidden)
+				case errors.Is(err, services.ErrProtectedPath):
+					http.Error(w, err.Error(), http.StatusForbidden)
+				default:
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+
 		if q := r.URL.Query().Get("q"); q != "" {
 			items, err := services.SearchFiles("/", q, homeDir, true)
 			if err != nil {

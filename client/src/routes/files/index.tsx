@@ -14,6 +14,7 @@ import {
     AlertCircle,
     RefreshCw,
     Search,
+    Pencil,
     Trash2,
     X,
     FolderOpen,
@@ -203,6 +204,22 @@ export default function FilesRoute() {
         setExpanded((prev) => ({ ...prev, [parent]: items }));
     };
 
+    // Rename a file in place: rename it, re-point the editor if it was open, and
+    // refresh its folder in the tree so the node shows the new name.
+    const renameFile = async (path: string, newName: string) => {
+        const res = await fetch(apiEndpoint, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, newName }),
+        });
+        if (!res.ok) throw new Error((await res.text()).trim() || "Failed to rename file");
+        const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+        const newPath = `${parent === "/" ? "" : parent}/${newName}`;
+        if (selectedFile?.path === path) setSelectedFile({ ...selectedFile, name: newName, path: newPath });
+        const items = await fetchFolderContents(parent);
+        setExpanded((prev) => ({ ...prev, [parent]: items }));
+    };
+
     // Open a file directly by path (from quick-search): reveal it in the tree, then load it.
     const openFileByPath = async (path: string, name: string) => {
         await revealInTree(path);
@@ -294,7 +311,7 @@ export default function FilesRoute() {
                 </div>
 
                 {showDetails && selectedFile && !contentError ? (
-                    <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} onDelete={deleteFile} />
+                    <FileDetailsPanel file={selectedFile} size={fileSize} isBinary={isBinary} meta={fileMeta} onClose={() => setShowDetails(false)} onDelete={deleteFile} onRename={renameFile} />
                 ) : null}
             </div>
         </DashboardLayout>
@@ -453,9 +470,29 @@ function relativeTime(iso?: string): string | undefined {
 
 // FileDetailsPanel is the right-hand metadata pane (VS Code-style): type, size,
 // timestamps, permissions, owner, line count, and the full path.
-function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void; onDelete: (path: string) => Promise<void> }) {
+function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRename }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void; onDelete: (path: string) => Promise<void>; onRename: (path: string, newName: string) => Promise<void> }) {
     const [confirming, setConfirming] = useState(false);
     const [deleting, setDeleting] = useState(false);
+    const [renaming, setRenaming] = useState(false);
+    const [renameTo, setRenameTo] = useState("");
+    const [renameBusy, setRenameBusy] = useState(false);
+    const doRename = async () => {
+        const name = renameTo.trim();
+        if (!name || name === file.name) {
+            setRenaming(false);
+            return;
+        }
+        setRenameBusy(true);
+        try {
+            await onRename(file.path, name);
+            toast.success(`Renamed to ${name}`);
+            setRenaming(false);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Rename failed");
+        } finally {
+            setRenameBusy(false);
+        }
+    };
     const doDelete = async () => {
         setDeleting(true);
         try {
@@ -507,7 +544,16 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete }: { f
                     </div>
                 </dl>
             </div>
-            <div className="border-t border-border p-3">
+            <div className="space-y-2 border-t border-border p-3">
+                <button
+                    onClick={() => {
+                        setRenameTo(file.name);
+                        setRenaming(true);
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+                >
+                    <Pencil className="h-3.5 w-3.5" /> Rename
+                </button>
                 <button
                     onClick={() => setConfirming(true)}
                     className="flex w-full items-center justify-center gap-2 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
@@ -515,6 +561,40 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete }: { f
                     <Trash2 className="h-3.5 w-3.5" /> Delete file
                 </button>
             </div>
+
+            {renaming ? (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (renameBusy ? null : setRenaming(false))}>
+                    <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="text-sm font-semibold text-foreground">Rename file</h2>
+                        <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">{file.path}</p>
+                        <input
+                            value={renameTo}
+                            onChange={(e) => setRenameTo(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") doRename();
+                                if (e.key === "Escape") setRenaming(false);
+                            }}
+                            autoFocus
+                            spellCheck={false}
+                            className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+                        />
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">Stays in the same folder — a name, not a path.</p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button onClick={() => setRenaming(false)} disabled={renameBusy} className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">
+                                Cancel
+                            </button>
+                            <button
+                                onClick={doRename}
+                                disabled={renameBusy || !renameTo.trim() || renameTo.trim() === file.name}
+                                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                            >
+                                {renameBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                                Rename
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
 
             {confirming ? (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (deleting ? null : setConfirming(false))}>
