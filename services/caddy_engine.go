@@ -298,18 +298,19 @@ func (v *VhostEngineService) SelectOriginCertFor(host string) (certPath, keyPath
 		}
 	}
 	if bestScore < 0 {
-		return "", "", fmt.Errorf("no registered Origin cert covers %s (registered certs cover: %s)", host, strings.Join(dedupeStrings(allCovers), ", "))
+		return "", "", fmt.Errorf("no registered Origin cert covers %s — register that zone's Origin certificate under System → Origin certs (registered certs cover: %s)",
+			host, strings.Join(dedupeStrings(allCovers), ", "))
 	}
 	return certPath, keyPath, nil
 }
 
-// resolveTLSModeCerts fills in the cert/key for every cf_origin host that doesn't
-// name one explicitly, by selecting the registered cert covering that hostname.
-// Hosts with no covering cert are left empty and get skipped (with a reason) at
-// plan time rather than rendering a broken `tls` line.
+// resolveTLSModeCerts fills in the cert/key for every cf_origin host by selecting
+// the registered cert covering that hostname — the single mechanism. Hosts with no
+// covering cert are left empty and get skipped (with a reason) at plan time rather
+// than rendering a broken `tls` line.
 func (v *VhostEngineService) resolveTLSModeCerts(modes map[string]caddydb.TLSOverride) {
 	for host, ov := range modes {
-		if ov.Mode != TLSModeCFOrigin || (ov.CertPath != "" && ov.KeyPath != "") {
+		if ov.Mode != TLSModeCFOrigin {
 			continue
 		}
 		cert, key, err := v.SelectOriginCertFor(host)
@@ -345,11 +346,12 @@ func certCoveredNames(cert *x509.Certificate) []string {
 	return nil
 }
 
-// SetHostTLSMode sets a host's TLS mode (ondemand | cf_origin) with optional
-// per-host cert/key override, then reconciles so the change renders + reloads
-// through the safe path. cf_origin serves a static Origin cert; ondemand returns
+// SetHostTLSMode sets a host's TLS mode (ondemand | cf_origin), then reconciles so
+// the change renders + reloads through the safe path. cf_origin serves the
+// registered Origin cert that covers this hostname — there is no per-host path to
+// supply, so a host can never quietly run on a hand-typed cert. ondemand returns
 // the host to gated on-demand LE. GATED by live-reconcile like every write.
-func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, certPath, keyPath string) (reconcile.Result, error) {
+func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode string) (reconcile.Result, error) {
 	if !v.LiveReloadEnabled() {
 		return reconcile.Result{Error: liveGateMsg}, errLiveGate
 	}
@@ -357,24 +359,15 @@ func (v *VhostEngineService) SetHostTLSMode(ctx context.Context, host, mode, cer
 	if host == "" {
 		return reconcile.Result{Error: "host is required"}, errors.New("host is required")
 	}
-	// For cf_origin: either the operator named a cert explicitly (escape hatch — then
-	// verify it covers the host), or the panel SELECTS the registered cert that covers
-	// this hostname. Selection makes the wrong-zone mistake impossible by construction
-	// rather than catching it after the fact.
+	// For cf_origin the panel SELECTS the registered cert covering this hostname —
+	// the only way a host gets one. Refuse up front if nothing covers it, so the
+	// operator registers the right cert rather than working around it.
 	if strings.EqualFold(strings.TrimSpace(mode), TLSModeCFOrigin) {
-		if strings.TrimSpace(certPath) != "" {
-			if err := verifyOriginCertCoversHost(strings.TrimSpace(certPath), host); err != nil {
-				return reconcile.Result{Error: err.Error()}, err
-			}
-		} else {
-			selCert, selKey, serr := v.SelectOriginCertFor(host)
-			if serr != nil {
-				return reconcile.Result{Error: serr.Error()}, serr
-			}
-			certPath, keyPath = selCert, selKey
+		if _, _, err := v.SelectOriginCertFor(host); err != nil {
+			return reconcile.Result{Error: err.Error()}, err
 		}
 	}
-	if err := v.settings.SetHostTLSMode(host, mode, certPath, keyPath); err != nil {
+	if err := v.settings.SetHostTLSMode(host, mode); err != nil {
 		return reconcile.Result{Error: err.Error()}, err
 	}
 	return v.Reconcile(ctx)
@@ -399,21 +392,6 @@ func parseOriginCert(certPath string) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("cannot parse Origin cert at %s: %w", certPath, err)
 	}
 	return cert, nil
-}
-
-// verifyOriginCertCoversHost checks the cert at certPath is valid for host (SAN/CN,
-// wildcard-aware). Used for the per-host escape-hatch path, where the operator names
-// a cert explicitly rather than letting the registry select one.
-func verifyOriginCertCoversHost(certPath, host string) error {
-	cert, err := parseOriginCert(certPath)
-	if err != nil {
-		return err
-	}
-	if err := cert.VerifyHostname(host); err != nil {
-		return fmt.Errorf("the Origin cert at %s does not cover %s (it covers: %s) — use the right zone's cert",
-			certPath, host, strings.Join(certCoveredNames(cert), ", "))
-	}
-	return nil
 }
 
 // certAskCacheTTL is how long a previously-authorized host keeps answering 200
@@ -572,11 +550,9 @@ type ManageRow struct {
 	Code        int               `json:"code,omitempty"`
 	IsActive    bool              `json:"isActive"`
 	SoftDeleted bool              `json:"softDeleted"`
-	Headers     map[string]string `json:"headers,omitempty"`     // system hosts only: panel-local response headers
-	Suppressed  bool              `json:"suppressed,omitempty"`  // operator edge-disabled at Caddy (redirects UI)
-	TLSMode     string            `json:"tlsMode,omitempty"`     // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
-	TLSCertPath string            `json:"tlsCertPath,omitempty"` // per-host Origin cert override ("" = use global default)
-	TLSKeyPath  string            `json:"tlsKeyPath,omitempty"`  // per-host Origin key override
+	Headers     map[string]string `json:"headers,omitempty"`    // system hosts only: panel-local response headers
+	Suppressed  bool              `json:"suppressed,omitempty"` // operator edge-disabled at Caddy (redirects UI)
+	TLSMode     string            `json:"tlsMode,omitempty"`    // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
 }
 
 // ManageSets is the editable slice of desired state: the panel-owned system hosts
@@ -748,8 +724,7 @@ func (v *VhostEngineService) manageSets(snap caddydb.Snapshot) *ManageSets {
 			m.SystemHosts = append(m.SystemHosts, ManageRow{
 				ID: r.ID, Host: r.Host, ServerStack: r.ServerStack, Target: r.Target,
 				IsActive: r.IsActive, SoftDeleted: r.SoftDeleted,
-				Headers: headers[key], Suppressed: suppressed[key],
-				TLSMode: tlsModes[key].Mode, TLSCertPath: tlsModes[key].CertPath, TLSKeyPath: tlsModes[key].KeyPath,
+				Headers: headers[key], Suppressed: suppressed[key], TLSMode: tlsModes[key].Mode,
 			})
 		case "platform_redirect_hosts":
 			m.Redirects = append(m.Redirects, ManageRow{

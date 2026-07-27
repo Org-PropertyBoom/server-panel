@@ -24,11 +24,11 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
     const originConfigured = originCerts.length > 0;
 
     // Switch a host between on-demand LE and a Cloudflare Origin cert (cf_origin),
-    // then reconcile. cf_origin is for hosts proxied through Cloudflare. certPath/
-    // keyPath are an optional per-host override (empty = the global default).
-    const applyTlsMode = async (host: string, mode: string, certPath = "", keyPath = "") => {
+    // then reconcile. cf_origin is for hosts proxied through Cloudflare; the cert is
+    // the registered one covering this hostname (selected by the panel).
+    const applyTlsMode = async (host: string, mode: string) => {
         setTlsBusy(host);
-        const res = await setHostTlsMode(host, mode, certPath, keyPath);
+        const res = await setHostTlsMode(host, mode);
         if (res.error) toast.error(summarizeError(res.error));
         else if (res.reloaded) toast.success(`${host} → ${mode === "cf_origin" ? "Cloudflare Origin cert" : "on-demand LE"}`);
         else toast.error("TLS mode not applied");
@@ -139,7 +139,7 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                     </div>
                 }
             />
-            {rows.some((r) => r.tlsMode === "cf_origin" && !r.tlsCertPath && !originCertFor(r.host, originCerts)) ? (
+            {rows.some((r) => r.tlsMode === "cf_origin" && !originCertFor(r.host, originCerts)) ? (
                 <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>A host is set to <b>CF Origin</b> but no registered certificate covers it — those hosts are skipped at reconcile. Register the right zone's cert under <b>Origin certs</b>.</span>
@@ -241,11 +241,10 @@ export default function SystemView({ rows, upstreams, pinned, pinnedWarning, ori
                                                     <ShieldCheck className="h-3 w-3" /> CF Origin
                                                 </span>
                                                 {(() => {
-                                                    const sel = r.tlsCertPath ? undefined : originCertFor(r.host, originCerts);
-                                                    const path = r.tlsCertPath || sel?.certPath;
+                                                    const sel = originCertFor(r.host, originCerts);
                                                     return (
-                                                        <span className="text-[10px] text-muted-foreground" title={path ? `${path}${sel ? ` (auto-selected — covers ${(sel.covers ?? []).join(", ")})` : " (pinned per-host)"}` : "no registered cert covers this host"}>
-                                                            {path ? certBasename(path) : "⚠ no cert"}
+                                                        <span className="text-[10px] text-muted-foreground" title={sel ? `${sel.certPath} — covers ${(sel.covers ?? []).join(", ")}` : "no registered cert covers this host"}>
+                                                            {sel ? certBasename(sel.certPath) : "⚠ no cert"}
                                                         </span>
                                                     );
                                                 })()}
@@ -414,10 +413,11 @@ function certBasename(path: string): string {
     return parts[parts.length - 1] || path;
 }
 
-// TlsModeModal confirms switching a host's TLS mode. Switching TO cf_origin shows the
-// certificate the panel AUTO-SELECTED for this hostname (matched against each
-// registered cert's SANs) — no default, no typing. An optional per-host path override
-// remains as an escape hatch for unusual cases.
+// TlsModeModal confirms switching a host's TLS mode. Switching TO cf_origin shows
+// the certificate the panel selected for this hostname (matched against each
+// registered cert's SANs). There is deliberately no path field: one mechanism, so
+// "which cert is this host using?" always has exactly one answer. If nothing covers
+// the host, the fix is to register that zone's cert — not to hand-type a path.
 function TlsModeModal({
     row,
     originCerts,
@@ -428,13 +428,10 @@ function TlsModeModal({
     row: ManageRow;
     originCerts: OriginCert[];
     busy: boolean;
-    onApply: (host: string, mode: string, certPath?: string, keyPath?: string) => void;
+    onApply: (host: string, mode: string) => void;
     onClose: () => void;
 }) {
     const toCF = row.tlsMode !== "cf_origin";
-    const [override, setOverride] = useState(false);
-    const [cert, setCert] = useState(row.tlsCertPath ?? "");
-    const [key, setKey] = useState(row.tlsKeyPath ?? "");
     const selected = originCertFor(row.host, originCerts);
 
     return (
@@ -461,26 +458,13 @@ function TlsModeModal({
                         <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                             <span>
-                                No registered certificate covers <b>{row.host}</b>. Register this zone's Origin cert under <b>Origin certs</b> — or
-                                name one explicitly below. Applying without either is refused.
+                                No registered certificate covers <b>{row.host}</b>. Register that zone's Origin certificate under <b>Origin certs</b> —
+                                applying is refused until one covers it.
                             </span>
                         </div>
                     )}
-                    <button type="button" onClick={() => setOverride((v) => !v)} className="mt-2 text-[11px] font-medium text-primary hover:underline">
-                        {override ? "Use the auto-selected certificate" : "Name a certificate explicitly (advanced)"}
-                    </button>
-                    {override ? (
-                        <div className="mt-2 space-y-2">
-                            <Field label="Certificate path" hint="Escape hatch for unusual cases — normally the panel picks the covering cert for you.">
-                                <input value={cert} onChange={(e) => setCert(e.target.value)} placeholder="/etc/caddy/cf-origin/…pem" className={`${inputCls} font-mono`} />
-                            </Field>
-                            <Field label="Private key path">
-                                <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="/etc/caddy/cf-origin/…key" className={`${inputCls} font-mono`} />
-                            </Field>
-                        </div>
-                    ) : null}
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                        The certificate must cover <b>{row.host}</b> — the panel verifies this and refuses a wrong-zone cert. Reconciles immediately
+                        The certificate is chosen by hostname coverage, so a wrong-zone cert can't be selected. Reconciles immediately
                         (validated adapt → reload); reversible.
                     </p>
                 </>
@@ -492,12 +476,7 @@ function TlsModeModal({
             )}
             <div className="mt-5 flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => onApply(row.host, toCF ? "cf_origin" : "ondemand", override ? cert.trim() : "", override ? key.trim() : "")}
-                    disabled={busy}
-                >
+                <Button size="sm" className="gap-2" onClick={() => onApply(row.host, toCF ? "cf_origin" : "ondemand")} disabled={busy || (toCF && !selected)}>
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
                     {toCF ? "Use CF Origin cert" : "Use on-demand"}
                 </Button>

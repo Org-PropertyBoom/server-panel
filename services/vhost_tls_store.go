@@ -123,49 +123,40 @@ const (
 	TLSModeCFOrigin = "cf_origin"
 )
 
-// AllHostTLSModes returns every host's TLS override (host -> mode + optional
-// per-host cert/key paths), for injection into a reconcile snapshot. Only
-// non-default (cf_origin) rows are stored, so the map is small.
+// AllHostTLSModes returns every host's TLS mode, for injection into a reconcile
+// snapshot. Only non-default (cf_origin) rows are stored, so the map is small. The
+// cert/key are NOT stored per host — they're resolved from the Origin cert registry
+// by hostname coverage, so there is exactly one way a host gets a certificate.
 func (s *SettingsService) AllHostTLSModes() (map[string]caddydb.TLSOverride, error) {
-	rows, err := s.db.Query("SELECT host, mode, cert_path, key_path FROM vhost_tls_modes")
+	rows, err := s.db.Query("SELECT host, mode FROM vhost_tls_modes")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]caddydb.TLSOverride{}
 	for rows.Next() {
-		var host, mode, cert, key string
-		if err := rows.Scan(&host, &mode, &cert, &key); err != nil {
+		var host, mode string
+		if err := rows.Scan(&host, &mode); err != nil {
 			return nil, err
 		}
-		out[host] = caddydb.TLSOverride{Mode: mode, CertPath: cert, KeyPath: key}
+		out[host] = caddydb.TLSOverride{Mode: mode}
 	}
 	return out, rows.Err()
 }
 
-// SetHostTLSMode sets a host's TLS mode. "cf_origin" persists (with optional
-// per-host cert/key paths that override the global default); "ondemand" or "" deletes
-// the row, returning the host to the default on-demand behavior. Paths, when given,
-// must be absolute.
-func (s *SettingsService) SetHostTLSMode(host, mode, certPath, keyPath string) error {
+// SetHostTLSMode sets a host's TLS mode: "cf_origin" persists a row; "ondemand" or
+// "" deletes it, returning the host to the default on-demand behavior.
+func (s *SettingsService) SetHostTLSMode(host, mode string) error {
 	key := normalizeHostKey(host)
 	if key == "" {
 		return fmt.Errorf("host is required")
 	}
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	certPath, keyPath = strings.TrimSpace(certPath), strings.TrimSpace(keyPath)
-	switch mode {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case TLSModeCFOrigin:
-		if err := validateOptionalAbsPath(certPath); err != nil {
-			return err
-		}
-		if err := validateOptionalAbsPath(keyPath); err != nil {
-			return err
-		}
-		_, err := s.db.Exec(`INSERT INTO vhost_tls_modes (host, mode, cert_path, key_path, updated_at)
-			VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-			ON CONFLICT(host) DO UPDATE SET mode = excluded.mode, cert_path = excluded.cert_path, key_path = excluded.key_path, updated_at = CURRENT_TIMESTAMP`,
-			key, TLSModeCFOrigin, certPath, keyPath)
+		_, err := s.db.Exec(`INSERT INTO vhost_tls_modes (host, mode, updated_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(host) DO UPDATE SET mode = excluded.mode, updated_at = CURRENT_TIMESTAMP`,
+			key, TLSModeCFOrigin)
 		return err
 	case TLSModeOnDemand, "":
 		_, err := s.db.Exec("DELETE FROM vhost_tls_modes WHERE host = ?", key)

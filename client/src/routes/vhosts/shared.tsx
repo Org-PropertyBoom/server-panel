@@ -53,8 +53,6 @@ export type ManageRow = {
     headers?: Record<string, string>; // system hosts only: panel-local response headers
     suppressed?: boolean; // operator edge-disabled at Caddy
     tlsMode?: string; // "cf_origin" (Cloudflare Origin cert) or "" (on-demand default)
-    tlsCertPath?: string; // per-host Origin cert override ("" = global default)
-    tlsKeyPath?: string;
 };
 
 export type Upstream = {
@@ -238,14 +236,14 @@ export async function suppressHost(host: string, suppressed: boolean): Promise<{
 }
 
 // setHostTlsMode switches a host between on-demand LE and Cloudflare Origin cert
-// (cf_origin), then reconciles. mode "" / "ondemand" returns it to on-demand.
-// certPath/keyPath are an optional per-host override (empty = the global default).
-export async function setHostTlsMode(host: string, mode: string, certPath = "", keyPath = ""): Promise<{ reloaded: boolean; error?: string }> {
+// (cf_origin), then reconciles. mode "" / "ondemand" returns it to on-demand. No
+// cert path is passed — the panel selects the registered cert covering the host.
+export async function setHostTlsMode(host: string, mode: string): Promise<{ reloaded: boolean; error?: string }> {
     try {
         const res = await fetch("/post/vhost/tls-mode", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ host, mode, certPath, keyPath }),
+            body: JSON.stringify({ host, mode }),
         });
         const data = await res.json();
         return { reloaded: Boolean(data.reloaded), error: data.error };

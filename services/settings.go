@@ -116,6 +116,24 @@ func NewSettingsService() (*SettingsService, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Retire the per-host cert/key override (must run AFTER both tables exist): any
+	// host that named its own cert has that pair PROMOTED into the registry, then the
+	// override is cleared, so coverage-based selection routes the host to the same
+	// file. Two mechanisms for one decision caused drift — hosts silently running on
+	// a hand-typed path while the registry looked near-empty — so selection is now
+	// the single way a host gets a cert. The columns stay for schema stability but
+	// are no longer read or written.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO origin_certs (cert_path, key_path)
+		SELECT cert_path, key_path FROM vhost_tls_modes
+		WHERE cert_path != '' AND key_path != ''`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`UPDATE vhost_tls_modes SET cert_path = '', key_path = ''
+		WHERE cert_path != '' OR key_path != ''`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	for oldKey, newKey := range map[string]string{
 		"app_name": "general_app_name", "color_mode": "general_color_mode", "header_apps": "apps_header",
 	} {

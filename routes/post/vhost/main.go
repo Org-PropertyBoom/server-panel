@@ -343,10 +343,10 @@ func SuppressHandler(sessions *services.SessionService, engine *services.VhostEn
 	})
 }
 
-// TLSModeHandler sets a host's TLS mode (ondemand | cf_origin) with an optional
-// per-host cert/key override, then reconciles. cf_origin serves a static Cloudflare
-// Origin cert (for proxied hosts); ondemand returns it to on-demand LE. Returns the
-// reconcile Result.
+// TLSModeHandler sets a host's TLS mode (ondemand | cf_origin), then reconciles.
+// cf_origin serves the registered Origin cert covering that hostname (selected by
+// the panel — no path is accepted); ondemand returns it to on-demand LE. Returns
+// the reconcile Result.
 func TLSModeHandler(sessions *services.SessionService, engine *services.VhostEngineService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !authed(sessions, r) {
@@ -354,16 +354,14 @@ func TLSModeHandler(sessions *services.SessionService, engine *services.VhostEng
 			return
 		}
 		var body struct {
-			Host     string `json:"host"`
-			Mode     string `json:"mode"`
-			CertPath string `json:"certPath"`
-			KeyPath  string `json:"keyPath"`
+			Host string `json:"host"`
+			Mode string `json:"mode"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Host) == "" {
 			http.Error(w, "host is required", http.StatusBadRequest)
 			return
 		}
-		res, _ := engine.SetHostTLSMode(r.Context(), body.Host, body.Mode, body.CertPath, body.KeyPath)
+		res, _ := engine.SetHostTLSMode(r.Context(), body.Host, body.Mode)
 		writeJSON(w, res)
 	})
 }
