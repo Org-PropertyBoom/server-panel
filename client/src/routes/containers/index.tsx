@@ -7,6 +7,7 @@ import DashboardLayout from "_layouts/dashboard";
 import { Button } from "_layouts/_components/ui/button";
 import Api from "_utils/api";
 import { runtime } from "runtime";
+import CreateContainerModal from "./create-container-modal";
 
 type ContainerRecord = {
     id: string;
@@ -1209,110 +1210,5 @@ export default function ContainersRoute() {
                 />
             ) : null}
         </DashboardLayout>
-    );
-}
-
-// CreateContainerModal is the `docker run -d` form (root only). Multi-value fields
-// (ports/env/volumes) are entered one-per-line and split before sending.
-function CreateContainerModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-    const [image, setImage] = useState("");
-    const [name, setName] = useState("");
-    const [ports, setPorts] = useState("");
-    const [env, setEnv] = useState("");
-    const [volumes, setVolumes] = useState("");
-    const [restart, setRestart] = useState("unless-stopped");
-    const [creating, setCreating] = useState(false);
-    const [output, setOutput] = useState("");
-
-    const lines = (value: string) => value.split("\n").map((l) => l.trim()).filter(Boolean);
-
-    const create = async () => {
-        setCreating(true);
-        setOutput("");
-        try {
-            const response = await fetch(`${Api.current.containers}/create`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    image: image.trim(),
-                    name: name.trim(),
-                    ports: lines(ports),
-                    env: lines(env),
-                    volumes: lines(volumes),
-                    restart,
-                }),
-            });
-            const data: { output?: string; error?: string } = await response.json();
-            if (data.error) {
-                setOutput(data.output || "");
-                toast.error(data.error);
-                return;
-            }
-            toast.success(`${name.trim() || "Container"} created`);
-            onCreated();
-        } catch (createError) {
-            toast.error(createError instanceof Error ? createError.message : "Failed to create container");
-        } finally {
-            setCreating(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (creating ? null : onClose())}>
-            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                    <div>
-                        <h2 className="text-sm font-semibold text-foreground">New container</h2>
-                        <p className="mt-0.5 text-xs text-muted-foreground">Runs <code>docker run -d</code> as root. For stack apps, use their deploy pipeline instead.</p>
-                    </div>
-                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} disabled={creating} aria-label="Close">
-                        <X className="h-4 w-4" />
-                    </Button>
-                </div>
-                <div className="min-h-0 flex-1 space-y-4 overflow-auto px-5 py-4 text-xs">
-                    <label className="block">
-                        <span className="mb-1 block font-medium text-foreground">Image <span className="text-destructive">*</span></span>
-                        <input value={image} onChange={(e) => setImage(e.target.value)} placeholder="nocodb/nocodb:latest" autoFocus className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
-                    </label>
-                    <label className="block">
-                        <span className="mb-1 block font-medium text-foreground">Name</span>
-                        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="optional — auto-generated if empty" className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
-                    </label>
-                    <div className="grid grid-cols-2 gap-4">
-                        <label className="block">
-                            <span className="mb-1 block font-medium text-foreground">Ports</span>
-                            <textarea value={ports} onChange={(e) => setPorts(e.target.value)} rows={3} placeholder={"one per line\n9001:8080"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
-                            <span className="mt-1 block text-[11px] text-muted-foreground">host:container</span>
-                        </label>
-                        <label className="block">
-                            <span className="mb-1 block font-medium text-foreground">Volumes</span>
-                            <textarea value={volumes} onChange={(e) => setVolumes(e.target.value)} rows={3} placeholder={"one per line\n/data/nocodb:/usr/app/data"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
-                            <span className="mt-1 block text-[11px] text-muted-foreground">src:dst[:ro]</span>
-                        </label>
-                    </div>
-                    <label className="block">
-                        <span className="mb-1 block font-medium text-foreground">Environment</span>
-                        <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={3} placeholder={"one per line\nKEY=VALUE"} className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary" />
-                    </label>
-                    <label className="block">
-                        <span className="mb-1 block font-medium text-foreground">Restart policy</span>
-                        <select value={restart} onChange={(e) => setRestart(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 outline-none focus:border-primary">
-                            <option value="unless-stopped">unless-stopped</option>
-                            <option value="always">always</option>
-                            <option value="on-failure">on-failure</option>
-                            <option value="no">no</option>
-                        </select>
-                    </label>
-                    {output ? <pre className="max-h-40 overflow-auto rounded-md border border-destructive/30 bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-red-300">{output}</pre> : null}
-                </div>
-                <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
-                    <Button variant="outline" size="sm" onClick={onClose} disabled={creating}>Cancel</Button>
-                    <Button size="sm" className="gap-2" onClick={create} disabled={creating || !image.trim()}>
-                        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                        Create
-                    </Button>
-                </div>
-            </div>
-        </div>
     );
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -541,18 +542,41 @@ func parseDockerSize(s string) int64 {
 type ContainerCreateSpec struct {
 	Image   string   `json:"image"`
 	Name    string   `json:"name"`
-	Ports   []string `json:"ports"`   // "host:container" or "host:container/proto"
+	Ports   []string `json:"ports"`   // "[bind:]host:container" or "…/proto"
 	Env     []string `json:"env"`     // "KEY=VALUE"
 	Volumes []string `json:"volumes"` // "src:dst" or "src:dst:ro"
 	Restart string   `json:"restart"` // no | always | unless-stopped | on-failure
+	// Network is the container network mode: bridge (default) | host | none.
+	// host/none make port publishing inapplicable — Docker rejects -p with them.
+	Network string `json:"network"`
+	// EnvFile is a path passed as --env-file. The panel NEVER reads or stores the
+	// contents: a path reference keeps secrets out of the DOM, request logs and
+	// panel storage.
+	EnvFile string `json:"envFile"`
+	// ConfirmDockerSock authorizes mounting /var/run/docker.sock, which grants
+	// full host root via container escape. Blocked unless explicitly confirmed.
+	ConfirmDockerSock bool `json:"confirmDockerSock"`
+}
+
+// ContainerPlan is the Review step: the LITERAL command that will run, plus every
+// guard, gathered before anything executes. Built by the same code path that runs
+// the container, so what's shown cannot drift from what happens.
+type ContainerPlan struct {
+	Command  string   `json:"command"`
+	Args     []string `json:"args"`
+	Warnings []string `json:"warnings"`
+	Blocks   []string `json:"blocks"` // non-empty ⇒ Create refuses
 }
 
 var (
 	allowedComposeService = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 	allowedImageRef       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$`)
-	allowedPortMapping    = regexp.MustCompile(`^(\d{1,5}:)?\d{1,5}(/(tcp|udp))?$`)
-	allowedEnvKey         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	allowedRestartPolicy  = map[string]bool{"no": true, "always": true, "unless-stopped": true, "on-failure": true}
+	// Accepts an OPTIONAL explicit bind address, so `127.0.0.1:9001:8080` (the new
+	// safe default, and anything the operator spelled out themselves) validates.
+	// Without the bind group Docker publishes on 0.0.0.0 — every interface.
+	allowedPortMapping   = regexp.MustCompile(`^((\d{1,3}\.){3}\d{1,3}:)?(\d{1,5}:)?\d{1,5}(/(tcp|udp))?$`)
+	allowedEnvKey        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	allowedRestartPolicy = map[string]bool{"no": true, "always": true, "unless-stopped": true, "on-failure": true}
 )
 
 // buildTimeout is the ceiling for an image build/rebuild. Defaults to 30m (a
@@ -695,56 +719,191 @@ func composeConfigFiles(label, workingDir string) []string {
 // there's no shell to inject into. Returns the run output (new container id on
 // success, or the error output on failure).
 func (s *ContainerService) CreateContainer(spec ContainerCreateSpec) (string, error) {
+	plan, err := s.PlanContainer(spec)
+	if err != nil {
+		return "", err
+	}
+	// Blocking guards are refused HERE too, not only in the UI — the Review step is
+	// an explanation, never the enforcement.
+	if len(plan.Blocks) > 0 {
+		return "", errors.New(strings.Join(plan.Blocks, "; "))
+	}
+	out, err := runContainerCommand("", 5*time.Minute, "docker", plan.Args...)
+	return string(out), err
+}
+
+// PlanContainer validates a spec and builds the exact `docker run` args, plus the
+// guard warnings/blocks. CreateContainer runs precisely these args, so the command
+// shown at Review is the command that executes — a glass box, not a black one.
+func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPlan, error) {
+	plan := ContainerPlan{Warnings: []string{}, Blocks: []string{}}
+
 	image := strings.TrimSpace(spec.Image)
 	if image == "" || strings.HasPrefix(image, "-") || !allowedImageRef.MatchString(image) {
-		return "", errors.New("a valid image is required")
+		return plan, errors.New("a valid image is required")
 	}
 	args := []string{"run", "-d"}
-	if name := strings.TrimSpace(spec.Name); name != "" {
+
+	name := strings.TrimSpace(spec.Name)
+	if name != "" {
 		if !allowedContainerID.MatchString(name) {
-			return "", errors.New("invalid container name")
+			return plan, errors.New("invalid container name")
 		}
 		args = append(args, "--name", name)
+		if s.containerNameExists(name) {
+			// Docker's duplicate-name error is cryptic; say it plainly, up front.
+			plan.Blocks = append(plan.Blocks, fmt.Sprintf("a container named %q already exists — pick another name", name))
+		}
 	}
+
 	restart := strings.TrimSpace(spec.Restart)
 	if restart == "" {
 		restart = "unless-stopped"
 	}
 	if !allowedRestartPolicy[restart] {
-		return "", errors.New("invalid restart policy")
+		return plan, errors.New("invalid restart policy")
 	}
 	args = append(args, "--restart", restart)
-	for _, p := range spec.Ports {
-		if p = strings.TrimSpace(p); p == "" {
-			continue
-		}
+
+	network := strings.TrimSpace(spec.Network)
+	if network == "" {
+		network = "bridge"
+	}
+	if network != "bridge" && network != "host" && network != "none" {
+		return plan, fmt.Errorf("invalid network mode %q (bridge, host or none)", network)
+	}
+	if network != "bridge" {
+		args = append(args, "--network", network)
+	}
+
+	ports := trimmedNonEmpty(spec.Ports)
+	if len(ports) > 0 && network != "bridge" {
+		// A real Docker rule — surface it as a block rather than letting it come
+		// back as a confusing runtime error.
+		plan.Blocks = append(plan.Blocks, fmt.Sprintf("port mapping does not apply with %s networking — the container uses the host's ports directly", network))
+	}
+	for _, p := range ports {
 		if !allowedPortMapping.MatchString(p) {
-			return "", fmt.Errorf("invalid port mapping %q (use host:container)", p)
+			return plan, fmt.Errorf("invalid port mapping %q (use host:container)", p)
 		}
 		args = append(args, "-p", p)
-	}
-	for _, e := range spec.Env {
-		if e = strings.TrimSpace(e); e == "" {
-			continue
+		// Warn unless the publish is bound to loopback. A mapping with NO bind
+		// address defaults to 0.0.0.0, and an explicit 0.0.0.0 is public too —
+		// this is how MinIO and mysql:3306 ended up on the internet, so name it
+		// every time rather than trusting the operator to remember.
+		if bind, hostPort := splitPublish(p); !isLoopbackBind(bind) {
+			where := bind
+			if where == "" {
+				where = "0.0.0.0"
+			}
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("PUBLIC: port %s is published on %s — reachable from any address on the internet", hostPort, where))
 		}
+	}
+
+	if envFile := strings.TrimSpace(spec.EnvFile); envFile != "" {
+		if !filepath.IsAbs(envFile) {
+			return plan, errors.New("the env file path must be absolute")
+		}
+		info, err := os.Stat(envFile)
+		if err != nil {
+			return plan, fmt.Errorf("cannot read the env file at %s: %w", envFile, err)
+		}
+		if info.IsDir() {
+			return plan, fmt.Errorf("%s is a directory, not an env file", envFile)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is mode %04o — readable beyond its owner; 0600 is expected for a secrets file", envFile, info.Mode().Perm()))
+		}
+		args = append(args, "--env-file", envFile)
+	}
+
+	for _, e := range trimmedNonEmpty(spec.Env) {
 		eq := strings.IndexByte(e, '=')
 		if eq <= 0 || !allowedEnvKey.MatchString(e[:eq]) {
-			return "", fmt.Errorf("invalid environment variable %q (use KEY=VALUE)", e)
+			return plan, fmt.Errorf("invalid environment variable %q (use KEY=VALUE)", e)
 		}
 		args = append(args, "-e", e)
 	}
-	for _, v := range spec.Volumes {
-		if v = strings.TrimSpace(v); v == "" {
-			continue
-		}
+
+	for _, v := range trimmedNonEmpty(spec.Volumes) {
 		if strings.HasPrefix(v, "-") || !strings.Contains(v, ":") {
-			return "", fmt.Errorf("invalid volume %q (use src:dst)", v)
+			return plan, fmt.Errorf("invalid volume %q (use src:dst)", v)
+		}
+		src := v[:strings.Index(v, ":")]
+		switch {
+		case src == "/var/run/docker.sock":
+			if !spec.ConfirmDockerSock {
+				plan.Blocks = append(plan.Blocks, "mounting /var/run/docker.sock grants full host root through container escape — confirm explicitly if you truly intend it")
+			} else {
+				plan.Warnings = append(plan.Warnings, "docker.sock is mounted — this container has full host root")
+			}
+		case src == "/" || src == "/etc" || src == "/root":
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("mounting %s exposes host system files to the container", src))
+		case src == "/home/server/.caddy" || strings.HasPrefix(src, "/home/server/.caddy/"):
+			plan.Warnings = append(plan.Warnings, "mounting /home/server/.caddy — Caddy's certificate store, readable only by root and `server`. A wrong mount here drops every vhost.")
 		}
 		args = append(args, "-v", v)
 	}
+
+	if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
+		plan.Warnings = append(plan.Warnings, "`:latest` means whatever it is today — a restart months from now may run different code")
+	}
+
 	args = append(args, image)
-	out, err := runContainerCommand("", 5*time.Minute, "docker", args...)
-	return string(out), err
+	plan.Args = args
+	plan.Command = "docker " + strings.Join(args, " ")
+	return plan, nil
+}
+
+// splitPublish separates an optional bind address from a `[bind:]host:container`
+// publish spec, returning ("" , hostPort) when no bind address is present.
+func splitPublish(p string) (bind, hostPort string) {
+	p = strings.TrimSuffix(strings.TrimSuffix(p, "/tcp"), "/udp")
+	parts := strings.Split(p, ":")
+	switch len(parts) {
+	case 3: // bind:host:container
+		return parts[0], parts[1]
+	case 2: // host:container
+		return "", parts[0]
+	default: // container port only — Docker picks a random host port on 0.0.0.0
+		return "", parts[0]
+	}
+}
+
+// isLoopbackBind reports whether a publish bind address keeps the port private.
+// Only loopback qualifies: "" means Docker's 0.0.0.0 default, and an explicit
+// 0.0.0.0 is every interface — both are public.
+func isLoopbackBind(bind string) bool {
+	if bind == "" {
+		return false
+	}
+	ip := net.ParseIP(bind)
+	return ip != nil && ip.IsLoopback()
+}
+
+func trimmedNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// containerNameExists reports whether a container (running or not) already uses
+// this name, so the duplicate is caught before `docker run` is attempted.
+func (s *ContainerService) containerNameExists(name string) bool {
+	out, err := s.runner.Run("docker", "ps", "-a", "--format", "{{.Names}}")
+	if err != nil {
+		return false // can't tell — don't invent a block; docker will still refuse
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ContainerService) DockerfileAll(engine, owner, id string) (ContainerDockerfile, error) {

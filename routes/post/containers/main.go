@@ -181,6 +181,31 @@ func ComposeUpHandler(sessions *services.SessionService, containers *services.Co
 	})
 }
 
+// PlanHandler is the Review step: it validates the spec and returns the LITERAL
+// `docker run` command plus every guard, WITHOUT executing anything. The command
+// is built by the same code path that runs the container, so Review can't drift
+// from reality.
+func PlanHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var spec services.ContainerCreateSpec
+		if json.NewDecoder(r.Body).Decode(&spec) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		plan, err := containers.PlanContainer(spec)
+		w.Header().Set("Content-Type", "application/json")
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"plan": plan, "error": errText})
+	})
+}
+
 // StatsHandler returns live per-container CPU/mem/net/block-IO (docker stats).
 func StatsHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
