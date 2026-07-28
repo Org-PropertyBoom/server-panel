@@ -53,6 +53,10 @@ type Container struct {
 	Service    string `json:"service,omitempty"`    // com.docker.compose.service
 	WorkingDir string `json:"workingDir,omitempty"` // com.docker.compose.project.working_dir
 	Deployed   bool   `json:"deployed"`             // false = a compose service with NO container (not deployed)
+	// Managed = the panel holds this container's compose file (it lives under the
+	// managed root), so it can be edited and re-applied. Unmanaged containers were
+	// made by hand or by a stack pipeline: shown as-is, never retro-given a file.
+	Managed bool `json:"managed"`
 	// In-use guard: a project dir can be load-bearing even when its service is
 	// NOT deployed — a running container bind-mounts a path out of it, or a host
 	// process runs from it. Populated only for non-running rows. "Not deployed"
@@ -553,19 +557,47 @@ type ContainerCreateSpec struct {
 	// contents: a path reference keeps secrets out of the DOM, request logs and
 	// panel storage.
 	EnvFile string `json:"envFile"`
+	// User is an optional "uid:gid" the container runs as (compose `user:`), the
+	// remedy sitting next to the runs-as-root warning.
+	User string `json:"user"`
 	// ConfirmDockerSock authorizes mounting /var/run/docker.sock, which grants
 	// full host root via container escape. Blocked unless explicitly confirmed.
 	ConfirmDockerSock bool `json:"confirmDockerSock"`
 }
 
-// ContainerPlan is the Review step: the LITERAL command that will run, plus every
-// guard, gathered before anything executes. Built by the same code path that runs
-// the container, so what's shown cannot drift from what happens.
+// ContainerPlan is the Review step: the compose FILE that will be written, where
+// it goes, and every guard — gathered before anything executes. Built by the same
+// code path that creates the container, so what's shown cannot drift from what
+// happens.
 type ContainerPlan struct {
-	Command  string   `json:"command"`
-	Args     []string `json:"args"`
+	Name     string   `json:"name"`    // resolved service/container name (derived if left blank)
+	Path     string   `json:"path"`    // /home/server/containers/<name>/docker-compose.yml
+	Compose  string   `json:"compose"` // the generated YAML
 	Warnings []string `json:"warnings"`
 	Blocks   []string `json:"blocks"` // non-empty ⇒ Create refuses
+}
+
+// managedComposeRoot is the ONLY directory the panel writes compose files into.
+// Stack repos have their own deploy pipelines and must never be written to, near,
+// or over — confining every write to one root is what makes that guarantee
+// checkable rather than merely intended. Override with CONTAINER_COMPOSE_ROOT.
+func managedComposeRoot() string {
+	if v := strings.TrimSpace(os.Getenv("CONTAINER_COMPOSE_ROOT")); v != "" {
+		return filepath.Clean(v)
+	}
+	return "/home/server/containers"
+}
+
+// IsManagedComposeDir reports whether a compose working directory belongs to the
+// panel — i.e. the panel holds the file and may edit it. Anything else is
+// unmanaged: pre-existing, hand-made, or from a stack pipeline.
+func IsManagedComposeDir(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	root := managedComposeRoot()
+	clean := filepath.Clean(dir)
+	return clean == root || strings.HasPrefix(clean, root+string(filepath.Separator))
 }
 
 var (
@@ -718,6 +750,11 @@ func composeConfigFiles(label, workingDir string) []string {
 // Docker only. Every field is validated and passed as a discrete exec arg so
 // there's no shell to inject into. Returns the run output (new container id on
 // success, or the error output on failure).
+// CreateContainer writes the generated docker-compose.yml into the managed root
+// and runs `docker compose up -d` there. It does NOT shell out to `docker run`:
+// a run command evaporates once issued, leaving Docker's own state as the only
+// record, whereas the file persists — editable, diffable, backup-able, and
+// surviving a host rebuild.
 func (s *ContainerService) CreateContainer(spec ContainerCreateSpec) (string, error) {
 	plan, err := s.PlanContainer(spec)
 	if err != nil {
@@ -728,13 +765,25 @@ func (s *ContainerService) CreateContainer(spec ContainerCreateSpec) (string, er
 	if len(plan.Blocks) > 0 {
 		return "", errors.New(strings.Join(plan.Blocks, "; "))
 	}
-	out, err := runContainerCommand("", 5*time.Minute, "docker", plan.Args...)
+	dir := filepath.Dir(plan.Path)
+	// Belt-and-braces on the hard guard: refuse any path that escaped the managed
+	// root, however it was constructed.
+	if !IsManagedComposeDir(dir) {
+		return "", fmt.Errorf("refusing to write outside %s", managedComposeRoot())
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("could not create %s: %w", dir, err)
+	}
+	if err := os.WriteFile(plan.Path, []byte(plan.Compose), 0o644); err != nil {
+		return "", fmt.Errorf("could not write %s: %w", plan.Path, err)
+	}
+	out, err := runContainerCommand(dir, 5*time.Minute, "docker", "compose", "up", "-d")
 	return string(out), err
 }
 
-// PlanContainer validates a spec and builds the exact `docker run` args, plus the
-// guard warnings/blocks. CreateContainer runs precisely these args, so the command
-// shown at Review is the command that executes — a glass box, not a black one.
+// PlanContainer validates a spec and generates the docker-compose.yml that will be
+// written, plus the guard warnings/blocks. CreateContainer writes exactly this
+// file, so the Review step reviews the real artifact — not a synthesized command.
 func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPlan, error) {
 	plan := ContainerPlan{Warnings: []string{}, Blocks: []string{}}
 
@@ -742,18 +791,22 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 	if image == "" || strings.HasPrefix(image, "-") || !allowedImageRef.MatchString(image) {
 		return plan, errors.New("a valid image is required")
 	}
-	args := []string{"run", "-d"}
 
+	// A compose project needs a directory, so unlike `docker run` there is no
+	// "let Docker auto-name it". When the field is blank we derive a name from the
+	// image and show it at Review, which is what the operator needs to see.
 	name := strings.TrimSpace(spec.Name)
-	if name != "" {
-		if !allowedContainerID.MatchString(name) {
-			return plan, errors.New("invalid container name")
-		}
-		args = append(args, "--name", name)
-		if s.containerNameExists(name) {
-			// Docker's duplicate-name error is cryptic; say it plainly, up front.
-			plan.Blocks = append(plan.Blocks, fmt.Sprintf("a container named %q already exists — pick another name", name))
-		}
+	if name == "" {
+		name = deriveContainerName(image)
+	}
+	if !allowedContainerID.MatchString(name) {
+		return plan, errors.New("invalid container name")
+	}
+	plan.Name = name
+	plan.Path = filepath.Join(managedComposeRoot(), name, "docker-compose.yml")
+	if s.containerNameExists(name) {
+		// Docker's duplicate-name error is cryptic; say it plainly, up front.
+		plan.Blocks = append(plan.Blocks, fmt.Sprintf("a container named %q already exists — pick another name", name))
 	}
 
 	restart := strings.TrimSpace(spec.Restart)
@@ -763,7 +816,6 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 	if !allowedRestartPolicy[restart] {
 		return plan, errors.New("invalid restart policy")
 	}
-	args = append(args, "--restart", restart)
 
 	network := strings.TrimSpace(spec.Network)
 	if network == "" {
@@ -771,9 +823,6 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 	}
 	if network != "bridge" && network != "host" && network != "none" {
 		return plan, fmt.Errorf("invalid network mode %q (bridge, host or none)", network)
-	}
-	if network != "bridge" {
-		args = append(args, "--network", network)
 	}
 
 	ports := trimmedNonEmpty(spec.Ports)
@@ -786,7 +835,6 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 		if !allowedPortMapping.MatchString(p) {
 			return plan, fmt.Errorf("invalid port mapping %q (use host:container)", p)
 		}
-		args = append(args, "-p", p)
 		// Warn unless the publish is bound to loopback. A mapping with NO bind
 		// address defaults to 0.0.0.0, and an explicit 0.0.0.0 is public too —
 		// this is how MinIO and mysql:3306 ended up on the internet, so name it
@@ -800,7 +848,8 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 		}
 	}
 
-	if envFile := strings.TrimSpace(spec.EnvFile); envFile != "" {
+	envFile := strings.TrimSpace(spec.EnvFile)
+	if envFile != "" {
 		if !filepath.IsAbs(envFile) {
 			return plan, errors.New("the env file path must be absolute")
 		}
@@ -814,18 +863,18 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 		if info.Mode().Perm()&0o077 != 0 {
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is mode %04o — readable beyond its owner; 0600 is expected for a secrets file", envFile, info.Mode().Perm()))
 		}
-		args = append(args, "--env-file", envFile)
 	}
 
-	for _, e := range trimmedNonEmpty(spec.Env) {
+	envs := trimmedNonEmpty(spec.Env)
+	for _, e := range envs {
 		eq := strings.IndexByte(e, '=')
 		if eq <= 0 || !allowedEnvKey.MatchString(e[:eq]) {
 			return plan, fmt.Errorf("invalid environment variable %q (use KEY=VALUE)", e)
 		}
-		args = append(args, "-e", e)
 	}
 
-	for _, v := range trimmedNonEmpty(spec.Volumes) {
+	volumes := trimmedNonEmpty(spec.Volumes)
+	for _, v := range volumes {
 		if strings.HasPrefix(v, "-") || !strings.Contains(v, ":") {
 			return plan, fmt.Errorf("invalid volume %q (use src:dst)", v)
 		}
@@ -842,17 +891,92 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 		case src == "/home/server/.caddy" || strings.HasPrefix(src, "/home/server/.caddy/"):
 			plan.Warnings = append(plan.Warnings, "mounting /home/server/.caddy — Caddy's certificate store, readable only by root and `server`. A wrong mount here drops every vhost.")
 		}
-		args = append(args, "-v", v)
 	}
 
 	if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
 		plan.Warnings = append(plan.Warnings, "`:latest` means whatever it is today — a restart months from now may run different code")
 	}
 
-	args = append(args, image)
-	plan.Args = args
-	plan.Command = "docker " + strings.Join(args, " ")
+	plan.Compose = renderComposeFile(composeSpec{
+		Name: name, Image: image, Restart: restart, Network: network,
+		Ports: ports, EnvFile: envFile, Env: envs, Volumes: volumes, User: strings.TrimSpace(spec.User),
+	})
 	return plan, nil
+}
+
+type composeSpec struct {
+	Name, Image, Restart, Network, EnvFile, User string
+	Ports, Env, Volumes                          []string
+}
+
+// renderComposeFile writes the compose YAML by hand — the values are already
+// validated against strict patterns, so quoting each scalar is enough and it
+// avoids pulling a YAML dependency in for one emitter.
+func renderComposeFile(c composeSpec) string {
+	var b strings.Builder
+	b.WriteString("# Written by Ppt Server Panel — edit and re-run `docker compose up -d` here.\n")
+	b.WriteString("services:\n")
+	b.WriteString("  " + c.Name + ":\n")
+	b.WriteString("    image: " + yamlScalar(c.Image) + "\n")
+	b.WriteString("    container_name: " + yamlScalar(c.Name) + "\n")
+	b.WriteString("    restart: " + c.Restart + "\n")
+	if c.Network != "bridge" {
+		b.WriteString("    network_mode: " + c.Network + "\n")
+	}
+	if c.User != "" {
+		b.WriteString("    user: " + yamlScalar(c.User) + "\n")
+	}
+	if len(c.Ports) > 0 {
+		b.WriteString("    ports:\n")
+		for _, p := range c.Ports {
+			b.WriteString("      - " + yamlScalar(p) + "\n")
+		}
+	}
+	if c.EnvFile != "" {
+		// The PATH is referenced, never the values — a compose file that inlines
+		// secrets is a secret store nobody chose to create.
+		b.WriteString("    env_file:\n      - " + yamlScalar(c.EnvFile) + "\n")
+	}
+	if len(c.Env) > 0 {
+		b.WriteString("    environment:\n")
+		for _, e := range c.Env {
+			b.WriteString("      - " + yamlScalar(e) + "\n")
+		}
+	}
+	if len(c.Volumes) > 0 {
+		b.WriteString("    volumes:\n")
+		for _, v := range c.Volumes {
+			b.WriteString("      - " + yamlScalar(v) + "\n")
+		}
+	}
+	return b.String()
+}
+
+// yamlScalar double-quotes a value so ports like "9001:8080" are never parsed as
+// sexagesimals and colons never split a mapping.
+func yamlScalar(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// deriveContainerName builds a name from the image when the field is left blank
+// ("nocodb/nocodb:latest" -> "nocodb"), so the compose directory always has one.
+func deriveContainerName(image string) string {
+	name := image
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexAny(name, ":@"); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, name)
+	return strings.Trim(name, "-.")
 }
 
 // splitPublish separates an optional bind address from a `[bind:]host:container`

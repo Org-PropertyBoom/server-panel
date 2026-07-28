@@ -6,7 +6,10 @@ import { Button } from "_layouts/_components/ui/button";
 import Api from "_utils/api";
 
 // New container flow — Configure → Review.
-// Spec: design-templates designs/shared/panel-new-container.md @ de67554.
+// Spec: design-templates designs/shared/panel-new-container.md @ 301c1ad. The modal writes a
+// docker-compose.yml under /home/server/containers/<name>/ and runs `docker compose
+// up -d` there — never `docker run`. A run command evaporates once issued; the file
+// persists, editable and diffable, and survives a host rebuild.
 //
 // The safety point: `-p 9001:8080` publishes on 0.0.0.0 — every interface,
 // including the public one. That silent default is how MinIO's console, openinary
@@ -14,7 +17,7 @@ import Api from "_utils/api";
 // Caddy, so loopback is correct in nearly every case: it is the default, and
 // public is visible, named, and chosen each time.
 
-type Plan = { command: string; warnings: string[]; blocks: string[] };
+type Plan = { name: string; path: string; compose: string; warnings: string[]; blocks: string[] };
 
 export default function CreateContainerModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
     const [step, setStep] = useState<"configure" | "review">("configure");
@@ -74,10 +77,10 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                 setPlanError(data.error);
                 return;
             }
-            setPlan({ command: data.plan?.command ?? "", warnings: data.plan?.warnings ?? [], blocks: data.plan?.blocks ?? [] });
+            setPlan({ name: data.plan?.name ?? "", path: data.plan?.path ?? "", compose: data.plan?.compose ?? "", warnings: data.plan?.warnings ?? [], blocks: data.plan?.blocks ?? [] });
             setStep("review");
         } catch (err) {
-            setPlanError(err instanceof Error ? err.message : "Could not build the command");
+            setPlanError(err instanceof Error ? err.message : "Could not build the compose file");
         } finally {
             setPlanning(false);
         }
@@ -122,8 +125,10 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                                 {step === "configure" ? "· 1 of 2 · Configure" : "· 2 of 2 · Review"}
                             </span>
                         </h2>
+                        {/* Conservation: the meaning must survive — only the command
+                            name is reworded, because the flow no longer uses docker run. */}
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            Runs <code>docker run -d</code> as root. For stack apps, use their deploy pipeline instead.
+                            Runs <code>docker compose up -d</code> as root. For stack apps, use their deploy pipeline instead.
                         </p>
                     </div>
                     <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onClose} disabled={busy} aria-label="Close">
@@ -142,7 +147,7 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
 
                         <label className="block">
                             <span className="mb-1 block font-medium text-foreground">Name</span>
-                            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="optional — auto-generated if empty" className={inputCls} />
+                            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="optional — derived from the image if empty" className={inputCls} />
                         </label>
 
                         <div>
@@ -262,22 +267,29 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                 ) : (
                     <div className="min-h-0 flex-1 space-y-3 overflow-auto px-5 py-4 text-xs">
                         <div>
-                            <div className="mb-1 flex items-center justify-between">
-                                <span className="font-medium text-foreground">This command will run</span>
+                            <div className="mb-1 flex items-center justify-between gap-3">
+                                <span className="min-w-0 font-medium text-foreground">
+                                    This file will be written
+                                    <code className="ml-1.5 break-all font-normal text-[11px] text-muted-foreground">{plan?.path}</code>
+                                </span>
                                 <button
                                     type="button"
                                     onClick={() =>
-                                        navigator.clipboard.writeText(plan?.command ?? "").then(
-                                            () => toast.success("Command copied"),
+                                        navigator.clipboard.writeText(plan?.compose ?? "").then(
+                                            () => toast.success("Compose file copied"),
                                             () => toast.error("Could not copy"),
                                         )
                                     }
-                                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
                                 >
                                     Copy
                                 </button>
                             </div>
-                            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{plan?.command}</pre>
+                            <pre className="overflow-x-auto whitespace-pre rounded-md border border-border bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-zinc-200">{plan?.compose}</pre>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                                Then <code>docker compose up -d</code> runs in that directory. The file stays on disk — editable, diffable, and it
+                                outlives the container.
+                            </p>
                         </div>
 
                         {(plan?.blocks ?? []).length > 0 ? (

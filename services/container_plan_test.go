@@ -1,6 +1,8 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,8 +26,8 @@ func TestPlan_PortWithBindAddressIsPassedThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit bind address must validate: %v", err)
 	}
-	if !strings.Contains(plan.Command, "-p 127.0.0.1:9001:8080") {
-		t.Errorf("command = %q, want the bind address preserved verbatim", plan.Command)
+	if !strings.Contains(plan.Compose, `"127.0.0.1:9001:8080"`) {
+		t.Errorf("compose = %q, want the bind address preserved verbatim", plan.Compose)
 	}
 	for _, wmsg := range plan.Warnings {
 		if strings.Contains(wmsg, "PUBLIC") {
@@ -113,8 +115,8 @@ func TestPlan_HostNetworkingDisablesPorts(t *testing.T) {
 	if len(plan.Blocks) == 0 {
 		t.Error("ports with host networking must block — Docker rejects the combination")
 	}
-	if !strings.Contains(plan.Command, "--network host") {
-		t.Errorf("command = %q, want --network host", plan.Command)
+	if !strings.Contains(plan.Compose, "network_mode: host") {
+		t.Errorf("compose = %q, want network_mode: host", plan.Compose)
 	}
 }
 
@@ -132,9 +134,9 @@ func TestPlan_GatewayServiceIsCreatable(t *testing.T) {
 	if len(plan.Blocks) != 0 {
 		t.Errorf("unexpected blocks: %v", plan.Blocks)
 	}
-	for _, want := range []string{"--name gateway-service", "--restart unless-stopped", "--network host", "gateway-service:latest"} {
-		if !strings.Contains(plan.Command, want) {
-			t.Errorf("command = %q, missing %q", plan.Command, want)
+	for _, want := range []string{"container_name: \"gateway-service\"", "restart: unless-stopped", "network_mode: host", "image: \"gateway-service:latest\""} {
+		if !strings.Contains(plan.Compose, want) {
+			t.Errorf("compose = %q, missing %q", plan.Compose, want)
 		}
 	}
 }
@@ -155,13 +157,81 @@ func TestPlan_LatestTagNoted(t *testing.T) {
 	}
 }
 
+func TestPlan_WritesUnderManagedRootOnly(t *testing.T) {
+	// The hard guard: every write is confined to the managed root, so a stack
+	// repo's compose file can never be written into, near, or over.
+	root := managedComposeRoot()
+	for _, name := range []string{"nocodb", "gateway-service"} {
+		plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(root, name, "docker-compose.yml")
+		if plan.Path != want {
+			t.Errorf("path = %q, want %q", plan.Path, want)
+		}
+		if !IsManagedComposeDir(filepath.Dir(plan.Path)) {
+			t.Errorf("%q must be inside the managed root", plan.Path)
+		}
+	}
+	// A stack repo is NOT managed — no Edit, no retro-generated file.
+	for _, dir := range []string{"/home/server/htdocs/phalcon", "/home/server/htdocs/golang", "/etc", "/home/server/containers-evil"} {
+		if IsManagedComposeDir(dir) {
+			t.Errorf("%q must NOT be treated as panel-managed", dir)
+		}
+	}
+	// A traversal-shaped name can't escape: it fails name validation outright.
+	if _, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "../../htdocs/phalcon"}); err == nil {
+		t.Error("a name containing path separators must be rejected")
+	}
+}
+
+func TestPlan_EnvFileIsReferencedNotInlined(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "svc.env")
+	if err := os.WriteFile(f, []byte("SECRET_TOKEN=hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", EnvFile: f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Compose, "env_file:") || !strings.Contains(plan.Compose, f) {
+		t.Errorf("compose must reference the env file path, got %q", plan.Compose)
+	}
+	if strings.Contains(plan.Compose, "hunter2") || strings.Contains(plan.Compose, "SECRET_TOKEN") {
+		t.Error("the env file's CONTENTS must never appear in the compose file")
+	}
+}
+
+func TestPlan_DerivesNameWhenBlank(t *testing.T) {
+	// A compose project needs a directory, so a blank name is derived and shown.
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "nocodb/nocodb:latest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Name != "nocodb" {
+		t.Errorf("derived name = %q, want nocodb", plan.Name)
+	}
+}
+
+func TestPlan_PortsQuotedInYAML(t *testing.T) {
+	// Unquoted, YAML reads 9001:8080 as a sexagesimal integer, not a string.
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", Ports: []string{"9001:8080"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Compose, `- "9001:8080"`) {
+		t.Errorf("ports must be quoted scalars, got %q", plan.Compose)
+	}
+}
+
 func TestPlan_DefaultsPreserved(t *testing.T) {
 	// Conservation: restart policy default stays unless-stopped.
 	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "nginx:1.27"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.Command, "--restart unless-stopped") {
-		t.Errorf("command = %q, want the unless-stopped default preserved", plan.Command)
+	if !strings.Contains(plan.Compose, "restart: unless-stopped") {
+		t.Errorf("compose = %q, want the unless-stopped default preserved", plan.Compose)
 	}
 }

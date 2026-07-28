@@ -63,7 +63,9 @@ func composeScanRoots() []string {
 			return out
 		}
 	}
-	return []string{"/home/server/htdocs"}
+	// The managed root is scanned too, so panel-created containers appear as
+	// compose projects like any other.
+	return []string{"/home/server/htdocs", managedComposeRoot()}
 }
 
 var (
@@ -205,6 +207,12 @@ func (s *ContainerService) ListWithCompose() []Container {
 				Deployed:   false,
 			})
 		}
+	}
+
+	// Ownership is visible: a container is "managed" only when the panel actually
+	// holds its compose file. Nothing is retro-generated for the others.
+	for i := range real {
+		real[i].Managed = IsManagedComposeDir(real[i].WorkingDir)
 	}
 
 	sort.SliceStable(real, func(i, j int) bool {

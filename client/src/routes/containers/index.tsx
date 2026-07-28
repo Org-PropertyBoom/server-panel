@@ -29,6 +29,9 @@ type ContainerRecord = {
     service?: string;
     workingDir?: string;
     deployed?: boolean;
+    // managed = the panel holds this container's compose file. Unmanaged ones were
+    // made by hand or by a stack pipeline — shown as-is, never retro-given a file.
+    managed?: boolean;
     // In-use guard: set on non-running rows whose project DIR is load-bearing
     // (a running container mounts out of it, or a host process runs from it).
     inUse?: boolean;
@@ -755,6 +758,14 @@ export default function ContainersRoute() {
                                                         <td className="px-4 py-3">
                                                             <p className="font-medium text-foreground">{container.name || container.id.slice(0, 12)}</p>
                                                             <code className="mt-0.5 block text-[10px] text-muted-foreground">{container.id.slice(0, 12)}</code>
+                                                            {container.managed ? (
+                                                                <span
+                                                                    className="mt-0.5 inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary"
+                                                                    title={`Managed by the panel — compose file at ${container.workingDir}/docker-compose.yml`}
+                                                                >
+                                                                    managed
+                                                                </span>
+                                                            ) : null}
                                                             {(() => {
                                                                 const s = stampFor(container);
                                                                 return s?.commit ? (
