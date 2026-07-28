@@ -299,6 +299,11 @@ func (s *DNSProbeService) Cutover(ctx context.Context, host string) CutoverInfo 
 	wg.Wait()
 
 	for _, r := range results {
+		// A nil slice marshals to JSON `null`, and most probed labels have no
+		// record — so emit an empty array instead. Callers iterate these directly.
+		if r.Values == nil {
+			r.Values = []string{}
+		}
 		info.Records = append(info.Records, r)
 		switch {
 		case r.Type == "MX" && r.Label == "@" && len(r.Values) > 0:
@@ -491,6 +496,12 @@ func (s *DNSProbeService) ZoneDiff(ctx context.Context, host string, targetNS []
 			name := fqdn(p.label, host)
 			cur := digShort(ctx, name, p.typ, current[0])
 			tgt := digShort(ctx, name, p.typ, targets[0])
+			if cur == nil { // nil marshals to JSON null; callers iterate these
+				cur = []string{}
+			}
+			if tgt == nil {
+				tgt = []string{}
+			}
 			mu.Lock()
 			rows = append(rows, ZoneDiffRow{Label: p.label, Type: p.typ, Current: cur, Target: tgt, Match: sameAnswers(cur, tgt)})
 			mu.Unlock()

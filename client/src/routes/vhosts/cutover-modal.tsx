@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Copy, Loader2, Lock, Mail, ShieldAlert, X 
 import { toast } from "sonner";
 
 import { Button } from "_layouts/_components/ui/button";
-import { inputCls } from "./shared";
+import { arr, inputCls } from "./shared";
 import { type CutoverVars, methodAMessage, methodBMessage, methodCMessage, wwwWarning } from "./cutover-templates";
 
 // Cutover Assistant — per-tenant client message generator.
@@ -106,6 +106,9 @@ export default function CutoverModal({ host, edge, onClose }: { host: string; ed
                 const res = await fetch(`/post/vhost/cutover?host=${encodeURIComponent(host)}`, { cache: "no-store" });
                 if (!res.ok) throw new Error((await res.text()).trim() || "Pre-flight scan failed");
                 const data = (await res.json()) as CutoverInfo;
+                // Go marshals a nil slice as JSON null, and most probed labels have
+                // no record — coerce every list so the render can iterate freely.
+                data.records = arr(data.records).map((r) => ({ ...r, values: arr(r.values) }));
                 if (!cancelled) setInfo(data);
             } catch (err) {
                 if (!cancelled) setError(err instanceof Error ? err.message : "Pre-flight scan failed");
@@ -158,7 +161,9 @@ export default function CutoverModal({ host, edge, onClose }: { host: string; ed
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ host, nameservers }),
             });
-            setDiff((await res.json()) as DiffResult);
+            const data = (await res.json()) as DiffResult;
+            data.rows = arr(data.rows).map((r) => ({ ...r, current: arr(r.current), target: arr(r.target) }));
+            setDiff(data);
         } catch (err) {
             setDiff({ rows: [], allMatch: false, mismatch: 0, error: String(err) });
         } finally {
