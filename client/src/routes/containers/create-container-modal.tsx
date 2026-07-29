@@ -35,6 +35,14 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
     const [scope, setScope] = useState<"127.0.0.1" | "0.0.0.0">("127.0.0.1");
     const [acceptPublic, setAcceptPublic] = useState(false);
     const [confirmSock, setConfirmSock] = useState(false);
+    // §9 resource caps — empty by default. openinary_processor leaked to ~1.5 GB
+    // uncapped on this host, starving everything sharing it.
+    const [memLimit, setMemLimit] = useState("");
+    const [cpus, setCpus] = useState("");
+    // §10 privileged — the same host access as docker.sock by another route.
+    const [privileged, setPrivileged] = useState(false);
+    const [confirmPrivileged, setConfirmPrivileged] = useState(false);
+    const [alwaysPull, setAlwaysPull] = useState(false);
     const [plan, setPlan] = useState<Plan | null>(null);
     const [planError, setPlanError] = useState("");
     const [planning, setPlanning] = useState(false);
@@ -61,6 +69,11 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
         restart,
         network,
         confirmDockerSock: confirmSock,
+        memLimit: memLimit.trim(),
+        cpus: cpus.trim(),
+        privileged,
+        confirmPrivileged,
+        alwaysPull,
     });
 
     const review = async () => {
@@ -261,6 +274,48 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                                 <option value="no">no</option>
                             </select>
                         </label>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <label className="block">
+                                <span className="mb-1 block font-medium text-foreground">Memory limit</span>
+                                <input value={memLimit} onChange={(e) => setMemLimit(e.target.value)} placeholder="512m" className={inputCls} />
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 block font-medium text-foreground">CPU limit</span>
+                                <input value={cpus} onChange={(e) => setCpus(e.target.value)} placeholder="1.5" className={inputCls} />
+                            </label>
+                        </div>
+                        <p className="-mt-2 text-[11px] text-muted-foreground">
+                            No limit means this container can consume all host RAM. Every site on this box shares it.
+                        </p>
+
+                        <label className="flex items-start gap-2 text-muted-foreground">
+                            <input type="checkbox" checked={alwaysPull} onChange={(e) => setAlwaysPull(e.target.checked)} className="mt-0.5" />
+                            <span>
+                                Always pull the image <span className="text-[11px]">— <code>pull_policy: always</code>, so a restart takes the newest image rather than a stale local copy.</span>
+                            </span>
+                        </label>
+
+                        <label className="flex items-start gap-2 text-muted-foreground">
+                            <input
+                                type="checkbox"
+                                checked={privileged}
+                                onChange={(e) => {
+                                    setPrivileged(e.target.checked);
+                                    if (!e.target.checked) setConfirmPrivileged(false);
+                                }}
+                                className="mt-0.5"
+                            />
+                            <span>
+                                Privileged mode <span className="text-[11px] text-amber-600 dark:text-amber-400">— grants effectively full host access, the same as mounting docker.sock.</span>
+                            </span>
+                        </label>
+                        {privileged ? (
+                            <label className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+                                <input type="checkbox" checked={confirmPrivileged} onChange={(e) => setConfirmPrivileged(e.target.checked)} className="mt-0.5" />
+                                <span>I understand this grants effectively full host access, and intend it.</span>
+                            </label>
+                        ) : null}
 
                         {planError ? <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">{planError}</p> : null}
                     </div>

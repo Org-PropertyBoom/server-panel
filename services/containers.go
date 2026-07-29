@@ -560,6 +560,19 @@ type ContainerCreateSpec struct {
 	// User is an optional "uid:gid" the container runs as (compose `user:`), the
 	// remedy sitting next to the runs-as-root warning.
 	User string `json:"user"`
+	// MemLimit / CPUs are optional resource caps, empty by default. Not
+	// hypothetical here: openinary_processor ran uncapped and leaked to ~1.5 GB
+	// before being capped by hand — an uncapped container on a shared box can
+	// starve every tenant site on it.
+	MemLimit string `json:"memLimit"` // e.g. "512m"
+	CPUs     string `json:"cpus"`     // e.g. "1.5"
+	// Privileged grants effectively the same host access as mounting docker.sock,
+	// by another route — so it is blocked by the same typed confirmation. Blocking
+	// one escape hatch and not the other would not be a guard.
+	Privileged        bool     `json:"privileged"`
+	ConfirmPrivileged bool     `json:"confirmPrivileged"`
+	CapAdd            []string `json:"capAdd"`     // allowed, but each named at Review
+	AlwaysPull        bool     `json:"alwaysPull"` // pull_policy: always — a real answer to :latest staleness
 	// ConfirmDockerSock authorizes mounting /var/run/docker.sock, which grants
 	// full host root via container escape. Blocked unless explicitly confirmed.
 	ConfirmDockerSock bool `json:"confirmDockerSock"`
@@ -608,6 +621,9 @@ var (
 	// Without the bind group Docker publishes on 0.0.0.0 — every interface.
 	allowedPortMapping   = regexp.MustCompile(`^((\d{1,3}\.){3}\d{1,3}:)?(\d{1,5}:)?\d{1,5}(/(tcp|udp))?$`)
 	allowedEnvKey        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	allowedMemLimit      = regexp.MustCompile(`^\d+(\.\d+)?[bkmgBKMG]?$`)
+	allowedCPUs          = regexp.MustCompile(`^\d+(\.\d+)?$`)
+	allowedCapability    = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	allowedRestartPolicy = map[string]bool{"no": true, "always": true, "unless-stopped": true, "on-failure": true}
 )
 
@@ -894,19 +910,54 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 	}
 
 	if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
-		plan.Warnings = append(plan.Warnings, "`:latest` means whatever it is today — a restart months from now may run different code")
+		note := "`:latest` means whatever it is today — a restart months from now may run different code"
+		if spec.AlwaysPull {
+			note += " (always-pull is on, so a restart takes the newest image rather than a stale local copy)"
+		}
+		plan.Warnings = append(plan.Warnings, note)
+	}
+
+	// Resource caps. Empty = no limit, which is why the UI says so plainly.
+	memLimit := strings.TrimSpace(spec.MemLimit)
+	if memLimit != "" && !allowedMemLimit.MatchString(memLimit) {
+		return plan, fmt.Errorf("invalid memory limit %q (e.g. 512m, 2g)", memLimit)
+	}
+	cpus := strings.TrimSpace(spec.CPUs)
+	if cpus != "" && !allowedCPUs.MatchString(cpus) {
+		return plan, fmt.Errorf("invalid CPU limit %q (e.g. 1.5)", cpus)
+	}
+	if memLimit == "" {
+		plan.Warnings = append(plan.Warnings, "no memory limit — this container can consume all host RAM, and every site on this box shares it")
+	}
+
+	// privileged: the same host access as mounting docker.sock, by another route.
+	if spec.Privileged && !spec.ConfirmPrivileged {
+		plan.Blocks = append(plan.Blocks, "privileged mode grants effectively full host access — confirm explicitly if you truly intend it")
+	} else if spec.Privileged {
+		plan.Warnings = append(plan.Warnings, "privileged mode is on — this container has effectively full host access")
+	}
+
+	caps := trimmedNonEmpty(spec.CapAdd)
+	for _, c := range caps {
+		if !allowedCapability.MatchString(c) {
+			return plan, fmt.Errorf("invalid capability %q", c)
+		}
+		plan.Warnings = append(plan.Warnings, "added Linux capability "+c)
 	}
 
 	plan.Compose = renderComposeFile(composeSpec{
 		Name: name, Image: image, Restart: restart, Network: network,
 		Ports: ports, EnvFile: envFile, Env: envs, Volumes: volumes, User: strings.TrimSpace(spec.User),
+		MemLimit: memLimit, CPUs: cpus, Privileged: spec.Privileged, CapAdd: caps, AlwaysPull: spec.AlwaysPull,
 	})
 	return plan, nil
 }
 
 type composeSpec struct {
 	Name, Image, Restart, Network, EnvFile, User string
-	Ports, Env, Volumes                          []string
+	Ports, Env, Volumes, CapAdd                  []string
+	MemLimit, CPUs                               string
+	Privileged, AlwaysPull                       bool
 }
 
 // renderComposeFile writes the compose YAML by hand — the values are already
@@ -947,6 +998,24 @@ func renderComposeFile(c composeSpec) string {
 		b.WriteString("    volumes:\n")
 		for _, v := range c.Volumes {
 			b.WriteString("      - " + yamlScalar(v) + "\n")
+		}
+	}
+	if c.MemLimit != "" {
+		b.WriteString("    mem_limit: " + c.MemLimit + "\n")
+	}
+	if c.CPUs != "" {
+		b.WriteString("    cpus: " + yamlScalar(c.CPUs) + "\n")
+	}
+	if c.AlwaysPull {
+		b.WriteString("    pull_policy: always\n")
+	}
+	if c.Privileged {
+		b.WriteString("    privileged: true\n")
+	}
+	if len(c.CapAdd) > 0 {
+		b.WriteString("    cap_add:\n")
+		for _, cp := range c.CapAdd {
+			b.WriteString("      - " + cp + "\n")
 		}
 	}
 	return b.String()

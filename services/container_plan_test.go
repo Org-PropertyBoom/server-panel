@@ -225,6 +225,87 @@ func TestPlan_PortsQuotedInYAML(t *testing.T) {
 	}
 }
 
+func TestPlan_PrivilegedBlocksUnlessConfirmed(t *testing.T) {
+	// privileged is the same host access as docker.sock by another route —
+	// blocking one and not the other would not be a guard.
+	spec := ContainerCreateSpec{Image: "x:1", Name: "svc", Privileged: true}
+	plan, err := planSvc().PlanContainer(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blocks) == 0 {
+		t.Error("privileged must block by default")
+	}
+	spec.ConfirmPrivileged = true
+	ok, err := planSvc().PlanContainer(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ok.Blocks) != 0 {
+		t.Errorf("an explicit confirmation must clear the block, blocks = %v", ok.Blocks)
+	}
+	if !strings.Contains(ok.Compose, "privileged: true") {
+		t.Errorf("compose = %q, want privileged: true", ok.Compose)
+	}
+	if !strings.Contains(strings.Join(ok.Warnings, " "), "privileged") {
+		t.Error("confirmed privileged must still warn")
+	}
+}
+
+func TestPlan_ResourceLimits(t *testing.T) {
+	// openinary_processor leaked to ~1.5 GB uncapped on this host — an unlimited
+	// container starves every tenant site, so the absence is called out.
+	none, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(none.Warnings, " "), "no memory limit") {
+		t.Errorf("an uncapped container must warn, warnings = %v", none.Warnings)
+	}
+	capped, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", MemLimit: "512m", CPUs: "1.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(capped.Compose, "mem_limit: 512m") || !strings.Contains(capped.Compose, `cpus: "1.5"`) {
+		t.Errorf("compose = %q, want mem_limit and cpus", capped.Compose)
+	}
+	if strings.Contains(strings.Join(capped.Warnings, " "), "no memory limit") {
+		t.Error("a capped container must not warn about being uncapped")
+	}
+	if _, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "s", MemLimit: "512 megs"}); err == nil {
+		t.Error("a malformed memory limit must be rejected")
+	}
+}
+
+func TestPlan_CapAddNamedAtReview(t *testing.T) {
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", CapAdd: []string{"NET_ADMIN"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Compose, "cap_add:") || !strings.Contains(plan.Compose, "NET_ADMIN") {
+		t.Errorf("compose = %q, want cap_add NET_ADMIN", plan.Compose)
+	}
+	if !strings.Contains(strings.Join(plan.Warnings, " "), "NET_ADMIN") {
+		t.Error("each added capability must be named at Review")
+	}
+}
+
+// §8 makes the port input structured rows. The emitted compose must stay
+// byte-identical, so this pins the exact output the widget has to reproduce.
+func TestPlan_PortOutputIsStable(t *testing.T) {
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{
+		Image: "x:1", Name: "svc", MemLimit: "512m",
+		Ports: []string{"127.0.0.1:9001:8080", "127.0.0.1:9002:8443/udp"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "    ports:\n      - \"127.0.0.1:9001:8080\"\n      - \"127.0.0.1:9002:8443/udp\"\n"
+	if !strings.Contains(plan.Compose, want) {
+		t.Errorf("ports block changed — §8 requires byte-identical output.\ngot:\n%s\nwant to contain:\n%s", plan.Compose, want)
+	}
+}
+
 func TestPlan_DefaultsPreserved(t *testing.T) {
 	// Conservation: restart policy default stays unless-stopped.
 	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "nginx:1.27"})
