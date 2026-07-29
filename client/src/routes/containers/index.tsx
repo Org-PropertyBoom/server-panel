@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, Container as ContainerIcon, ExternalLink, FileCode2, FileText, FolderGit2, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, ChevronDown, ChevronRight, Container as ContainerIcon, ExternalLink, FileCode2, FileText, FolderGit2, GitCommit, Hammer, Info, Loader2, MoreVertical, Play, Plus, RefreshCw, Repeat2, RotateCw, Save, Square, Trash2, X, XCircle } from "lucide-react";
 
 import { toast } from "sonner";
 
@@ -32,6 +32,8 @@ type ContainerRecord = {
     // managed = the panel holds this container's compose file. Unmanaged ones were
     // made by hand or by a stack pipeline — shown as-is, never retro-given a file.
     managed?: boolean;
+    // "" means the image declares no HEALTHCHECK — unknown, not healthy.
+    health?: string;
     // In-use guard: set on non-running rows whose project DIR is load-bearing
     // (a running container mounts out of it, or a host process runs from it).
     inUse?: boolean;
@@ -295,6 +297,40 @@ function InUseBadge({ container }: { container: ContainerRecord }) {
     );
 }
 
+// projectHealth rolls a project's services up with AND: healthy only when EVERY
+// service is. Services in a project are peers — there is no "the important one is
+// fine". A green tick over a partly-dead project is the same class of lie as pc
+// reporting openinary while actually serving from R2, which cost a day to spot.
+//
+// Returns "unhealthy" if any service is; "starting" while any is still coming up;
+// "healthy" only if at least one reports healthy and none contradict it;
+// "" when no service declares a HEALTHCHECK (unknown ≠ healthy).
+function projectHealth(rows: ContainerRecord[]): string {
+    const live = rows.filter((r) => r.deployed !== false);
+    if (live.length === 0) return "";
+    const states = live.map((r) => r.health ?? "");
+    if (states.some((h) => h === "unhealthy")) return "unhealthy";
+    if (states.some((h) => h === "starting")) return "starting";
+    if (states.some((h) => h === "healthy")) return states.every((h) => h === "healthy") ? "healthy" : "partial";
+    return "";
+}
+
+const HEALTH_TONE: Record<string, string> = {
+    healthy: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    unhealthy: "border-destructive/30 bg-destructive/10 text-destructive",
+    starting: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    partial: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+};
+
+function HealthChip({ health, title }: { health: string; title?: string }) {
+    if (!health) return null;
+    return (
+        <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${HEALTH_TONE[health] ?? ""}`} title={title}>
+            {health === "partial" ? "not all healthy" : health}
+        </span>
+    );
+}
+
 export default function ContainersRoute() {
     const [containers, setContainers] = useState<ContainerRecord[]>([]);
     const [loading, setLoading] = useState(true);
@@ -332,6 +368,8 @@ export default function ContainersRoute() {
     const [removeContainer, setRemoveContainer] = useState<ContainerRecord | null>(null);
     const [removeText, setRemoveText] = useState("");
     const [showNotDeployed, setShowNotDeployed] = useState(true);
+    const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+    const [projectBusy, setProjectBusy] = useState("");
     const [startTarget, setStartTarget] = useState<ContainerRecord | null>(null);
 
     // stampFor returns a container's resolved build stamp (first route host that has one).
@@ -436,6 +474,30 @@ export default function ContainersRoute() {
             toast.error(err instanceof Error ? err.message : "Start failed");
         } finally {
             setActionLoading("");
+        }
+    };
+
+    // Restart the whole project. Services in a compose project are peers, and
+    // restarting one while leaving the rest on stale config is the less correct
+    // default — so the project is the unit. Per-service actions stay on the rows.
+    const restartProject = async (workingDir: string, label: string) => {
+        setProjectBusy(workingDir);
+        try {
+            const res = await fetch(`${Api.current.containers}/compose-restart`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ workingDir }),
+            });
+            const data: { output?: string; error?: string } = await res.json();
+            if (data.error) toast.error(data.error);
+            else {
+                toast.success(`${label} restarted`);
+                await loadContainers();
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Restart failed");
+        } finally {
+            setProjectBusy("");
         }
     };
 
@@ -697,18 +759,45 @@ export default function ContainersRoute() {
                                                             <span className="font-semibold uppercase tracking-wide text-muted-foreground">Standalone</span>
                                                         ) : (
                                                             <>
-                                                                <FolderGit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                                                <span className="font-semibold text-foreground">{group.title}</span>
+                                                                <button
+                                                                    onClick={() => setCollapsed((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
+                                                                    className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 font-semibold text-foreground hover:bg-muted"
+                                                                    title={collapsed[group.key] ? "Show services" : "Hide services"}
+                                                                >
+                                                                    {collapsed[group.key] ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                                                    <FolderGit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                                                    {group.title}
+                                                                </button>
+                                                                {/* Health rolls up with AND — a project is healthy only when
+                                                                    every service is. Never "the important one is fine". */}
+                                                                <HealthChip
+                                                                    health={projectHealth(group.rows)}
+                                                                    title={group.rows.filter((r) => r.deployed !== false).map((r) => `${r.service || r.name}: ${r.health || "no healthcheck"}`).join("\n")}
+                                                                />
                                                             </>
                                                         )}
                                                         <span className="text-muted-foreground">
                                                             {group.rows.length} {noun}{group.rows.length === 1 ? "" : "s"} · {run} running
                                                             {nd > 0 ? <span className="text-amber-600 dark:text-amber-400"> · {nd} not deployed</span> : null}
                                                         </span>
+                                                        {!group.standalone && group.rows[0]?.workingDir ? (
+                                                            <>
+                                                                <span className="flex-1" />
+                                                                <button
+                                                                    onClick={() => restartProject(group.rows[0].workingDir as string, group.title)}
+                                                                    disabled={Boolean(projectBusy)}
+                                                                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                                                                    title={`docker compose restart — the whole ${group.title} project, so no service is left on stale config`}
+                                                                >
+                                                                    {projectBusy === group.rows[0].workingDir ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+                                                                    Restart project
+                                                                </button>
+                                                            </>
+                                                        ) : null}
                                                     </div>
                                                 </td>
                                             </tr>
-                                            {group.rows.map((container) =>
+                                            {(collapsed[group.key] ? [] : group.rows).map((container) =>
                                                 isNotDeployed(container) ? (
                                                     <tr key={`nd:${container.workingDir}:${container.service}`} className={`hover:bg-muted/20 ${container.inUse ? "bg-amber-500/[0.04]" : "bg-muted/10"}`}>
                                                         <td className="px-4 py-3">
@@ -797,6 +886,7 @@ export default function ContainersRoute() {
                                                                     <span className={`h-2 w-2 rounded-full ${container.state.toLowerCase() === "running" ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />
                                                                     <span className="text-foreground">{container.status || container.state || "Unknown"}</span>
                                                                 </span>
+                                                                <HealthChip health={container.health ?? ""} />
                                                                 <InUseBadge container={container} />
                                                             </div>
                                                         </td>

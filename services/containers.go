@@ -57,6 +57,10 @@ type Container struct {
 	// managed root), so it can be edited and re-applied. Unmanaged containers were
 	// made by hand or by a stack pipeline: shown as-is, never retro-given a file.
 	Managed bool `json:"managed"`
+	// Health parsed from the runtime status ("Up 2 hours (healthy)"). "" means the
+	// image declares no HEALTHCHECK, which is NOT the same as healthy — the project
+	// roll-up must not treat an absent check as a pass.
+	Health string `json:"health,omitempty"`
 	// In-use guard: a project dir can be load-bearing even when its service is
 	// NOT deployed — a running container bind-mounts a path out of it, or a host
 	// process runs from it. Populated only for non-running rows. "Not deployed"
@@ -1074,6 +1078,39 @@ func isLoopbackBind(bind string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// parseHealthFromStatus pulls the health state out of a docker status string
+// ("Up 2 hours (healthy)"). Returns "" when the image declares no HEALTHCHECK —
+// unknown, deliberately not conflated with healthy.
+func parseHealthFromStatus(status string) string {
+	switch {
+	case strings.Contains(status, "(healthy)"):
+		return "healthy"
+	case strings.Contains(status, "(unhealthy)"):
+		return "unhealthy"
+	case strings.Contains(status, "(health: starting)"):
+		return "starting"
+	default:
+		return ""
+	}
+}
+
+// ComposeRestart restarts an ENTIRE compose project (`docker compose restart` in
+// its directory). Services in a project are peers, and restarting one while
+// leaving the others on stale config is the less correct default — so the project
+// is the unit. Re-validated against discovered projects so the client can't drive
+// a compose command in an arbitrary directory.
+func (s *ContainerService) ComposeRestart(workingDir string) (string, error) {
+	workingDir = filepath.Clean(workingDir)
+	if !filepath.IsAbs(workingDir) {
+		return "", errors.New("invalid compose working directory")
+	}
+	if _, ok := discoverComposeProjects(nil)[workingDir]; !ok {
+		return "", errors.New("unknown compose project — no compose file found in that directory")
+	}
+	out, err := runContainerCommand(workingDir, buildTimeout(), "docker", "compose", "restart")
+	return string(out), err
+}
+
 func trimmedNonEmpty(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, s := range in {
@@ -1316,6 +1353,7 @@ func parseDockerContainers(output []byte) []Container {
 			Command: textField(item, "Command"), Engine: "docker", Owner: "root",
 			State: textField(item, "State"), Status: textField(item, "Status"),
 			CreatedAt: textField(item, "CreatedAt"), Ports: splitDockerPorts(textField(item, "Ports")),
+			Health:     parseHealthFromStatus(textField(item, "Status")),
 			Project:    composeLabel(labels, "com.docker.compose.project"),
 			Service:    composeLabel(labels, "com.docker.compose.service"),
 			WorkingDir: composeLabel(labels, "com.docker.compose.project.working_dir"),

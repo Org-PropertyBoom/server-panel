@@ -76,6 +76,7 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("POST /post/containers/plan", postOnly(deps.Startup, postcontainers.PlanHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("POST /post/containers/recreate", postOnly(deps.Startup, postcontainers.RecreateHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("POST /post/containers/compose-up", postOnly(deps.Startup, postcontainers.ComposeUpHandler(deps.Sessions, services.NewContainerService())))
+	mux.Handle("POST /post/containers/compose-restart", postOnly(deps.Startup, postcontainers.ComposeRestartHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("GET /post/containers/dockerfile", postOnly(deps.Startup, postcontainers.DockerfileHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("PUT /post/containers/dockerfile", postOnly(deps.Startup, postcontainers.DockerfileHandler(deps.Sessions, services.NewContainerService())))
 	mux.Handle("POST /post/apps", postOnly(deps.Startup, postapps.Handler(deps.Sessions)))

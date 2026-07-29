@@ -206,6 +206,31 @@ func PlanHandler(sessions *services.SessionService, containers *services.Contain
 	})
 }
 
+// ComposeRestartHandler restarts a whole compose project. Services are peers, so
+// the project — not one service — is the default unit of action.
+func ComposeRestartHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var input struct {
+			WorkingDir string `json:"workingDir"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		output, err := containers.ComposeRestart(input.WorkingDir)
+		w.Header().Set("Content-Type", "application/json")
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"output": output, "error": errText})
+	})
+}
+
 // StatsHandler returns live per-container CPU/mem/net/block-IO (docker stats).
 func StatsHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
