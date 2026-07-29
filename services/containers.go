@@ -1128,6 +1128,39 @@ func parseHealthFromStatus(status string) string {
 	}
 }
 
+// PostCreateState re-queries a just-created container and, when it has EXITED,
+// returns its first log lines.
+//
+// Without this a container that dies on start looks identical to one that
+// started — `compose up` succeeds either way — so the operator gets a
+// success-shaped result and discovers the failure later. The logs are where the
+// actual error is, and returning them here saves an SSH round-trip.
+func (s *ContainerService) PostCreateState(name string) (state string, exitCode string, logs string) {
+	if !allowedContainerID.MatchString(name) {
+		return "", "", ""
+	}
+	out, err := s.runner.Run("docker", "ps", "-a", "--filter", "name=^"+name+"$", "--format", "{{.State}}|{{.Status}}")
+	if err != nil {
+		return "", "", ""
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return "", "", ""
+	}
+	parts := strings.SplitN(line, "|", 2)
+	state = strings.TrimSpace(parts[0])
+	if len(parts) > 1 {
+		exitCode = strings.TrimSpace(parts[1])
+	}
+	if !strings.EqualFold(state, "exited") && !strings.EqualFold(state, "dead") {
+		return state, exitCode, ""
+	}
+	if l, lerr := s.runner.Run("docker", "logs", "--tail", "20", name); lerr == nil {
+		logs = strings.TrimSpace(string(l))
+	}
+	return state, exitCode, logs
+}
+
 // ListNetworks returns the docker networks on this host, for the attach picker.
 // The picker is populated from reality rather than free text: a typo'd network
 // name produces a compose file that fails to start with an unhelpful error.

@@ -349,6 +349,55 @@ func TestPlan_AttachRequiresANetwork(t *testing.T) {
 	}
 }
 
+// The WHOLE compose file is pinned, not just the ports block. Any new control
+// must leave the output byte-identical for configurations that don't use it —
+// this is the fixture §8's input rewrite will be checked against, and it fails
+// the build rather than letting a stray line ship.
+func TestPlan_ComposeFileIsByteStable(t *testing.T) {
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{
+		Image: "nocodb/nocodb:1.2.3", Name: "nocodb", Restart: "unless-stopped",
+		Ports: []string{"127.0.0.1:9001:8080"}, Volumes: []string{"/data/nocodb:/usr/app/data"},
+		MemLimit: "512m", CPUs: "1.5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Written by Ppt Server Panel — edit and re-run `docker compose up -d` here.\n" +
+		"services:\n" +
+		"  nocodb:\n" +
+		"    image: \"nocodb/nocodb:1.2.3\"\n" +
+		"    container_name: \"nocodb\"\n" +
+		"    restart: unless-stopped\n" +
+		"    ports:\n" +
+		"      - \"127.0.0.1:9001:8080\"\n" +
+		"    volumes:\n" +
+		"      - \"/data/nocodb:/usr/app/data\"\n" +
+		"    mem_limit: 512m\n" +
+		"    cpus: \"1.5\"\n"
+	if plan.Compose != want {
+		t.Errorf("compose output changed — it must stay byte-identical for configurations that do not use a new control.\ngot:\n%s\nwant:\n%s", plan.Compose, want)
+	}
+}
+
+func TestPlan_RunAsUser(t *testing.T) {
+	// §6: the remedy sitting next to the runs-as-root warning. Non-blocking.
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", MemLimit: "64m", User: "1000:1000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.Compose, `user: "1000:1000"`) {
+		t.Errorf("compose = %q, want user: \"1000:1000\"", plan.Compose)
+	}
+	if len(plan.Blocks) != 0 {
+		t.Errorf("run-as-user must not block, blocks = %v", plan.Blocks)
+	}
+	// Absent by default — no stray line for anyone not using it.
+	plain, _ := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", MemLimit: "64m"})
+	if strings.Contains(plain.Compose, "user:") {
+		t.Errorf("no user control ⇒ no user: line, got %q", plain.Compose)
+	}
+}
+
 func TestPlan_DefaultsPreserved(t *testing.T) {
 	// Conservation: restart policy default stays unless-stopped.
 	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "nginx:1.27"})

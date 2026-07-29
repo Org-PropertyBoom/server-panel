@@ -150,7 +150,19 @@ func CreateHandler(sessions *services.SessionService, containers *services.Conta
 		if err != nil {
 			errText = err.Error()
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"output": output, "error": errText})
+		// Re-query after create: `compose up` succeeds whether the container stays
+		// up or dies immediately, so report the REAL state, plus the first log
+		// lines when it exited — that's where the actual error is.
+		var state, exitCode, logs string
+		if err == nil {
+			if plan, perr := containers.PlanContainer(spec); perr == nil {
+				state, exitCode, logs = containers.PostCreateState(plan.Name)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"output": output, "error": errText,
+			"state": state, "exitCode": exitCode, "logs": logs,
+		})
 	})
 }
 

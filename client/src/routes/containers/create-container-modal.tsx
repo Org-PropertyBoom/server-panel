@@ -48,6 +48,12 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
     const [privileged, setPrivileged] = useState(false);
     const [confirmPrivileged, setConfirmPrivileged] = useState(false);
     const [alwaysPull, setAlwaysPull] = useState(false);
+    // §6 run as — the remedy placed next to the runs-as-root warning, not inside it.
+    const [runAs, setRunAs] = useState<"image" | "uid">("image");
+    const [uidGid, setUidGid] = useState("");
+    // §7 — `compose up` succeeds whether the container stays up or dies, so the
+    // real state (and its logs when it exited) come back from the create call.
+    const [result, setResult] = useState<{ state: string; exitCode: string; logs: string } | null>(null);
     const [plan, setPlan] = useState<Plan | null>(null);
     const [planError, setPlanError] = useState("");
     const [planning, setPlanning] = useState(false);
@@ -89,6 +95,7 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
         privileged,
         confirmPrivileged,
         alwaysPull,
+        user: runAs === "uid" ? uidGid.trim() : "",
     });
 
     const review = async () => {
@@ -123,10 +130,19 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(spec()),
             });
-            const data: { output?: string; error?: string } = await response.json();
+            const data: { output?: string; error?: string; state?: string; exitCode?: string; logs?: string } = await response.json();
             if (data.error) {
                 setOutput(data.output || "");
                 toast.error(data.error);
+                return;
+            }
+            // A container that dies on start would otherwise look identical to one
+            // that started — keep the operator here with the logs instead.
+            const exited = data.state === "exited" || data.state === "dead";
+            if (exited) {
+                setResult({ state: data.state ?? "", exitCode: data.exitCode ?? "", logs: data.logs ?? "" });
+                setOutput(data.output || "");
+                toast.error(`${name.trim() || "Container"} exited on start`);
                 return;
             }
             toast.success(`${name.trim() || "Container"} created`);
@@ -330,6 +346,24 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                             No limit means this container can consume all host RAM. Every site on this box shares it.
                         </p>
 
+                        <div>
+                            <span className="mb-1 block font-medium text-foreground">Run as</span>
+                            <div className="flex flex-wrap items-center gap-4">
+                                <label className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                    <input type="radio" name="runas" checked={runAs === "image"} onChange={() => setRunAs("image")} />
+                                    <span className={runAs === "image" ? "text-foreground" : ""}>image default</span>
+                                </label>
+                                <label className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                    <input type="radio" name="runas" checked={runAs === "uid"} onChange={() => setRunAs("uid")} />
+                                    <span className={runAs === "uid" ? "text-foreground" : ""}>UID:GID</span>
+                                </label>
+                                {runAs === "uid" ? (
+                                    <input value={uidGid} onChange={(e) => setUidGid(e.target.value)} placeholder="1000:1000" className={`${inputCls} w-32`} />
+                                ) : null}
+                            </div>
+                            <p className="mt-1 text-[11px] text-muted-foreground">The container runs as root unless you set this.</p>
+                        </div>
+
                         <label className="flex items-start gap-2 text-muted-foreground">
                             <input type="checkbox" checked={alwaysPull} onChange={(e) => setAlwaysPull(e.target.checked)} className="mt-0.5" />
                             <span>
@@ -429,6 +463,19 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                             <p className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
                                 <CheckCircle2 className="h-3.5 w-3.5" /> No warnings.
                             </p>
+                        ) : null}
+
+                        {result ? (
+                            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                                <p className="text-[11px] font-semibold text-destructive">
+                                    The container was created but exited immediately{result.exitCode ? ` — ${result.exitCode}` : ""}.
+                                </p>
+                                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                    The compose file was written, so you can fix it and re-run <code>docker compose up -d</code> there. First lines of
+                                    its log:
+                                </p>
+                                <pre className="mt-1 max-h-48 overflow-auto rounded border border-border bg-zinc-950 p-2 font-mono text-[11px] leading-5 text-zinc-200">{result.logs || "(the container produced no output)"}</pre>
+                            </div>
                         ) : null}
 
                         {output ? <pre className="max-h-40 overflow-auto rounded-md border border-destructive/30 bg-zinc-950 p-3 font-mono text-[11px] leading-5 text-red-300">{output}</pre> : null}
