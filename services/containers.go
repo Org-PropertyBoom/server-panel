@@ -554,9 +554,14 @@ type ContainerCreateSpec struct {
 	Env     []string `json:"env"`     // "KEY=VALUE"
 	Volumes []string `json:"volumes"` // "src:dst" or "src:dst:ro"
 	Restart string   `json:"restart"` // no | always | unless-stopped | on-failure
-	// Network is the container network mode: bridge (default) | host | none.
-	// host/none make port publishing inapplicable — Docker rejects -p with them.
-	Network string `json:"network"`
+	// Network is the container network mode: bridge (default) | host | none |
+	// attach. host/none make port publishing inapplicable — Docker rejects -p with
+	// them. "attach" joins the EXISTING networks named in Networks, which is the
+	// shared-service pattern on this host (mysql sits on four so each app's
+	// containers can reach it by name); ports still apply and still default to
+	// loopback, so a service can be on shared networks AND published to the host.
+	Network  string   `json:"network"`
+	Networks []string `json:"networks"`
 	// EnvFile is a path passed as --env-file. The panel NEVER reads or stores the
 	// contents: a path reference keeps secrets out of the DOM, request logs and
 	// panel storage.
@@ -841,12 +846,26 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 	if network == "" {
 		network = "bridge"
 	}
-	if network != "bridge" && network != "host" && network != "none" {
-		return plan, fmt.Errorf("invalid network mode %q (bridge, host or none)", network)
+	if network != "bridge" && network != "host" && network != "none" && network != "attach" {
+		return plan, fmt.Errorf("invalid network mode %q (bridge, host, none or attach)", network)
+	}
+	var attached []string
+	if network == "attach" {
+		attached = trimmedNonEmpty(spec.Networks)
+		if len(attached) == 0 {
+			return plan, errors.New("select at least one existing network to attach to")
+		}
+		for _, n := range attached {
+			if !allowedContainerID.MatchString(n) {
+				return plan, fmt.Errorf("invalid network name %q", n)
+			}
+		}
 	}
 
 	ports := trimmedNonEmpty(spec.Ports)
-	if len(ports) > 0 && network != "bridge" {
+	// Only host/none make publishing inapplicable. Attaching to existing networks
+	// is orthogonal: a service can be on shared networks AND publish to loopback.
+	if len(ports) > 0 && (network == "host" || network == "none") {
 		// A real Docker rule — surface it as a block rather than letting it come
 		// back as a confusing runtime error.
 		plan.Blocks = append(plan.Blocks, fmt.Sprintf("port mapping does not apply with %s networking — the container uses the host's ports directly", network))
@@ -951,7 +970,7 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 
 	plan.Compose = renderComposeFile(composeSpec{
 		Name: name, Image: image, Restart: restart, Network: network,
-		Ports: ports, EnvFile: envFile, Env: envs, Volumes: volumes, User: strings.TrimSpace(spec.User),
+		Ports: ports, EnvFile: envFile, Env: envs, Volumes: volumes, User: strings.TrimSpace(spec.User), Attached: attached,
 		MemLimit: memLimit, CPUs: cpus, Privileged: spec.Privileged, CapAdd: caps, AlwaysPull: spec.AlwaysPull,
 	})
 	return plan, nil
@@ -959,7 +978,7 @@ func (s *ContainerService) PlanContainer(spec ContainerCreateSpec) (ContainerPla
 
 type composeSpec struct {
 	Name, Image, Restart, Network, EnvFile, User string
-	Ports, Env, Volumes, CapAdd                  []string
+	Ports, Env, Volumes, CapAdd, Attached        []string
 	MemLimit, CPUs                               string
 	Privileged, AlwaysPull                       bool
 }
@@ -975,8 +994,14 @@ func renderComposeFile(c composeSpec) string {
 	b.WriteString("    image: " + yamlScalar(c.Image) + "\n")
 	b.WriteString("    container_name: " + yamlScalar(c.Name) + "\n")
 	b.WriteString("    restart: " + c.Restart + "\n")
-	if c.Network != "bridge" {
+	if c.Network == "host" || c.Network == "none" {
 		b.WriteString("    network_mode: " + c.Network + "\n")
+	}
+	if len(c.Attached) > 0 {
+		b.WriteString("    networks:\n")
+		for _, n := range c.Attached {
+			b.WriteString("      - " + n + "\n")
+		}
 	}
 	if c.User != "" {
 		b.WriteString("    user: " + yamlScalar(c.User) + "\n")
@@ -1020,6 +1045,15 @@ func renderComposeFile(c composeSpec) string {
 		b.WriteString("    cap_add:\n")
 		for _, cp := range c.CapAdd {
 			b.WriteString("      - " + cp + "\n")
+		}
+	}
+	if len(c.Attached) > 0 {
+		// external: true ALWAYS — the panel attaches to networks, it never creates
+		// or owns them. Creating one silently would make the panel responsible for
+		// a resource other projects already depend on.
+		b.WriteString("\nnetworks:\n")
+		for _, n := range c.Attached {
+			b.WriteString("  " + n + ":\n    external: true\n")
 		}
 	}
 	return b.String()
@@ -1092,6 +1126,24 @@ func parseHealthFromStatus(status string) string {
 	default:
 		return ""
 	}
+}
+
+// ListNetworks returns the docker networks on this host, for the attach picker.
+// The picker is populated from reality rather than free text: a typo'd network
+// name produces a compose file that fails to start with an unhelpful error.
+func (s *ContainerService) ListNetworks() []string {
+	out, err := s.runner.Run("docker", "network", "ls", "--format", "{{.Name}}")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			names = append(names, line)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ComposeRestart restarts an ENTIRE compose project (`docker compose restart` in

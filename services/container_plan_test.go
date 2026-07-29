@@ -306,6 +306,49 @@ func TestPlan_PortOutputIsStable(t *testing.T) {
 	}
 }
 
+func TestPlan_AttachToExistingNetworks(t *testing.T) {
+	// The shared-service pattern: mysql sits on four networks so each app's
+	// containers reach it by name. Ports still apply alongside — both, not either.
+	plan, err := planSvc().PlanContainer(ContainerCreateSpec{
+		Image: "exporter:1", Name: "exporter", MemLimit: "128m",
+		Network:  "attach",
+		Networks: []string{"go-actions", "laravel-frankenphp", "mysql_default"},
+		Ports:    []string{"127.0.0.1:9104:9104"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blocks) != 0 {
+		t.Errorf("attaching networks must not block ports, blocks = %v", plan.Blocks)
+	}
+	if !strings.Contains(plan.Compose, "    networks:\n      - go-actions\n      - laravel-frankenphp\n      - mysql_default\n") {
+		t.Errorf("compose = %q, want the service attached to all three", plan.Compose)
+	}
+	// 🔴 The panel attaches to networks; it must NEVER create or own one.
+	for _, n := range []string{"go-actions", "laravel-frankenphp", "mysql_default"} {
+		if !strings.Contains(plan.Compose, "  "+n+":\n    external: true\n") {
+			t.Errorf("network %s must be declared external: true — the panel must never create a network.\ngot:\n%s", n, plan.Compose)
+		}
+	}
+	// Ports coexist with attached networks.
+	if !strings.Contains(plan.Compose, `- "127.0.0.1:9104:9104"`) {
+		t.Errorf("published ports must survive network attachment, got %q", plan.Compose)
+	}
+	// network_mode must NOT be emitted — it is mutually exclusive with networks.
+	if strings.Contains(plan.Compose, "network_mode:") {
+		t.Errorf("attach mode must not emit network_mode, got %q", plan.Compose)
+	}
+}
+
+func TestPlan_AttachRequiresANetwork(t *testing.T) {
+	if _, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", Network: "attach"}); err == nil {
+		t.Error("attach mode with no networks selected must be rejected")
+	}
+	if _, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "x:1", Name: "svc", Network: "attach", Networks: []string{"bad name!"}}); err == nil {
+		t.Error("an invalid network name must be rejected")
+	}
+}
+
 func TestPlan_DefaultsPreserved(t *testing.T) {
 	// Conservation: restart policy default stays unless-stopped.
 	plan, err := planSvc().PlanContainer(ContainerCreateSpec{Image: "nginx:1.27"})

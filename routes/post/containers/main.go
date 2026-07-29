@@ -318,3 +318,16 @@ func validSession(r *http.Request, sessions *services.SessionService) bool {
 	_, ok := sessions.Get(cookie.Value)
 	return ok
 }
+
+// NetworksHandler lists the docker networks on this host, so the attach picker is
+// populated from reality rather than free text.
+func NetworksHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"networks": containers.ListNetworks()})
+	})
+}

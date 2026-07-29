@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -29,7 +29,12 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
     const [envMode, setEnvMode] = useState<"file" | "inline">("file");
     const [volumes, setVolumes] = useState("");
     const [restart, setRestart] = useState("unless-stopped");
-    const [network, setNetwork] = useState<"bridge" | "host" | "none">("bridge");
+    const [network, setNetwork] = useState<"bridge" | "host" | "none" | "attach">("bridge");
+    // Attach mode joins EXISTING networks — the shared-service pattern here (mysql
+    // sits on four so each app reaches it by name). Populated from the host, never
+    // free text: a typo'd name yields a compose file that fails with a poor error.
+    const [networks, setNetworks] = useState<string[]>([]);
+    const [available, setAvailable] = useState<string[]>([]);
     // Loopback default. Deliberately NOT remembered between uses — the whole value
     // is that exposure is chosen each time.
     const [scope, setScope] = useState<"127.0.0.1" | "0.0.0.0">("127.0.0.1");
@@ -49,8 +54,17 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
     const [creating, setCreating] = useState(false);
     const [output, setOutput] = useState("");
 
+    useEffect(() => {
+        fetch(`${Api.current.containers}/networks`, { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => d?.networks && setAvailable(d.networks))
+            .catch(() => undefined);
+    }, []);
+
     const lines = (value: string) => value.split("\n").map((l) => l.trim()).filter(Boolean);
-    const portsDisabled = network !== "bridge";
+    // Only host/none make publishing inapplicable. Attaching to shared networks is
+    // orthogonal — a service can be on them AND published to loopback.
+    const portsDisabled = network === "host" || network === "none";
 
     // A line that already carries an explicit bind address is passed through
     // untouched — never rewrite what the operator spelled out.
@@ -68,6 +82,7 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
         volumes: lines(volumes),
         restart,
         network,
+        networks: network === "attach" ? networks : [],
         confirmDockerSock: confirmSock,
         memLimit: memLimit.trim(),
         cpus: cpus.trim(),
@@ -124,7 +139,8 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
     };
 
     const busy = creating || planning;
-    const canReview = Boolean(image.trim()) && (publicPorts.length === 0 || acceptPublic);
+    const canReview =
+        Boolean(image.trim()) && (publicPorts.length === 0 || acceptPublic) && (network !== "attach" || networks.length > 0);
     const inputCls = "w-full rounded-md border border-border bg-background px-3 py-2 font-mono outline-none focus:border-primary";
 
     return (
@@ -166,11 +182,11 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                         <div>
                             <span className="mb-1 block font-medium text-foreground">Network</span>
                             <div className="flex flex-wrap gap-4">
-                                {(["bridge", "host", "none"] as const).map((n) => (
+                                {(["bridge", "host", "none", "attach"] as const).map((n) => (
                                     <label key={n} className="inline-flex items-center gap-1.5 text-muted-foreground">
                                         <input type="radio" name="network" checked={network === n} onChange={() => setNetwork(n)} />
                                         <span className={network === n ? "text-foreground" : ""}>
-                                            {n}
+                                            {n === "attach" ? "attach to existing" : n}
                                             {n === "bridge" ? " (default)" : ""}
                                         </span>
                                     </label>
@@ -180,6 +196,31 @@ export default function CreateContainerModal({ onClose, onCreated }: { onClose: 
                                 <p className="mt-1 text-[11px] text-muted-foreground">
                                     With {network} networking the container uses the host&apos;s ports directly — port mapping does not apply.
                                 </p>
+                            ) : null}
+                            {network === "attach" ? (
+                                <div className="mt-2">
+                                    {available.length === 0 ? (
+                                        <p className="text-[11px] text-muted-foreground">No networks found on this host.</p>
+                                    ) : (
+                                        <div className="max-h-32 space-y-0.5 overflow-y-auto rounded-md border border-border p-2">
+                                            {available.map((n) => (
+                                                <label key={n} className="flex items-center gap-2 text-muted-foreground">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={networks.includes(n)}
+                                                        onChange={(e) => setNetworks((prev) => (e.target.checked ? [...prev, n] : prev.filter((x) => x !== n)))}
+                                                    />
+                                                    <span className="font-mono text-foreground">{n}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <p className="mt-1 text-[11px] text-muted-foreground">
+                                        Joins networks that already exist, so this container can reach their services by name. Declared{" "}
+                                        <code>external: true</code> — the panel attaches to networks, it never creates or owns them. Ports still apply
+                                        and still default to loopback.
+                                    </p>
+                                </div>
                             ) : null}
                         </div>
 
