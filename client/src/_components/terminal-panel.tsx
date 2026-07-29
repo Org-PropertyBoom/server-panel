@@ -218,6 +218,27 @@ function TerminalSession({
         const handleResize = () => resizeTerminal();
         window.addEventListener("resize", handleResize);
 
+        // Paste reliability. xterm only receives a paste when its hidden textarea
+        // holds focus, but a right-click (or a click on padding around the rows)
+        // can leave focus on the container — so the context menu's Paste / Paste as
+        // plain text has nowhere to land and silently does nothing. Two fixes:
+        const host = terminalRef.current;
+        // 1. Put focus in the terminal before the context menu opens.
+        const focusTerm = () => term.focus();
+        host.addEventListener("pointerdown", focusTerm);
+        // 2. Catch any paste that still lands on the container and hand it to
+        //    xterm, which applies bracketed-paste correctly rather than us
+        //    shovelling raw bytes at the shell. Skipped when xterm already
+        //    handled it, so a normal paste is never doubled.
+        const onPaste = (event: ClipboardEvent) => {
+            if (event.defaultPrevented) return;
+            const text = event.clipboardData?.getData("text/plain");
+            if (!text) return;
+            event.preventDefault();
+            term.paste(text);
+        };
+        host.addEventListener("paste", onPaste);
+
         const initialFit = window.setTimeout(() => resizeTerminal(), 50);
 
         function resizeTerminal() {
@@ -240,6 +261,8 @@ function TerminalSession({
         return () => {
             window.clearTimeout(initialFit);
             window.removeEventListener("resize", handleResize);
+            host.removeEventListener("pointerdown", focusTerm);
+            host.removeEventListener("paste", onPaste);
             dataDisposable.dispose();
             ws.close();
             term.dispose();
