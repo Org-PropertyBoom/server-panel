@@ -662,6 +662,41 @@ export default function ContainersRoute() {
         }
     }
 
+    // Save, then start the build DETACHED. A long image build tied to the request
+    // dies when the browser closes or the panel restarts on its own update — and
+    // the panel does restart. setsid reparents it to init so it survives all of
+    // that; the log path is where to follow it.
+    const saveAndRebuildDetached = async () => {
+        if (!dockerfileContainer) return;
+        setDockerfileError("");
+        setDockerfileSaving(true);
+        try {
+            await putDockerfile();
+        } catch (saveError) {
+            setDockerfileError(saveError instanceof Error ? saveError.message : "Failed to save Dockerfile");
+            return;
+        } finally {
+            setDockerfileSaving(false);
+        }
+        try {
+            const res = await fetch(`${Api.current.containers}/rebuild-detached`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ engine: dockerfileContainer.engine, id: dockerfileContainer.id, owner: dockerfileContainer.owner }),
+            });
+            const data: { logPath?: string; error?: string } = await res.json();
+            if (data.error) {
+                toast.error(data.error);
+                return;
+            }
+            setRebuildLog(`Build started in the background. It keeps running if you close this panel or the panel restarts.\n\nFollow it with:\n  tail -f ${data.logPath}`);
+            setRebuildStatus({ startedAt: Date.now(), finishedAt: Date.now(), ok: true });
+            toast.success("Build started in the background");
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Could not start the build");
+        }
+    };
+
     return (
         <DashboardLayout
             title="Containers"
@@ -1227,10 +1262,16 @@ export default function ContainersRoute() {
                                     Save
                                 </Button>
                                 {dockerfileContainer.engine === "docker" ? (
-                                    <Button size="sm" className="gap-2" onClick={saveAndRebuild} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving || rebuilding}>
-                                        {rebuilding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}
-                                        Save &amp; rebuild
-                                    </Button>
+                                    <>
+                                        <Button variant="outline" size="sm" className="gap-2" onClick={saveAndRebuildDetached} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving || rebuilding}>
+                                            <Hammer className="h-4 w-4" />
+                                            Save &amp; build in background
+                                        </Button>
+                                        <Button size="sm" className="gap-2" onClick={saveAndRebuild} disabled={!dockerfilePath || dockerfileLoading || dockerfileSaving || rebuilding}>
+                                            {rebuilding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}
+                                            Save &amp; rebuild
+                                        </Button>
+                                    </>
                                 ) : null}
                             </div>
                         </div>

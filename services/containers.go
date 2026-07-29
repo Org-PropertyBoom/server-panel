@@ -709,6 +709,75 @@ func (s *ContainerService) RebuildAll(engine, owner, id string) (string, error) 
 	return string(out), err
 }
 
+// RebuildDetachedAll starts the same rebuild DETACHED and returns immediately with
+// the path of the log it streams into.
+//
+// The foreground rebuild is tied to the HTTP request and, more importantly, is a
+// child of the panel process — so a long build dies if the browser is closed or
+// the panel restarts, and the panel restarts on its own Check Update. A phalcon
+// image takes tens of minutes; losing it at minute 25 to a routine update is the
+// failure this avoids. setsid reparents it to init, so it outlives all of them.
+func (s *ContainerService) RebuildDetachedAll(engine, owner, id string) (string, error) {
+	if engine != "docker" || (owner != "root" && owner != "system") {
+		return "", errors.New("rebuild is only supported for root Docker containers")
+	}
+	if !allowedContainerID.MatchString(id) {
+		return "", errors.New("invalid container")
+	}
+	output, err := s.runForOwner(engine, owner, "inspect", id)
+	if err != nil {
+		return "", err
+	}
+	var arr []rawInspect
+	if json.Unmarshal(output, &arr) != nil || len(arr) == 0 {
+		return "", errors.New("could not read container details")
+	}
+	labels := arr[0].Config.Labels
+	workingDir := strings.TrimSpace(labels["com.docker.compose.project.working_dir"])
+	service := strings.TrimSpace(labels["com.docker.compose.service"])
+	if workingDir == "" || service == "" {
+		return "", errors.New("rebuild needs a Docker Compose-managed container (compose labels missing) — recreate it from its stack instead")
+	}
+	if !allowedComposeService.MatchString(service) {
+		return "", errors.New("invalid compose service name")
+	}
+	if !filepath.IsAbs(workingDir) {
+		return "", errors.New("invalid compose working directory")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		return "", errors.New("setsid is not available on this host, so a detached build cannot outlive the panel — use Save & rebuild instead")
+	}
+
+	logDir := "/var/lib/ppt-server-panel/builds"
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return "", fmt.Errorf("could not create %s: %w", logDir, err)
+	}
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s-%s.log", service, time.Now().UTC().Format("20060102T150405Z")))
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return "", fmt.Errorf("could not open the build log: %w", err)
+	}
+	defer logFile.Close()
+
+	args := []string{"docker", "compose"}
+	for _, cf := range composeConfigFiles(labels["com.docker.compose.project.config_files"], workingDir) {
+		args = append(args, "-f", cf)
+	}
+	args = append(args, "up", "-d", "--build", "--no-deps", service)
+
+	cmd := exec.Command("setsid", args...)
+	cmd.Dir = workingDir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("could not start the build: %w", err)
+	}
+	// Release rather than Wait: we deliberately do not reap it, so the build is
+	// not bound to this process's lifetime.
+	_ = cmd.Process.Release()
+	return logPath, nil
+}
+
 // RecreateAll recreates a Docker Compose-managed root container from its CURRENT
 // image + compose config, WITHOUT rebuilding: `docker compose up -d --no-deps
 // --force-recreate <service>`. Use it to re-apply a changed compose file / env, or

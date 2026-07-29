@@ -343,3 +343,32 @@ func NetworksHandler(sessions *services.SessionService, containers *services.Con
 		_ = json.NewEncoder(w).Encode(map[string]any{"networks": containers.ListNetworks()})
 	})
 }
+
+// RebuildDetachedHandler starts a rebuild that OUTLIVES the panel: it returns as
+// soon as the build is launched, with the log path to follow. A long image build
+// tied to the request dies when the browser closes or the panel restarts on its
+// own update — this one does not.
+func RebuildDetachedHandler(sessions *services.SessionService, containers *services.ContainerService) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validSession(r, sessions) {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		var input struct {
+			Engine string `json:"engine"`
+			ID     string `json:"id"`
+			Owner  string `json:"owner"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		logPath, err := containers.RebuildDetachedAll(input.Engine, input.Owner, input.ID)
+		w.Header().Set("Content-Type", "application/json")
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"logPath": logPath, "error": errText})
+	})
+}
