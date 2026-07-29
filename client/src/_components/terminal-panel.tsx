@@ -230,7 +230,9 @@ function TerminalSession({
         //    xterm, which applies bracketed-paste correctly rather than us
         //    shovelling raw bytes at the shell. Skipped when xterm already
         //    handled it, so a normal paste is never doubled.
+        let lastPasteAt = 0;
         const onPaste = (event: ClipboardEvent) => {
+            lastPasteAt = Date.now();
             if (event.defaultPrevented) return;
             const text = event.clipboardData?.getData("text/plain");
             if (!text) return;
@@ -238,6 +240,21 @@ function TerminalSession({
             term.paste(text);
         };
         host.addEventListener("paste", onPaste);
+        // 3. Chrome's "Paste as plain text" (Ctrl+Shift+V, and the context-menu
+        //    item) does not necessarily raise a `paste` event at all — it inserts
+        //    the text directly, surfacing only as beforeinput with an
+        //    insertFromPaste inputType. xterm listens for `paste`, which is why
+        //    ordinary Ctrl+V worked while paste-as-plain-text silently did nothing.
+        //    Catch the insertion form too and route it through the same path.
+        const onBeforeInput = (event: InputEvent) => {
+            if (!event.inputType?.startsWith("insertFromPaste")) return;
+            if (Date.now() - lastPasteAt < 100) return; // a paste event already handled it
+            const text = event.data ?? event.dataTransfer?.getData("text/plain");
+            if (!text) return;
+            event.preventDefault();
+            term.paste(text);
+        };
+        host.addEventListener("beforeinput", onBeforeInput as EventListener, true);
 
         const initialFit = window.setTimeout(() => resizeTerminal(), 50);
 
@@ -263,6 +280,7 @@ function TerminalSession({
             window.removeEventListener("resize", handleResize);
             host.removeEventListener("pointerdown", focusTerm);
             host.removeEventListener("paste", onPaste);
+            host.removeEventListener("beforeinput", onBeforeInput as EventListener, true);
             dataDisposable.dispose();
             ws.close();
             term.dispose();
