@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -256,6 +257,51 @@ function TerminalSession({
         };
         host.addEventListener("beforeinput", onBeforeInput as EventListener, true);
 
+        // Copy. xterm PAINTS its own selection rather than making a DOM one, so the
+        // browser has nothing to copy and the context menu's Copy comes back empty.
+        // Fill the clipboard from the terminal's own selection instead.
+        const onCopy = (event: ClipboardEvent) => {
+            const selection = term.getSelection();
+            if (!selection) return; // no terminal selection — leave normal copy alone
+            event.clipboardData?.setData("text/plain", selection);
+            event.preventDefault();
+        };
+        host.addEventListener("copy", onCopy);
+
+        // Windows-console / PowerShell convention: right-click COPIES when there is
+        // a selection and PASTES when there isn't, so the common operations need no
+        // menu at all. Shift+right-click still opens the browser menu as an escape
+        // hatch.
+        const onContextMenu = (event: MouseEvent) => {
+            if (event.shiftKey) return; // let the native menu through
+            const selection = term.getSelection();
+            if (selection) {
+                event.preventDefault();
+                void navigator.clipboard.writeText(selection);
+                term.clearSelection();
+                return;
+            }
+            event.preventDefault();
+            navigator.clipboard.readText().then(
+                (text) => text && term.paste(text),
+                () => toast.error("Clipboard read was blocked — use Ctrl+Shift+V, or Shift+right-click for the browser menu"),
+            );
+        };
+        host.addEventListener("contextmenu", onContextMenu);
+
+        // Ctrl+Shift+C copies the selection, the terminal convention — plain Ctrl+C
+        // must keep sending SIGINT, which is why copy cannot live on it.
+        term.attachCustomKeyEventHandler((event) => {
+            if (event.type === "keydown" && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c") {
+                const selection = term.getSelection();
+                if (selection) {
+                    void navigator.clipboard.writeText(selection);
+                    return false; // handled — don't also send it to the shell
+                }
+            }
+            return true;
+        });
+
         const initialFit = window.setTimeout(() => resizeTerminal(), 50);
 
         function resizeTerminal() {
@@ -281,6 +327,8 @@ function TerminalSession({
             host.removeEventListener("pointerdown", focusTerm);
             host.removeEventListener("paste", onPaste);
             host.removeEventListener("beforeinput", onBeforeInput as EventListener, true);
+            host.removeEventListener("copy", onCopy);
+            host.removeEventListener("contextmenu", onContextMenu);
             dataDisposable.dispose();
             ws.close();
             term.dispose();
