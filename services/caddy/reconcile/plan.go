@@ -241,6 +241,22 @@ func toHost(cfg config.Config, r db.Row, headers map[string]string) (render.Host
 		if strings.TrimSpace(r.Target) == "" {
 			return render.Host{}, "platform_hosts row has an empty target upstream"
 		}
+		// A "static:<abs dir>" target serves FILES rather than proxying — an
+		// internal docs site is files on disk with no app container behind it.
+		if root, ok := strings.CutPrefix(strings.TrimSpace(r.Target), "static:"); ok {
+			auth := render.BasicAuthBlock(cfg.StaticAuthUser(host), cfg.StaticAuthHash(host))
+			if auth == "" {
+				// FAIL CLOSED. A static host is internal by default; rendering it
+				// without credentials would publish unreleased designs and
+				// client-identifiable references to anyone who found the hostname.
+				// No credentials must mean NO SITE, never a public one.
+				return render.Host{}, "static host has no basic-auth credentials configured — refusing to publish it unauthenticated (set CADDY_STATIC_AUTH_<HOST>)"
+			}
+			return render.Host{
+				Host: host, Kind: render.KindStatic, Target: strings.TrimSpace(root),
+				BasicAuth: auth, Encode: cfg.EncodeFormats(), HeaderBlock: render.HeaderDirectives(headers),
+			}, ""
+		}
 		return render.Host{Host: host, Kind: render.KindSystem, Target: r.Target, Encode: cfg.EncodeFormats(), HeaderBlock: render.HeaderDirectives(headers)}, ""
 	case "platform_redirect_hosts":
 		if strings.TrimSpace(r.Target) == "" {
