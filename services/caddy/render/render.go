@@ -30,10 +30,6 @@ const (
 	// KindRedirect is a platform_redirect_hosts row — an edge redirect. Renders a
 	// redir to Target (a URL) with RedirectCode.
 	KindRedirect
-	// KindStatic serves FILES from a directory — no upstream, no app container.
-	// Target is the filesystem root. Used for internal docs sites, which are
-	// files on disk and depend on no stack.
-	KindStatic
 )
 
 func (k Kind) String() string {
@@ -76,9 +72,6 @@ type Host struct {
 	// It lets us prove domain ownership for a Cloudflare for SaaS custom hostname
 	// from the server we control, instead of asking the domain owner for TXT records.
 	ValidationRoot string
-	// BasicAuth is a pre-rendered `basic_auth { ... }` block (KindStatic only),
-	// carrying a bcrypt hash — never a plaintext password.
-	BasicAuth string
 }
 
 // validationBlock renders the plain-HTTP domain-ownership validation site for a
@@ -194,16 +187,6 @@ func Render(h Host) (name string, contents string, err error) {
 		}
 		return FileName(host), validationBlock(host, h.ValidationRoot) +
 			redirectSnippet(host, target, h.RedirectCode, tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
-	case KindStatic:
-		root := strings.TrimSpace(h.Target)
-		if root == "" {
-			return "", "", fmt.Errorf("render: static host %q has no filesystem root", host)
-		}
-		if !strings.HasPrefix(root, "/") {
-			return "", "", fmt.Errorf("render: static host %q needs an absolute root, got %q", host, root)
-		}
-		return FileName(host), validationBlock(host, h.ValidationRoot) +
-			staticSnippet(host, root, h.BasicAuth, h.HeaderBlock, strings.TrimSpace(h.Encode), tlsBlock(host, h.OnDemandTLS, h.TLSCertPath, h.TLSKeyPath)), nil
 	default:
 		return "", "", fmt.Errorf("render: unknown kind %d for host %q", h.Kind, host)
 	}
@@ -225,39 +208,6 @@ func proxySnippet(host, upstream, encode, headerBlock, tlsBlock string) string {
 	}
 	b.WriteString("    reverse_proxy " + upstream + "\n}\n")
 	return b.String()
-}
-
-// staticSnippet serves files from a directory — no upstream, no app container.
-//
-// basicAuth, when set, is a pre-rendered `basic_auth { ... }` block. It is
-// rendered BEFORE root/file_server so an internal site cannot be served
-// unauthenticated: an unset credential must mean "no site", never "public site".
-// Callers that require internal access enforce that; this only renders what it's
-// given, which is why Render refuses a static host with neither auth nor an
-// explicit acknowledgement upstream.
-func staticSnippet(host, root, basicAuth, headerBlock, encode, tlsBlock string) string {
-	var b strings.Builder
-	b.WriteString(host + " {\n")
-	b.WriteString(tlsBlock)
-	b.WriteString(basicAuth)
-	b.WriteString(headerBlock)
-	if encode != "" {
-		b.WriteString("    encode " + encode + "\n")
-	}
-	b.WriteString("    root * " + root + "\n")
-	b.WriteString("    file_server\n}\n")
-	return b.String()
-}
-
-// BasicAuthBlock renders a `basic_auth` block from a username and a BCRYPT HASH.
-// The hash is what Caddy stores — a plaintext password must never reach a vhost
-// file, which is world-readable to anything that can read the folder.
-func BasicAuthBlock(username, bcryptHash string) string {
-	username, bcryptHash = strings.TrimSpace(username), strings.TrimSpace(bcryptHash)
-	if username == "" || bcryptHash == "" {
-		return ""
-	}
-	return "    basic_auth {\n        " + username + " " + bcryptHash + "\n    }\n"
 }
 
 // redirectSnippet is the redir block. With no tlsBlock it is byte-identical to

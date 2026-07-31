@@ -135,21 +135,3 @@ func (c Config) Stacks() []string {
 func (c Config) EncodeFormats() string {
 	return strings.Join(strings.Fields(c.Encode), " ")
 }
-
-// StaticAuthUser / StaticAuthHash return the basic-auth credentials for a static
-// (internal) host, from CADDY_STATIC_AUTH_<HOST>_USER and _HASH where <HOST> is
-// the hostname upper-cased with dots and dashes as underscores.
-//
-// The value is a BCRYPT HASH, never a plaintext password: a vhost file is
-// readable by anything that can read the folder, so a password placed there would
-// be a credential stored in the clear. Generate one with `caddy hash-password`.
-//
-// Env rather than the panel's SQLite deliberately — a credential that gates an
-// internal site should not be editable from that site's own control panel.
-func (c Config) StaticAuthUser(host string) string { return staticAuthEnv(host, "USER") }
-func (c Config) StaticAuthHash(host string) string { return staticAuthEnv(host, "HASH") }
-
-func staticAuthEnv(host, suffix string) string {
-	key := strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(strings.TrimSpace(host)))
-	return strings.TrimSpace(os.Getenv("CADDY_STATIC_AUTH_" + key + "_" + suffix))
-}
