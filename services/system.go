@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -22,6 +23,16 @@ type CPUStatus struct {
 	Cores int     `json:"cores"`
 	Model string  `json:"model"`
 	Usage float64 `json:"usage"`
+	// Steal is the share of CPU time the HYPERVISOR took from this VM — time we
+	// were runnable but the host ran someone else. It is reported separately and
+	// EXCLUDED from Usage: it is not work our processes did, and counting it as
+	// "our" load makes a noisy-neighbour host look like a busy server. On a shared
+	// cloud instance this is frequently the whole story behind a high reading.
+	Steal float64 `json:"steal"`
+	// IOWait is time blocked on I/O. Counted as idle (the standard convention, and
+	// what top does) but surfaced so disk saturation is distinguishable from
+	// genuine idleness.
+	IOWait float64 `json:"iowait"`
 }
 
 type MemoryStatus struct {
@@ -66,52 +77,129 @@ func (s *SystemService) Status() (SystemStatus, error) {
 	return SystemStatus{CPU: cpu, Memory: memory, Storage: storage, Network: network}, nil
 }
 
-func cpuStatus() (CPUStatus, error) {
-	idleBefore, totalBefore, err := cpuTimes()
-	if err != nil {
-		return CPUStatus{}, err
-	}
-	time.Sleep(100 * time.Millisecond)
-	idleAfter, totalAfter, err := cpuTimes()
-	if err != nil {
-		return CPUStatus{}, err
-	}
-
-	usage := 0.0
-	totalDelta := totalAfter - totalBefore
-	if totalDelta > 0 {
-		usage = float64(totalDelta-(idleAfter-idleBefore)) / float64(totalDelta) * 100
-	}
-
-	return CPUStatus{Cores: runtime.NumCPU(), Model: cpuModel(), Usage: usage}, nil
+// cpuSample is one reading of the aggregate "cpu" line in /proc/stat.
+type cpuSample struct {
+	idle   uint64 // idle + iowait
+	iowait uint64
+	steal  uint64
+	total  uint64
+	at     time.Time
 }
 
-func cpuTimes() (idle, total uint64, err error) {
+var (
+	cpuMu   sync.Mutex
+	cpuLast cpuSample // previous reading, so usage is measured across poll intervals
+)
+
+// cpuStatus reports CPU utilisation between THIS call and the previous one.
+//
+// The dashboard polls every few seconds, so differencing against the last sample
+// gives a window orders of magnitude wider than sampling inline — and costs no
+// wall-clock. The old implementation slept 100ms per request and divided the
+// deltas from that. At USER_HZ=100 a 100ms window is ~10 jiffies per core, so on
+// a 2-core box a SINGLE busy jiffy moved the reading ~5%: the number was mostly
+// quantisation noise, and every caller paid 100ms for it.
+//
+// The inline sleep is kept only as the cold-start fallback (first call, or after
+// a long gap when the cached sample is too stale to difference against).
+func cpuStatus() (CPUStatus, error) {
+	now, err := cpuTimes()
+	if err != nil {
+		return CPUStatus{}, err
+	}
+
+	cpuMu.Lock()
+	prev := cpuLast
+	usable := prev.total > 0 && now.total > prev.total && time.Since(prev.at) < 5*time.Minute
+	cpuLast = now
+	cpuMu.Unlock()
+
+	if !usable {
+		// Cold start: no usable previous sample, so take a short one inline.
+		time.Sleep(200 * time.Millisecond)
+		after, sErr := cpuTimes()
+		if sErr != nil {
+			return CPUStatus{}, sErr
+		}
+		cpuMu.Lock()
+		cpuLast = after
+		cpuMu.Unlock()
+		prev, now = now, after
+	}
+
+	status := CPUStatus{Cores: runtime.NumCPU(), Model: cpuModel()}
+	totalDelta := now.total - prev.total
+	if totalDelta == 0 {
+		return status, nil
+	}
+	pct := func(d uint64) float64 { return float64(d) / float64(totalDelta) * 100 }
+
+	busy := totalDelta - (now.idle - prev.idle) - (now.steal - prev.steal)
+	status.Usage = pct(busy)
+	status.Steal = pct(now.steal - prev.steal)
+	status.IOWait = pct(now.iowait - prev.iowait)
+	return status, nil
+}
+
+// cpuTimes reads the aggregate "cpu" line of /proc/stat.
+//
+// Field order after the "cpu" label is fixed by the kernel:
+//
+//	0 user  1 nice  2 system  3 idle  4 iowait  5 irq  6 softirq  7 steal  8 guest  9 guest_nice
+//
+// Two things the previous version got wrong:
+//
+//   - GUEST AND GUEST_NICE WERE ADDED TO THE TOTAL. The kernel already includes
+//     guest inside user, and guest_nice inside nice, so summing every field
+//     double-counts them and inflates the denominator. Fields beyond steal are
+//     therefore ignored here. (Zero on a non-virtualising host, so this was
+//     latent rather than visible — but wrong.)
+//   - STEAL WAS COUNTED AS BUSY. It is kept in the total (it is real elapsed
+//     time) but returned separately so the caller can exclude it from usage.
+func cpuTimes() (cpuSample, error) {
 	file, err := os.Open("/proc/stat")
 	if err != nil {
-		return 0, 0, err
+		return cpuSample{}, err
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 	if !scanner.Scan() {
-		return 0, 0, fmt.Errorf("could not read CPU statistics")
+		return cpuSample{}, fmt.Errorf("could not read CPU statistics")
 	}
-	fields := strings.Fields(scanner.Text())
+	return parseCPULine(scanner.Text())
+}
+
+// parseCPULine is the pure half of cpuTimes, split out so the field accounting
+// (which steal/guest bugs hid in) is unit-testable without a real /proc/stat.
+func parseCPULine(line string) (cpuSample, error) {
+	fields := strings.Fields(line)
 	if len(fields) < 5 || fields[0] != "cpu" {
-		return 0, 0, fmt.Errorf("invalid CPU statistics")
+		return cpuSample{}, fmt.Errorf("invalid CPU statistics")
 	}
+
+	sample := cpuSample{at: time.Now()}
+	// Stop at steal (index 7); guest/guest_nice are already inside user/nice.
 	for index, field := range fields[1:] {
+		if index > 7 {
+			break
+		}
 		value, parseErr := strconv.ParseUint(field, 10, 64)
 		if parseErr != nil {
-			return 0, 0, parseErr
+			return cpuSample{}, parseErr
 		}
-		total += value
-		if index == 3 || index == 4 {
-			idle += value
+		sample.total += value
+		switch index {
+		case 3: // idle
+			sample.idle += value
+		case 4: // iowait — conventionally counted as idle
+			sample.idle += value
+			sample.iowait = value
+		case 7: // steal
+			sample.steal = value
 		}
 	}
-	return idle, total, nil
+	return sample, nil
 }
 
 func cpuModel() string {
