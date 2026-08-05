@@ -43,10 +43,19 @@ func composeLabel(labels, key string) string {
 
 var composeFileNames = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
 
+// composeService is one entry under a compose file's top-level `services:` key,
+// with the few fields worth showing for a service that has no container yet.
+type composeService struct {
+	Name  string
+	Image string   // `image:` — empty when the service is built, not pulled
+	Build string   // `build:` context, or "(build)" for a block form
+	Ports []string // `ports:` entries, verbatim as written
+}
+
 type composeProject struct {
-	Project    string   // compose project name (dir basename — the compose default)
-	WorkingDir string   // absolute project directory
-	Services   []string // top-level `services:` keys
+	Project    string           // compose project name (dir basename — the compose default)
+	WorkingDir string           // absolute project directory
+	Services   []composeService // top-level `services:` keys
 }
 
 // composeScanRoots are the directories scanned for compose projects. Defaults to
@@ -135,10 +144,13 @@ func discoverComposeProjects(extraDirs []string) map[string]composeProject {
 // the `services:` block at column 0, then collect the keys at the first indent
 // level under it, stopping at the next top-level key. That's all we need — we
 // never interpret the service bodies. Handles any consistent indent width.
-func parseComposeServices(content []byte) []string {
-	var services []string
+func parseComposeServices(content []byte) []composeService {
+	var services []composeService
 	inServices := false
 	serviceIndent := -1
+	inPorts := false // inside the current service's `ports:` list
+	cur := -1        // index into services of the service being parsed
+
 	for _, raw := range strings.Split(string(content), "\n") {
 		line := strings.TrimRight(raw, "\r")
 		trimmed := strings.TrimSpace(line)
@@ -159,16 +171,66 @@ func parseComposeServices(content []byte) []string {
 		if serviceIndent == -1 {
 			serviceIndent = indent
 		}
+
 		// A service key sits at the first indent level and is a bare "name:"
 		// (a mapping key with no inline value). Deeper lines are its properties.
 		if indent == serviceIndent && strings.HasSuffix(trimmed, ":") {
 			name := strings.TrimSpace(strings.TrimSuffix(trimmed, ":"))
 			if name != "" {
-				services = append(services, name)
+				services = append(services, composeService{Name: name})
+				cur = len(services) - 1
+			}
+			inPorts = false
+			continue
+		}
+		if cur < 0 {
+			continue
+		}
+
+		// Properties of the current service. Only the few fields worth showing on
+		// a NOT-DEPLOYED row are read; this stays a display aid, not a YAML parser
+		// — `docker compose` remains the authority on what actually runs.
+		switch {
+		case strings.HasPrefix(trimmed, "image:"):
+			services[cur].Image = unquoteComposeScalar(strings.TrimPrefix(trimmed, "image:"))
+			inPorts = false
+		case trimmed == "build:" || strings.HasPrefix(trimmed, "build:"):
+			// `build: .` inline, or a `build:` block whose context we don't chase.
+			if v := unquoteComposeScalar(strings.TrimPrefix(trimmed, "build:")); v != "" {
+				services[cur].Build = v
+			} else {
+				services[cur].Build = "(build)"
+			}
+			inPorts = false
+		case trimmed == "ports:":
+			inPorts = true
+		case inPorts && strings.HasPrefix(trimmed, "- "):
+			if p := unquoteComposeScalar(strings.TrimPrefix(trimmed, "- ")); p != "" {
+				services[cur].Ports = append(services[cur].Ports, p)
+			}
+		default:
+			// Any other key at property depth ends a ports list.
+			if strings.HasSuffix(trimmed, ":") || strings.Contains(trimmed, ": ") {
+				inPorts = false
 			}
 		}
 	}
 	return services
+}
+
+// unquoteComposeScalar trims whitespace, surrounding quotes, and a trailing
+// inline comment from a scalar YAML value.
+func unquoteComposeScalar(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.Index(v, " #"); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+	}
+	return v
 }
 
 // ListWithCompose returns the runtime container list joined against on-disk
@@ -192,17 +254,28 @@ func (s *ContainerService) ListWithCompose() []Container {
 	projects := discoverComposeProjects(extraDirs)
 	for dir, proj := range projects {
 		for _, svc := range proj.Services {
-			if deployed[dir+"\x00"+svc] {
+			if deployed[dir+"\x00"+svc.Name] {
 				continue
 			}
+			// Image/Ports come from the COMPOSE FILE, not from docker — a service
+			// with no container has no runtime to ask. Shown so a NOT DEPLOYED row
+			// states what it would run instead of a row of dashes. A service that
+			// is built rather than pulled has no `image:`, so fall back to the
+			// build context.
+			image := svc.Image
+			if image == "" {
+				image = svc.Build
+			}
 			real = append(real, Container{
-				Name:       svc,
+				Name:       svc.Name,
+				Image:      image,
+				Ports:      svc.Ports,
 				Engine:     "docker",
 				Owner:      "root",
 				State:      "not_deployed",
 				Status:     "Not deployed",
 				Project:    proj.Project,
-				Service:    svc,
+				Service:    svc.Name,
 				WorkingDir: dir,
 				Deployed:   false,
 			})
@@ -461,7 +534,7 @@ func (s *ContainerService) ComposeUp(workingDir, service string) (string, error)
 	}
 	defined := false
 	for _, sv := range proj.Services {
-		if sv == service {
+		if sv.Name == service {
 			defined = true
 			break
 		}

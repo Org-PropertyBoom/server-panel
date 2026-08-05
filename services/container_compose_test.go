@@ -76,11 +76,69 @@ services:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseComposeServices([]byte(tc.in))
+			var got []string
+			for _, svc := range parseComposeServices([]byte(tc.in)) {
+				got = append(got, svc.Name)
+			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("parseComposeServices() = %v, want %v", got, tc.want)
+				t.Fatalf("parseComposeServices() names = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestParseComposeServices_Details covers the fields added so a NOT DEPLOYED row
+// can state what it would run. Before this, such a row showed only its name and a
+// column of dashes: the compose file already held the image and ports, and the
+// parser was simply throwing them away.
+func TestParseComposeServices_Details(t *testing.T) {
+	in := `services:
+  minio:
+    image: "minio/minio:latest"   # quoted, with a trailing comment
+    ports:
+      - "9000:9000"
+      - '9001:9001'
+    volumes:
+      - ./data:/data
+  openinary:
+    build: .
+    ports:
+      - "3000:3000"
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+`
+	got := parseComposeServices([]byte(in))
+	if len(got) != 3 {
+		t.Fatalf("got %d services, want 3: %+v", len(got), got)
+	}
+
+	// Quotes and the trailing inline comment are stripped from the image.
+	if got[0].Name != "minio" || got[0].Image != "minio/minio:latest" {
+		t.Errorf("minio = %+v, want name=minio image=minio/minio:latest", got[0])
+	}
+	// Both quote styles are accepted; the volumes: list must not leak into ports.
+	if !reflect.DeepEqual(got[0].Ports, []string{"9000:9000", "9001:9001"}) {
+		t.Errorf("minio ports = %v, want [9000:9000 9001:9001]", got[0].Ports)
+	}
+
+	// A built service has no image: — the build context stands in, so the row is
+	// not left blank.
+	if got[1].Name != "openinary" || got[1].Image != "" || got[1].Build != "." {
+		t.Errorf("openinary = %+v, want name=openinary image=\"\" build=.", got[1])
+	}
+	if !reflect.DeepEqual(got[1].Ports, []string{"3000:3000"}) {
+		t.Errorf("openinary ports = %v, want [3000:3000]", got[1].Ports)
+	}
+
+	// Block-form build: has no scalar to read; it must still be marked as built
+	// rather than reported as a pulled image.
+	if got[2].Name != "worker" || got[2].Build != "(build)" {
+		t.Errorf("worker = %+v, want name=worker build=(build)", got[2])
+	}
+	if len(got[2].Ports) != 0 {
+		t.Errorf("worker ports = %v, want none", got[2].Ports)
 	}
 }
 
