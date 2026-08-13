@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-    Folder,
     File,
     ChevronRight,
     ChevronDown,
@@ -858,6 +857,13 @@ function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRen
 }
 
 // Tree view Node component helper (directories & files mixed)
+// Tree layout, in px. Named because three things must agree: the row's left
+// padding, the x of each indent guide, and the 16px twistie slot the guides are
+// centred on. INDENT_STEP matches the twistie width so a child's chevron sits
+// directly under its parent's guide.
+const INDENT_STEP = 16;
+const ROW_INSET = 8;
+
 interface DirectoryTreeNodeProps {
     path: string;
     name: string;
@@ -908,49 +914,74 @@ function DirectoryTreeNode({
         <div className="select-none">
             <div
                 ref={nodeRef}
-                className={`flex items-center gap-1.5 py-1 pr-2 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
+                className={`relative flex items-center gap-1.5 py-1 pr-2 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
                     isSelected ? "bg-primary/10 text-primary font-medium" : "text-foreground/90"
                 }`}
                 // pr-2 only: the left inset is the depth indent below. Using px-2 here
                 // set a padding-left that the inline style then had to override — two
                 // sources for one value.
-                style={{ paddingLeft: `${depth * 10 + 8}px` }}
+                //
+                // INDENT_STEP was 10px — narrower than the 16px twistie slot itself,
+                // so consecutive levels barely separated and the tree read as flat.
+                style={{ paddingLeft: `${depth * INDENT_STEP + ROW_INSET}px` }}
                 onClick={handleClick}
             >
                 {/*
-                  * Twistie slot — the VS Code model: a fixed-size box that is ALWAYS
-                  * present, carrying a chevron for directories and nothing for files.
-                  * Because both branches render the same 16x16 box, a file's icon and
-                  * name land on exactly the same x as a sibling folder's.
+                  * Indent guides — one hairline per ancestor level, VS Code style.
                   *
-                  * The size is stated explicitly (h-4 w-4 + centering) rather than
-                  * left to padding around the glyph. The previous version sized the
-                  * directory branch as a <button> with p-0.5 around a 12px icon and
-                  * the file branch as a hard-coded w-4: two different ways of arriving
-                  * at "16px", which only agree while the button's box model does. Any
-                  * UA button styling, a border, or a line-height difference desynced
-                  * them, and every file in the tree then sat a few px right of its
-                  * folder siblings.
+                  * Measuring the live tree showed files and folders ALREADY align
+                  * exactly (icons at the same x, names at the same x); the only
+                  * difference is that a folder also paints a chevron 16px to the left,
+                  * so its ink starts earlier and the row reads as differently
+                  * indented. Nothing needs moving — what was missing is the cue that
+                  * tells the eye where a level begins. With a guide present the
+                  * chevron reads as gutter furniture instead of as the row's start.
+                  *
+                  * Each guide sits at the centre of that ancestor's twistie slot:
+                  * ROW_INSET + i*INDENT_STEP + INDENT_STEP/2.
+                  */}
+                {Array.from({ length: depth }, (_, level) => (
+                    <span
+                        key={level}
+                        aria-hidden
+                        className="pointer-events-none absolute inset-y-0 w-px bg-border/60"
+                        style={{ left: `${ROW_INSET + level * INDENT_STEP + INDENT_STEP / 2}px` }}
+                    />
+                ))}
+                {/*
+                  * ONE GLYPH PER ROW, both in the same 16px slot — the VS Code model.
+                  *
+                  * A directory shows its chevron there and NO folder icon; a file shows
+                  * its file icon there. So every row is [16px glyph][gap][name] and the
+                  * names line up with nothing protruding.
+                  *
+                  * The previous layout drew TWO glyphs on a directory (chevron THEN a
+                  * folder icon) and one on a file behind a blank spacer. Measuring the
+                  * live tree showed the icons and names already aligned to the pixel —
+                  * the mismatch was purely that a folder's ink began 16px earlier, at
+                  * its chevron, so sibling rows read as differently indented even
+                  * though they were not. Giving files an icon of the same size does not
+                  * fix that; the file icon still sits one slot to the right. Removing
+                  * the folder icon does, because it removes the extra glyph.
                   */}
                 {isDir ? (
                     <button
                         onClick={handleToggle}
                         aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
-                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border-0 p-0 leading-none text-muted-foreground hover:bg-muted-foreground/10"
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-0 p-0 leading-none hover:bg-muted-foreground/10 ${
+                            isSelected ? "text-primary" : "text-muted-foreground"
+                        }`}
                     >
                         {isExpanded ? (
-                            <ChevronDown className="h-3 w-3" />
+                            <ChevronDown className="h-3.5 w-3.5" />
                         ) : (
-                            <ChevronRight className="h-3 w-3" />
+                            <ChevronRight className="h-3.5 w-3.5" />
                         )}
                     </button>
                 ) : (
-                    <span aria-hidden className="block h-4 w-4 shrink-0" />
-                )}
-                {isDir ? (
-                    <Folder className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-primary fill-primary/10" : "text-muted-foreground"}`} />
-                ) : (
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                        <FileText className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
                 )}
                 <span className="truncate flex-1 min-w-0">{name}</span>
             </div>
