@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
-    File,
     ChevronRight,
     ChevronDown,
     FileText,
-    Image,
-    Music,
-    Video,
-    Archive,
-    Home,
     Loader2,
     AlertCircle,
     RefreshCw,
@@ -17,7 +11,6 @@ import {
     Pencil,
     Trash2,
     X,
-    FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 
