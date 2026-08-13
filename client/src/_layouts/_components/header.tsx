@@ -29,6 +29,9 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const [updateError, setUpdateError] = useState("");
     const [updateSuccess, setUpdateSuccess] = useState(false);
     const [reloadCountdown, setReloadCountdown] = useState(0);
+    // Seconds spent waiting for the replacement process, so the restart dialog can
+    // show progress rather than an unchanging spinner.
+    const [restartElapsed, setRestartElapsed] = useState(0);
     const allowReload = useRef(false);
     const updateWorkflowActive = useRef(false);
 
@@ -117,7 +120,8 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
             if (response.ok || isRestartResponse(response.status)) {
                 const updateWasAccepted = response.ok;
                 setRestarting(true);
-                await waitForServer();
+                setRestartElapsed(0);
+                await waitForServer(setRestartElapsed);
                 setRestarting(false);
                 const info = await checkUpdate();
                 if (!updateWasAccepted && !info) {
@@ -143,6 +147,16 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         } finally {
             updateWorkflowActive.current = false;
             setUpdating(false);
+            // MUST be cleared here, not only on the success path. setRestarting(false)
+            // above runs after waitForServer(), so anything that throws — a reconnect
+            // timeout above all — skipped it and left `restarting` true FOREVER: the
+            // modal stayed on "System is restarting… do not close this page", every
+            // button stayed disabled, and the beforeunload guard stayed armed, long
+            // after the server was back and serving. Observed live: /post/system
+            // answered on the first poll while the dialog was still hung.
+            setRestarting(false);
+            setReloadCountdown(0);
+            setRestartElapsed(0);
         }
     };
 
@@ -226,6 +240,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                     updating={updating}
                     restarting={restarting}
                     reloadCountdown={reloadCountdown}
+                    restartElapsed={restartElapsed}
                     onCheck={checkUpdate}
                     onClose={() => {
                         if (!updating && !restarting) {
@@ -247,6 +262,7 @@ function UpdateModal({
     updating,
     restarting,
     reloadCountdown,
+    restartElapsed,
     onCheck,
     onClose,
     onConfirm,
@@ -258,6 +274,7 @@ function UpdateModal({
     updating: boolean;
     restarting: boolean;
     reloadCountdown: number;
+    restartElapsed: number;
     onCheck: () => Promise<UpdateInfo | null>;
     onClose: () => void;
     onConfirm: () => void;
@@ -324,7 +341,7 @@ function UpdateModal({
                             <div className="space-y-1">
                                 <p className="font-semibold text-amber-800 dark:text-amber-200">
                                     {restarting
-                                        ? "System is restarting..."
+                                        ? `System is restarting${restartElapsed > 0 ? ` — ${restartElapsed}s` : ""}...`
                                         : "System is updating..."}
                                 </p>
                                 <p className="leading-relaxed">
@@ -433,12 +450,27 @@ function formatBuildTime(buildTime?: string) {
     return date.toLocaleString();
 }
 
-async function waitForServer() {
+// waitForServer polls /healthz until the replacement process answers twice in a
+// row (one success can be the OLD process, still up and about to exit).
+//
+// The budget is 5 MINUTES, not the 90s it used to be. `POST /post/update` makes
+// the server DOWNLOAD a new binary before it swaps and restarts, so the wait is
+// bounded by network transfer, not by process start. On a slow link 90s expired
+// while the download was still running — and because the timeout threw, the
+// caller latched `restarting` on permanently. The page already tells the operator
+// not to close it, so waiting longer is strictly better than giving up early and
+// stranding them.
+//
+// onTick reports elapsed seconds so the dialog can show progress instead of an
+// unchanging spinner that gives no way to tell "working" from "hung".
+async function waitForServer(onTick?: (elapsedSeconds: number) => void) {
     // Give the old process enough time to exit before checking the replacement.
     await delay(1500);
 
+    const maxAttempts = 300; // ~5 minutes at 1s per attempt
     let consecutiveSuccesses = 0;
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        onTick?.(attempt + 2); // +2 covers the 1.5s lead-in, rounded up
         try {
             const response = await fetch(`/healthz?reconnect=${Date.now()}`, {
                 cache: "no-store",
@@ -451,7 +483,10 @@ async function waitForServer() {
         await delay(1000);
     }
 
-    throw new Error("The update was installed, but the server did not reconnect in time.");
+    throw new Error(
+        "The update was installed, but the server did not reconnect within 5 minutes. " +
+            "It may still be starting — reload the page to check.",
+    );
 }
 
 function delay(milliseconds: number) {
