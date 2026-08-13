@@ -908,16 +908,35 @@ function DirectoryTreeNode({
         <div className="select-none">
             <div
                 ref={nodeRef}
-                className={`flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
+                className={`flex items-center gap-1.5 py-1 pr-2 rounded-md cursor-pointer hover:bg-muted/60 transition-colors text-xs ${
                     isSelected ? "bg-primary/10 text-primary font-medium" : "text-foreground/90"
                 }`}
+                // pr-2 only: the left inset is the depth indent below. Using px-2 here
+                // set a padding-left that the inline style then had to override — two
+                // sources for one value.
                 style={{ paddingLeft: `${depth * 10 + 8}px` }}
                 onClick={handleClick}
             >
+                {/*
+                  * Twistie slot — the VS Code model: a fixed-size box that is ALWAYS
+                  * present, carrying a chevron for directories and nothing for files.
+                  * Because both branches render the same 16x16 box, a file's icon and
+                  * name land on exactly the same x as a sibling folder's.
+                  *
+                  * The size is stated explicitly (h-4 w-4 + centering) rather than
+                  * left to padding around the glyph. The previous version sized the
+                  * directory branch as a <button> with p-0.5 around a 12px icon and
+                  * the file branch as a hard-coded w-4: two different ways of arriving
+                  * at "16px", which only agree while the button's box model does. Any
+                  * UA button styling, a border, or a line-height difference desynced
+                  * them, and every file in the tree then sat a few px right of its
+                  * folder siblings.
+                  */}
                 {isDir ? (
                     <button
                         onClick={handleToggle}
-                        className="p-0.5 rounded hover:bg-muted-foreground/10 text-muted-foreground shrink-0"
+                        aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
+                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded border-0 p-0 leading-none text-muted-foreground hover:bg-muted-foreground/10"
                     >
                         {isExpanded ? (
                             <ChevronDown className="h-3 w-3" />
@@ -926,8 +945,7 @@ function DirectoryTreeNode({
                         )}
                     </button>
                 ) : (
-                    // File spacer to align with folders
-                    <div className="w-4 h-4 shrink-0" />
+                    <span aria-hidden className="block h-4 w-4 shrink-0" />
                 )}
                 {isDir ? (
                     <Folder className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-primary fill-primary/10" : "text-muted-foreground"}`} />
