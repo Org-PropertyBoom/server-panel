@@ -94,3 +94,58 @@ func TestCPUDeltas_StealIsNotOurLoad(t *testing.T) {
 		t.Errorf("sanity: pre-fix formula = %.1f%%, expected it to have read 95%%", old)
 	}
 }
+
+// TestCPUDeltas_CounterResetDoesNotWrap guards the uint64 subtractions in
+// cpuStatus. /proc/stat counters normally only rise, but a CPU hotplug or a
+// counter reset can make them fall. With plain a-b that wraps to ~1.8e19 and the
+// dashboard renders a garbage percentage instead of erroring; the values must
+// clamp to a sane range instead.
+func TestCPUDeltas_CounterResetDoesNotWrap(t *testing.T) {
+	// idle GOES BACKWARDS while total still RISES. Total must rise, because
+	// cpuStatus only reaches this arithmetic when now.total > prev.total (a
+	// falling total takes the cold-start path instead) — so a test with a falling
+	// total would prove nothing about the code under test.
+	before, err := parseCPULine("cpu 100 0 0 900 0 0 0 0") // total 1000, idle 900
+	if err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	after, err := parseCPULine("cpu 2000 0 0 50 0 0 0 0") // total 2050, idle 50
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+
+	if after.total <= before.total {
+		t.Fatalf("fixture is wrong: total must rise (before %d, after %d)", before.total, after.total)
+	}
+	totalDelta := after.total - before.total
+	sub := func(a, b uint64) uint64 {
+		if a < b {
+			return 0
+		}
+		return a - b
+	}
+	pct := func(d uint64) float64 {
+		v := float64(d) / float64(totalDelta) * 100
+		if v < 0 {
+			return 0
+		}
+		if v > 100 {
+			return 100
+		}
+		return v
+	}
+
+	idleDelta := sub(after.idle, before.idle) // would wrap without sub()
+	if idleDelta != 0 {
+		t.Errorf("idleDelta = %d, want 0 — a backwards counter must clamp, not wrap", idleDelta)
+	}
+	usage := pct(sub(totalDelta, idleDelta+sub(after.steal, before.steal)))
+	if usage < 0 || usage > 100 {
+		t.Errorf("usage = %f, want within 0..100", usage)
+	}
+
+	// And the unguarded form is what we are protecting against.
+	if raw := after.idle - before.idle; raw < 1<<60 {
+		t.Errorf("sanity: unguarded subtraction = %d, expected it to have wrapped huge", raw)
+	}
+}

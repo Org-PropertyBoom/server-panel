@@ -132,12 +132,33 @@ func cpuStatus() (CPUStatus, error) {
 	if totalDelta == 0 {
 		return status, nil
 	}
-	pct := func(d uint64) float64 { return float64(d) / float64(totalDelta) * 100 }
 
-	busy := totalDelta - (now.idle - prev.idle) - (now.steal - prev.steal)
-	status.Usage = pct(busy)
-	status.Steal = pct(now.steal - prev.steal)
-	status.IOWait = pct(now.iowait - prev.iowait)
+	// These are ALL uint64, so every subtraction here is an underflow risk: a
+	// counter that goes backwards wraps to ~1.8e19 instead of going negative, and
+	// the dashboard would render a nonsense percentage rather than surface an
+	// error. /proc/stat is normally monotonic, but CPU hotplug and counter resets
+	// break that. sub() clamps instead of wrapping.
+	sub := func(a, b uint64) uint64 {
+		if a < b {
+			return 0
+		}
+		return a - b
+	}
+	pct := func(d uint64) float64 {
+		v := float64(d) / float64(totalDelta) * 100
+		if v < 0 {
+			return 0
+		}
+		if v > 100 {
+			return 100 // idle+steal can exceed total only if a counter reset
+		}
+		return v
+	}
+
+	idleDelta, stealDelta := sub(now.idle, prev.idle), sub(now.steal, prev.steal)
+	status.Usage = pct(sub(totalDelta, idleDelta+stealDelta))
+	status.Steal = pct(stealDelta)
+	status.IOWait = pct(sub(now.iowait, prev.iowait))
 	return status, nil
 }
 
