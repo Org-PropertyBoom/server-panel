@@ -47,17 +47,33 @@ type Config struct {
 	ValidationDir string
 	// SecurityHeaders is the edge-header policy for TENANT vhosts only; nil = off.
 	SecurityHeaders *SecurityHeaders
+	// CompiledConfigPath is the caddy-READABLE JSON that systemd boots from (a
+	// drop-in ExecStart runs `caddy run --config /etc/caddy/caddy.json`). Every
+	// apply recompiles it and reloads FROM it, so the RUNNING config always
+	// equals the BOOT config.
+	//
+	// This closes the 2026-09-07 full-TLS outage: caddy.service runs as
+	// User=caddy, which cannot read the root-only /home/server/.caddy import, so
+	// a cold start re-read the Caddyfile, resolved the import to nothing, and
+	// dropped every tenant vhost. Holding the good config only in Caddy's memory
+	// is what let the running and boot configs diverge.
+	//
+	// It is a BUILD ARTIFACT — never hand-edited; the .caddy files stay the
+	// source. "" disables compiling and falls back to the admin-API reload, which
+	// is only appropriate off-host.
+	CompiledConfigPath string
 }
 
 func defaults() Config {
 	return Config{
-		VhostsDir:      "/home/server/.caddy",
-		MainCaddyfile:  "/etc/caddy/Caddyfile",
-		CaddyAdminURL:  "http://localhost:2019",
-		BackupDir:      "/var/lib/ppt-server-panel/caddy-backups",
-		KnownHostsFile: "/var/lib/ppt-server-panel/vhost-known-hosts.json",
-		ValidationDir:  "/var/www/acme-validation",
-		PanelDomain:    "cp.propertyweb.co",
+		VhostsDir:          "/home/server/.caddy",
+		MainCaddyfile:      "/etc/caddy/Caddyfile",
+		CaddyAdminURL:      "http://localhost:2019",
+		BackupDir:          "/var/lib/ppt-server-panel/caddy-backups",
+		KnownHostsFile:     "/var/lib/ppt-server-panel/vhost-known-hosts.json",
+		CompiledConfigPath: "/etc/caddy/caddy.json",
+		ValidationDir:      "/var/www/acme-validation",
+		PanelDomain:        "cp.propertyweb.co",
 		StackPorts: map[string]string{
 			// From design-templates/docs/stack-deploy-ports.md (host:port so the
 			// renderer never guesses the host half either).
@@ -89,6 +105,11 @@ func Load() Config {
 	}
 	if v := os.Getenv("CADDY_PANEL_DOMAIN"); v != "" {
 		cfg.PanelDomain = v
+	}
+	if v, ok := os.LookupEnv("CADDY_COMPILED_CONFIG"); ok {
+		// LookupEnv, not Getenv: setting it EMPTY is a deliberate "don't compile"
+		// (fall back to the admin-API reload), which only makes sense off-host.
+		cfg.CompiledConfigPath = strings.TrimSpace(v)
 	}
 	if v, ok := os.LookupEnv("CADDY_ENCODE"); ok {
 		cfg.Encode = v

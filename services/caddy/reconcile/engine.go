@@ -34,6 +34,22 @@ type Reloader interface {
 	CurrentConfig(ctx context.Context) ([]byte, error)
 }
 
+// ConfigPersister is the OPTIONAL half of a Reloader that can compile the adapted
+// config to the caddy-readable file systemd boots from, then reload out of that
+// same file (satisfied by caddyctl.Client).
+//
+// It is a separate, type-asserted interface rather than extra methods on Reloader
+// so existing fakes — and a read-only/off-host engine — keep working unchanged.
+//
+// THE RULE THIS ENCODES: never apply a config that was not also persisted. The
+// 2026-09-07 outage happened because the good config lived only in Caddy's
+// memory; the moment systemd re-read the Caddyfile as User=caddy it could not
+// read the root-only vhost import, and every tenant vhost disappeared.
+type ConfigPersister interface {
+	PersistConfig(path string, adaptedJSON []byte) error
+	ReloadFromFile(ctx context.Context, path string) error
+}
+
 // SkipInfo is a JSON-friendly Skip.
 type SkipInfo struct {
 	Table  string `json:"table"`
@@ -56,6 +72,7 @@ type Result struct {
 	MissingTables     []string       `json:"missing_tables,omitempty"`
 	BlockedDrops      []string       `json:"blocked_drops,omitempty"` // live hosts the drop-guard refused to drop
 	BackupPath        string         `json:"backup_path,omitempty"`
+	CompiledPath      string         `json:"compiled_path,omitempty"` // the caddy.json this apply wrote and reloaded from
 	Error             string         `json:"error,omitempty"`
 	DurationMS        int64          `json:"duration_ms"`
 }
@@ -204,8 +221,11 @@ func (e *Engine) Reconcile(ctx context.Context, snap db.Snapshot) (Result, error
 		res.BackupPath = path
 	}
 
-	// Reload: POST the adapted JSON. On failure, Caddy keeps its old config.
-	if err := e.reloader.Load(ctx, adapted); err != nil {
+	// Compile to /etc/caddy/caddy.json, then reload FROM that file. On failure,
+	// Caddy keeps its old config.
+	compiled, err := e.publish(ctx, adapted)
+	res.CompiledPath = compiled
+	if err != nil {
 		res.Error = "reload: " + err.Error()
 		res.DurationMS = e.since(start)
 		e.firstDone = true
@@ -281,7 +301,13 @@ func (e *Engine) ReloadOnly(ctx context.Context) (Result, error) {
 	} else {
 		res.BackupPath = path
 	}
-	if err := e.reloader.Load(ctx, adapted); err != nil {
+	// Same compile-then-reload-from-file path as Reconcile: Force reload must also
+	// refresh /etc/caddy/caddy.json, or a "fix it with Force reload" would repair
+	// the running config while leaving the boot config stale — which is how the
+	// outage would silently come back on the next restart.
+	compiled, err := e.publish(ctx, adapted)
+	res.CompiledPath = compiled
+	if err != nil {
 		res.Error = "reload: " + err.Error()
 		res.DurationMS = e.since(start)
 		return res, errors.New(res.Error)
@@ -655,6 +681,52 @@ func (e *Engine) firstPassDone() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.firstDone
+}
+
+// publish makes the adapted config live. It is the ONLY path that applies a
+// config, so the "persisted == running" invariant cannot be bypassed.
+//
+// Preferred path (on-host): compile → persist ATOMICALLY to CompiledConfigPath →
+// `caddy reload --config <that file>`. The file systemd boots from and the file
+// we reload from are then the same bytes, which is precisely what was untrue
+// during the 2026-09-07 outage.
+//
+// ORDERING IS DELIBERATE: persist BEFORE reload. If the reload fails, Caddy keeps
+// its previous config in memory AND the new config is already on disk, so a cold
+// start lands on the config the operator intended rather than reverting to a
+// stale one. The reverse order — reload first, persist after — would leave a
+// window where the running config exists nowhere on disk, which is the exact
+// shape of the outage.
+//
+// Fallback (no persister, or CompiledConfigPath disabled): POST to the admin API
+// as before. That keeps read-only/off-host engines and existing fakes working,
+// and is the only case where a memory-only apply is still possible.
+func (e *Engine) publish(ctx context.Context, adapted []byte) (compiledPath string, err error) {
+	// Validate before anything is applied or written. `caddy adapt` succeeding
+	// should imply valid JSON, but this is the file systemd boots from — an
+	// unparseable one is an outage at the next restart, not an error anyone sees
+	// now. Cheap check, catastrophic failure mode.
+	if !json.Valid(adapted) {
+		return "", errors.New("adapted output is not valid JSON — refusing to apply or persist it")
+	}
+
+	persister, ok := e.reloader.(ConfigPersister)
+	path := strings.TrimSpace(e.cfg.CompiledConfigPath)
+	if !ok || path == "" {
+		return "", e.reloader.Load(ctx, adapted)
+	}
+	if err := persister.PersistConfig(path, adapted); err != nil {
+		// Abort: nothing has been applied, and the atomic write guarantees no
+		// partial file was left behind for systemd to boot from.
+		return "", fmt.Errorf("compile config: %w", err)
+	}
+	if err := persister.ReloadFromFile(ctx, path); err != nil {
+		// The file is newer than the running config here. That is the SAFE side of
+		// the asymmetry: the next cold start picks up the intended config, and the
+		// operator sees the error rather than a silent success.
+		return path, err
+	}
+	return path, nil
 }
 
 // backupPrior fetches the current live config and writes it to the backup dir as
