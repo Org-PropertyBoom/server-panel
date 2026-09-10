@@ -103,6 +103,17 @@ func (d *DB) SetRedirectActive(ctx context.Context, id int64, active bool) error
 	return d.execAffecting(ctx, "toggle redirect", q, boolToInt(active), id)
 }
 
+// RedirectByID returns the host of a platform_redirect_hosts row by id. Empty
+// string if not found. Mirrors SystemHostByID; used to learn which host a delete
+// or rename is about so the TLS-ask allowlist can be evicted for it.
+func (d *DB) RedirectByID(ctx context.Context, id int64) (string, error) {
+	var host string
+	if err := d.sql.QueryRowContext(ctx, "SELECT host FROM platform_redirect_hosts WHERE id = ?", id).Scan(&host); err != nil {
+		return "", err
+	}
+	return host, nil
+}
+
 // DeleteRedirect soft-deletes a redirect row.
 func (d *DB) DeleteRedirect(ctx context.Context, id int64) error {
 	const q = `UPDATE platform_redirect_hosts SET deleted_at=NOW(), updated_at=NOW() WHERE id=? AND deleted_at IS NULL`

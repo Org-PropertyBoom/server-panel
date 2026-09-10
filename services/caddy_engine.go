@@ -453,13 +453,17 @@ func (v *VhostEngineService) CertAllowed(ctx context.Context, host string) (bool
 			return true, nil
 		}
 	}
-	// Known-good fast path — no DB, survives restarts.
-	if v.certAskCached(host) {
-		return true, nil
-	}
-	// Edge-disabled ("Disabled · edge") hosts must not obtain certs either.
+	// An explicit disable outranks the allow-cache. SuppressHost already evicts on
+	// the way in, so this is belt-and-braces for any future path that suppresses
+	// without evicting — a deny must never lose to a stale allow. Cheap and safe:
+	// it reads the panel's own small SQLite table, and an ERROR here falls through
+	// rather than denying, so a local read blip cannot fail the platform closed.
 	if sup, err := v.settings.SuppressedHosts(); err == nil && sup[host] {
 		return false, nil
+	}
+	// Known-good fast path — no shared DB, survives restarts.
+	if v.certAskCached(host) {
+		return true, nil
 	}
 	conn, err := v.openDB(ctx)
 	if err != nil {
@@ -1031,6 +1035,12 @@ func (v *VhostEngineService) SaveSystemHost(ctx context.Context, f SystemHostFor
 	if oldHost != "" && normalizeHostKey(oldHost) != normalizeHostKey(in.Host) {
 		_ = v.settings.DeleteVhostHeaders(oldHost)
 		_ = v.settings.DeleteHostTLSMode(oldHost)
+		// The old name no longer has a row, so HostCertAllowed is now false for it.
+		v.certAskEvictHost(oldHost)
+	}
+	// Deactivating revokes authorization too — HostCertAllowed requires is_active=1.
+	if !in.IsActive {
+		v.certAskEvictHost(in.Host)
 	}
 	return nil
 }
@@ -1052,18 +1062,45 @@ func (v *VhostEngineService) SaveRedirect(ctx context.Context, f RedirectForm) e
 		_, err = conn.CreateRedirect(ctx, in)
 		return err
 	}
-	return conn.UpdateRedirect(ctx, f.ID, in)
+	oldHost, _ := conn.RedirectByID(ctx, f.ID)
+	if err := conn.UpdateRedirect(ctx, f.ID, in); err != nil {
+		return err
+	}
+	// Same revocations as SaveSystemHost: a rename orphans the old name, and
+	// deactivating fails the is_active=1 check in HostCertAllowed.
+	if oldHost != "" && normalizeHostKey(oldHost) != normalizeHostKey(in.Host) {
+		v.certAskEvictHost(oldHost)
+	}
+	if !in.IsActive {
+		v.certAskEvictHost(in.Host)
+	}
+	return nil
 }
 
 // DeleteSystemHost / DeleteRedirect soft-delete a row (removal applies on the next
 // non-first Reconcile).
+//
+// Both resolve the host BEFORE deleting and evict it from the TLS-ask allowlist
+// after: a soft-deleted row makes HostCertAllowed false, so leaving the host
+// cached would keep authorizing certs for something the operator just removed —
+// for up to certAskCacheTTL (12h default). Removal must take effect now.
+//
+// Eviction is best-effort and deliberately AFTER a successful delete: if the
+// delete fails the row still serves, and evicting would deny a live host a cert.
+// A failed host lookup is not fatal either — the delete is the operation the
+// caller asked for; a missed eviction degrades to the old TTL behavior.
 func (v *VhostEngineService) DeleteSystemHost(ctx context.Context, id int64) error {
 	conn, err := v.openDB(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	return conn.DeleteSystemHost(ctx, id)
+	host, _ := conn.SystemHostByID(ctx, id)
+	if err := conn.DeleteSystemHost(ctx, id); err != nil {
+		return err
+	}
+	v.certAskEvictHost(host)
+	return nil
 }
 
 func (v *VhostEngineService) DeleteRedirect(ctx context.Context, id int64) error {
@@ -1072,7 +1109,23 @@ func (v *VhostEngineService) DeleteRedirect(ctx context.Context, id int64) error
 		return err
 	}
 	defer conn.Close()
-	return conn.DeleteRedirect(ctx, id)
+	host, _ := conn.RedirectByID(ctx, id)
+	if err := conn.DeleteRedirect(ctx, id); err != nil {
+		return err
+	}
+	v.certAskEvictHost(host)
+	return nil
+}
+
+// certAskEvictHost is certAskEvict with the empty-host guard the write paths need
+// (a failed id->host lookup yields ""), normalizing the key the same way the
+// allowlist and CertAllowed do.
+func (v *VhostEngineService) certAskEvictHost(host string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	v.certAskEvict(host)
 }
 
 // SuppressHost edge-disables (or re-enables) a host at Caddy — works for tenant AND
