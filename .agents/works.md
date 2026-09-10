@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-10 - Login: eye button to unmask the password
+
+- Goal: the login form had no way to reveal the typed password, so a typo in a long root password could only be caught by a failed sign-in.
+- Files: `client/src/routes/login.tsx` — added `showPassword` state, `Eye`/`EyeOff` imports, `type={showPassword ? "text" : "password"}`, and an absolutely-positioned toggle button inside the existing `relative` wrapper (input padding `pr-3` -> `pr-11` so text never runs under the icon).
+- Decision: matched the existing reveal pattern in `routes/root/users/index.tsx` (same icons, same `type` swap) rather than inventing a new one. Button is `type="button"` so it cannot submit the form, and carries `aria-label` (Show/Hide password) + `aria-pressed`; it stays keyboard-reachable.
+- Validation: `npx tsc --noEmit` clean; ran the Vite dev server and drove the page — typing a value and clicking the button flips the input to `type="text"` with the value visible and the label to "Hide password", clicking again restores masking. Checked in both dark and light mode.
+
 ### 2026-09-07 - Compile /etc/caddy/caddy.json on every apply (CADDYJSON-1..6, V1..V5)
 
 - Spec: hub dispatch "Compile /etc/caddy/caddy.json on every apply so Caddy cold-starts safely" (2026-09-07). **No spec commit hash and no checklist IDs were supplied**, so I assigned CADDYJSON-1..6 to its numbered END STATE steps and CADDYJSON-V1..V5 to its verify checklist, in the order written, and told the hub to rename if it already has IDs. Commit **9c5229a**, deployed as build `20260907035206`.
