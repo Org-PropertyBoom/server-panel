@@ -1,6 +1,8 @@
 import { type FormEvent, useState, useEffect } from "react";
 import {
     ArrowRight,
+    Eye,
+    EyeOff,
     Loader2,
     LockKeyhole,
     Server,
@@ -19,6 +21,7 @@ type LoginStatus = "idle" | "loading" | "success" | "error";
 export default function LoginRoute() {
     const [status, setStatus] = useState<LoginStatus>("idle");
     const [message, setMessage] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const isLoading = status === "loading";
 
     useEffect(() => {
@@ -180,14 +183,27 @@ export default function LoginRoute() {
                                         aria-hidden="true"
                                     />
                                     <input
-                                        className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+                                        className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-11 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
                                         name="password"
-                                        type="password"
+                                        type={showPassword ? "text" : "password"}
                                         autoComplete="current-password"
                                         placeholder="password"
                                         required
                                         onChange={handleInputChange}
                                     />
+                                    <button
+                                        className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        type="button"
+                                        onClick={() => setShowPassword((current) => !current)}
+                                        aria-label={showPassword ? "Hide password" : "Show password"}
+                                        aria-pressed={showPassword}
+                                    >
+                                        {showPassword ? (
+                                            <EyeOff className="h-4 w-4" aria-hidden="true" />
+                                        ) : (
+                                            <Eye className="h-4 w-4" aria-hidden="true" />
+                                        )}
+                                    </button>
                                 </span>
                             </label>
 
