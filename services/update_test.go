@@ -144,3 +144,68 @@ func TestCheckUpdateDoesNotCacheCallerCancellation(t *testing.T) {
 		t.Fatalf("next caller: res=%+v err=%v, want a fresh successful check", res, err)
 	}
 }
+
+// publishedBuild serves whatever version is currently "published", so a test can
+// simulate CI publishing a new build while the cache still holds the old one.
+func publishedBuild(v *atomic.Value) func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(v.Load().(string)))
+	}
+}
+
+// The reason refresh exists: CI publishes while the 2-minute cache holds the old
+// answer. A background poll keeps the cached answer (by design); a manual refresh
+// sees the new build.
+func TestCheckUpdateRefreshSeesBuildPublishedDuringCache(t *testing.T) {
+	var published atomic.Value
+	published.Store(`{"version":"v2","buildTime":"2026-09-11T00:00:00Z"}`)
+	rig := newUpdateTestRig(t, publishedBuild(&published))
+
+	if res, err := rig.svc.CheckUpdate(context.Background()); err != nil || res.RemoteVersion != "v2" {
+		t.Fatalf("first check: res=%+v err=%v, want v2", res, err)
+	}
+
+	published.Store(`{"version":"v3","buildTime":"2026-09-11T01:00:00Z"}`) // CI publishes
+	rig.advance(updateRefreshMinGap)
+
+	if res, _ := rig.svc.CheckUpdate(context.Background()); res.RemoteVersion != "v2" {
+		t.Fatalf("background poll within TTL: got %q, want the cached v2", res.RemoteVersion)
+	}
+	res, err := rig.svc.CheckUpdateFresh(context.Background(), true)
+	if err != nil || res.RemoteVersion != "v3" {
+		t.Fatalf("manual refresh: res=%+v err=%v, want the newly published v3", res, err)
+	}
+	// The refreshed answer replaces the cache for everyone.
+	if res, _ := rig.svc.CheckUpdate(context.Background()); res.RemoteVersion != "v3" {
+		t.Fatalf("poll after refresh: got %q, want v3", res.RemoteVersion)
+	}
+	if got := rig.hits.Load(); got != 2 {
+		t.Fatalf("remote hits=%d, want 2 (initial + one refresh)", got)
+	}
+}
+
+// Repeated clicks inside the gap must not each call GitHub.
+func TestCheckUpdateRefreshIsPaced(t *testing.T) {
+	rig := newUpdateTestRig(t, newerBuild)
+
+	if _, err := rig.svc.CheckUpdate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		rig.advance(updateRefreshMinGap / 10)
+		if _, err := rig.svc.CheckUpdateFresh(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := rig.hits.Load(); got != 1 {
+		t.Fatalf("5 refreshes inside the gap: remote hits=%d, want 1", got)
+	}
+	rig.advance(updateRefreshMinGap)
+	if _, err := rig.svc.CheckUpdateFresh(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := rig.hits.Load(); got != 2 {
+		t.Fatalf("refresh after the gap: remote hits=%d, want 2", got)
+	}
+}

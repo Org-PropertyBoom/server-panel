@@ -23,6 +23,14 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-11 - Manual "Check Update" refreshes past the 2-min cache
+
+- Follows `b0c6d7c` (another session: shared root-side cache, single-flight, 2-min TTL, 60s client poll — which fixed the 240 GitHub calls/hour vs the 60/hour unauthenticated limit). Reviewed it, kept it, and ran its 4 service tests, which had only been compiled: all pass.
+- Gap it left: with a 2-min cache, clicking **Check Update** right after CI publishes could report "latest" for up to 2 minutes. Added `CheckUpdateFresh(ctx, refresh)`: `refresh` skips a valid cache only if the last REAL remote check started >= `updateRefreshMinGap` (30s) ago; inside the gap it returns the cached answer, so repeated clicks can't spend the API budget. Background polls never refresh.
+- Wiring: `GET /post/update?refresh=1` (root); `GET /api/update?refresh=1` forwards to root — the query is BUILT by `UpdateStatus`, not copied, so nothing else a caller appends reaches the root process (`?refresh=true` and extra params are dropped). Client: manual button + post-install confirmation pass `refresh=1`; the poll doesn't.
+- Tests: `TestCheckUpdateRefreshSeesBuildPublishedDuringCache` (poll keeps cached v2, refresh sees v3, refresh replaces the cache for everyone), `TestCheckUpdateRefreshIsPaced` (5 clicks in the gap = 1 remote hit), `TestUpdateStatusForwardsRefreshOnly` (4 cases incl. dropped extras). Deleted one test I first wrote: gap and error TTL are both 30s, so "refresh retries a cached failure early" can never happen and the test would always skip.
+- Validation: `GOOS=linux go build ./...` + vet OK; linux test binaries compile; service tests EXECUTED in a scratch module (update.go is stdlib-only) — 6/6 pass; `routes/api` tests compile only (package needs `services`, which won't build on Windows). `tsc` 0, vite build OK.
+
 ### 2026-09-11 - Update notice for every session; installing stays root-only; the remote check is cached and shared
 
 - **Owner request (via the design-templates hub):** non-root sessions never checked for updates, so an update only showed up after entering the Root Session.

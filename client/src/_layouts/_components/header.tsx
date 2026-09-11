@@ -36,11 +36,15 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const allowReload = useRef(false);
     const updateWorkflowActive = useRef(false);
 
-    const checkUpdate = useCallback(async () => {
+    // refresh=true asks the server to skip its 2-minute cache (it still paces
+    // this to once per 30s). Only deliberate actions pass it — the manual button
+    // and the post-install confirmation — never the background poll.
+    const checkUpdate = useCallback(async (refresh = false) => {
         setChecking(true);
         setUpdateError("");
         try {
-            const response = await fetch(Api.current.update, { cache: "no-store" });
+            const url = refresh ? `${Api.current.update}?refresh=1` : Api.current.update;
+            const response = await fetch(url, { cache: "no-store" });
             if (!response.ok) {
                 if (isRestartResponse(response.status)) return null;
                 throw new Error(await responseError(response, "Failed to check for updates"));
@@ -69,7 +73,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     // is plenty for a notice (it used to poll every 5 seconds).
     useEffect(() => {
         checkUpdate();
-        const interval = setInterval(checkUpdate, 60000);
+        const interval = setInterval(() => checkUpdate(), 60000);
         return () => clearInterval(interval);
     }, [checkUpdate]);
 
@@ -100,7 +104,8 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         }
 
         // Manual "Check Update": re-check and toast the result so it never feels dead.
-        const info = await checkUpdate();
+        // refresh=true so a build CI published seconds ago isn't hidden by the cache.
+        const info = await checkUpdate(true);
         if (info?.updateAvailable) {
             setUpdateModalOpen(true);
         } else if (info) {
@@ -124,7 +129,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
                 setRestartElapsed(0);
                 await waitForServer(setRestartElapsed);
                 setRestarting(false);
-                const info = await checkUpdate();
+                const info = await checkUpdate(true);
                 if (!updateWasAccepted && !info) {
                     throw new Error("The server reconnected, but the update status could not be confirmed.");
                 }

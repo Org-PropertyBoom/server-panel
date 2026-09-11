@@ -12,7 +12,10 @@ import (
 
 func CheckHandler(updateService *services.UpdateService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		result, err := updateService.CheckUpdate(r.Context())
+		// ?refresh=1 comes only from a manual "Check Update"; the service still
+		// paces it, so repeated clicks can't bypass the GitHub rate budget.
+		refresh := r.URL.Query().Get("refresh") == "1"
+		result, err := updateService.CheckUpdateFresh(r.Context(), refresh)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

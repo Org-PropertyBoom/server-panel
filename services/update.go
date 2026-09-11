@@ -40,6 +40,13 @@ const (
 const (
 	updateCheckTTL      = 2 * time.Minute
 	updateCheckErrorTTL = 30 * time.Second
+
+	// updateRefreshMinGap is the least time between REAL remote checks that an
+	// operator-requested refresh may force. The 2-minute cache otherwise means a
+	// manual "Check Update" right after CI publishes can report "latest" for up to
+	// two minutes. The gap keeps repeated clicks from spending the 60/hour
+	// unauthenticated GitHub budget: inside it, a refresh returns the cached answer.
+	updateRefreshMinGap = 30 * time.Second
 )
 
 var ErrUpdateRequiresRoot = errors.New("self update requires root")
@@ -71,9 +78,10 @@ type UpdateService struct {
 
 	// checkMu lets one remote check run at a time; callers that arrive meanwhile
 	// wait and reuse its cached result instead of each calling GitHub.
-	checkMu  sync.Mutex
-	cacheErr error
-	now      func() time.Time // test seam; nil means time.Now
+	checkMu     sync.Mutex
+	cacheErr    error
+	lastFetchAt time.Time        // when the last real remote check started; paces refreshes
+	now         func() time.Time // test seam; nil means time.Now
 }
 
 func NewUpdateService(localVersion, localBuildTime string) *UpdateService {
@@ -91,10 +99,25 @@ func NewUpdateService(localVersion, localBuildTime string) *UpdateService {
 // updateCheckTTL and a failure for updateCheckErrorTTL, shared by every caller. Only
 // one remote check runs at a time; concurrent callers wait and reuse its result.
 func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, error) {
+	return s.CheckUpdateFresh(ctx, false)
+}
+
+// CheckUpdateFresh is CheckUpdate with an optional operator-requested refresh.
+// refresh skips a still-valid cache, but only when the last real remote check
+// started at least updateRefreshMinGap ago; inside the gap it returns the cached
+// answer like a normal call. Background polls never pass refresh — only a
+// deliberate click does — so the steady-state GitHub rate stays at one call per
+// updateCheckTTL no matter how many sessions are open.
+func (s *UpdateService) CheckUpdateFresh(ctx context.Context, refresh bool) (UpdateCheckResult, error) {
 	s.checkMu.Lock()
 	defer s.checkMu.Unlock()
 
-	if s.clock().Before(s.cacheExpires) {
+	now := s.clock()
+	useCache := now.Before(s.cacheExpires)
+	if refresh && useCache && now.Sub(s.lastFetchAt) >= updateRefreshMinGap {
+		useCache = false
+	}
+	if useCache {
 		if s.cacheErr != nil {
 			return UpdateCheckResult{}, s.cacheErr
 		}
@@ -103,6 +126,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, err
 		}
 	}
 
+	s.lastFetchAt = now
 	res, err := s.fetchRemote(ctx)
 	if err != nil {
 		// A failure caused by the caller going away says nothing about GitHub, so

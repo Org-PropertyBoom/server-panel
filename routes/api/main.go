@@ -209,7 +209,8 @@ func updateStatusHandler(sessions *services.SessionService, client postClient) h
 			http.Error(w, "session invalid", http.StatusUnauthorized)
 			return
 		}
-		status, err := client.UpdateStatus(r.Context())
+		refresh := r.URL.Query().Get("refresh") == "1"
+		status, err := client.UpdateStatus(r.Context(), refresh)
 		if err != nil {
 			http.Error(w, "update status unavailable", http.StatusBadGateway)
 			return
@@ -221,8 +222,16 @@ func updateStatusHandler(sessions *services.SessionService, client postClient) h
 // UpdateStatus asks the root process for its cached update check. Like LoginUser it
 // sends no Origin or Referer: postOnly accepts a source-less request only from
 // localhost, which is how the panel's processes reach each other.
-func (c postClient) UpdateStatus(ctx context.Context) (services.UpdateCheckResult, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/post/update", nil)
+//
+// refresh forwards a manual "Check Update". The query string is built here rather
+// than copied from the incoming request, so nothing else a caller appends can
+// reach the root process.
+func (c postClient) UpdateStatus(ctx context.Context, refresh bool) (services.UpdateCheckResult, error) {
+	target := c.baseURL + "/post/update"
+	if refresh {
+		target += "?refresh=1"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return services.UpdateCheckResult{}, err
 	}

@@ -97,3 +97,37 @@ func TestUpdateStatusRootFailureIsBadGateway(t *testing.T) {
 		t.Fatalf("root failure: status=%d, want 502", rec.Code)
 	}
 }
+
+// A manual refresh is forwarded to root as exactly ?refresh=1. The query is built
+// by UpdateStatus, not copied, so anything else a caller appends is dropped.
+func TestUpdateStatusForwardsRefreshOnly(t *testing.T) {
+	var gotQuery atomic.Value
+	gotQuery.Store("<unset>")
+	root := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery.Store(r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(services.UpdateCheckResult{})
+	}))
+	defer root.Close()
+	sessions, token := newTestSession(t)
+	h := updateStatusHandler(sessions, newPostClient(root.URL))
+
+	cases := []struct{ path, want string }{
+		{"/api/update", ""},                                // background poll: no refresh
+		{"/api/update?refresh=1", "refresh=1"},             // manual click
+		{"/api/update?refresh=1&x=../../etc", "refresh=1"}, // extras never reach root
+		{"/api/update?refresh=true", ""},                   // only the exact flag counts
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.AddCookie(&http.Cookie{Name: services.SessionCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d, want 200", tc.path, rec.Code)
+		}
+		if got := gotQuery.Load().(string); got != tc.want {
+			t.Errorf("%s: forwarded query %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
