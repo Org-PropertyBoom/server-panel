@@ -217,7 +217,8 @@ Journal: `http: panic serving 127.0.0.1:57036: invalid configuration: maxEvents 
 > **All post-upgrade checks passed** (reported by the hub): host count 108 via the admin API; 127 certs
 > on disk (= the pre-window baseline); 0 `obtaining certificate` lines in 15 min. Live reconcile is back ON,
 > and a panel Force reload returned `reloaded: true` with admin on `127.0.0.1:2019`, proving the localhost
-> binding and the panel's reload path agree in practice.
+> binding and the panel's reload path agree in practice. After the package swap the
+> `/etc` drop-ins still applied: `Restart=always`, and `ExecReload` → `caddy.json`.
 >
 > On 2.11.4 a failed ACME renewal is a log line, not a dead ingress, so the 3 October cohort is no
 > longer critical. The certs still expire and need fixing per domain.

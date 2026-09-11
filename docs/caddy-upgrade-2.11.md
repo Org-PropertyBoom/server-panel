@@ -19,7 +19,8 @@ hub's host findings plus upstream source read at tag **`v2.11.4`** (published 20
 > 4. Verified: v2.11.4; admin on `127.0.0.1:2019`; the same certificate serial served (no re-issue);
 >    four tenants return 200 from outside; host count 108; 127 certs on
 >    disk (= baseline); 0 `obtaining certificate` in 15 min; live reconcile back ON and a panel Force
->    reload returned `reloaded: true`.
+>    reload returned `reloaded: true`. After the swap the `/etc` drop-ins still applied:
+>    `Restart=always`, and `ExecReload` → `caddy.json`.
 >
 > **For the next upgrade:** the pre-install validate **is** the gate. Validate with the exact binary from
 > the `.deb` (`apt-get download caddy=<ver>`, then `dpkg-deb -x` it into a scratch directory), or with a
