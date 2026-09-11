@@ -103,7 +103,8 @@ export type ManageSets = {
 export type HostHealth = {
     host: string;
     alert: boolean;
-    dnsOk: boolean;
+    dnsOk: boolean; // resolved at all
+    onOrigin?: boolean; // resolves to one of our origin IPs, so TLS was checked; other hosts are never alerted
     tlsOk: boolean;
     resolvedIps?: string[];
     certExpiryMs?: number;
@@ -191,7 +192,9 @@ export function normalizeState(s: VhostState): VhostState {
 }
 
 // UnreachableChip rides ALONGSIDE the sync chip: an orthogonal reachability warning
-// (DNS/TLS) that is alert-only and never drives a write or removal.
+// that is alert-only and never drives a write or removal. It only fires for hosts
+// whose DNS points at one of our origin IPs and whose TLS check there failed; the
+// hover shows which IP and why (Cloudflare/Elsewhere/NXDOMAIN live in the Edge column).
 export function UnreachableChip({ health }: { health?: HostHealth }) {
     if (!health?.alert) return null;
     return (

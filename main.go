@@ -84,6 +84,10 @@ func main() {
 	// observes — it never writes, removes, or reloads — so it starts unconditionally
 	// here, gated internally by CADDY_HEALTH_PROBE (default on).
 	if startup.IsRoot {
+		// "Our origin IPs" for the Edge column and the probe. EC2 metadata can only
+		// add to the configured list, runs in the background, and never blocks boot.
+		logger.Info("origin IPs", "ips", services.OriginSet().List(), "source", services.OriginSet().Source())
+		services.StartOriginDiscovery(ctx)
 		healthProbe.Start(ctx)
 		if healthProbe.Enabled() {
 			logger.Info("health probe started")
