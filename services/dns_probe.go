@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ppt/server-panel/services/origin"
 )
 
 // DNS probing for the Cutover Assistant (docs/panel-cutover-assistant.md).
@@ -18,62 +20,21 @@ import (
 // website_hosts (stack-owned), never changes a host's state, and never touches
 // Caddy. Everything here is observation used to compose a client message.
 
-// Edge classifications for a tenant hostname's public DNS.
+// Edge classifications for a tenant hostname's public DNS (defined in
+// services/origin so the classifier is shared and tested with the origin set).
 const (
-	EdgeOrigin     = "Origin"     // resolves to one of our AWS IPs
-	EdgeCloudflare = "Cloudflare" // resolves to Cloudflare anycast
-	EdgeElsewhere  = "Elsewhere"  // resolves somewhere else — client drifted away
-	EdgeNXDomain   = "NXDOMAIN"   // doesn't resolve — expired/deleted
-	EdgeUnknown    = ""           // not looked up yet / lookup failed
+	EdgeOrigin     = origin.EdgeOrigin     // resolves to one of our origin IPs
+	EdgeCloudflare = origin.EdgeCloudflare // resolves to Cloudflare anycast
+	EdgeElsewhere  = origin.EdgeElsewhere  // resolves somewhere else — client drifted away
+	EdgeNXDomain   = origin.EdgeNXDomain   // doesn't resolve — expired/deleted
+	EdgeUnknown    = ""                    // not looked up yet / lookup failed
 )
 
-// originIPs are our AWS origin addresses. They differ per domain, hence a set.
-// Override with CUTOVER_ORIGIN_IPS (comma-separated).
-func originIPs() map[string]bool {
-	raw := strings.TrimSpace(os.Getenv("CUTOVER_ORIGIN_IPS"))
-	if raw == "" {
-		raw = "52.76.29.0,52.76.123.15,3.1.252.222"
-	}
-	out := map[string]bool{}
-	for _, ip := range strings.Split(raw, ",") {
-		if ip = strings.TrimSpace(ip); ip != "" {
-			out[ip] = true
-		}
-	}
-	return out
-}
+// originIPs are our origin addresses: the shared OriginSet (origin_ips.go), the
+// same set the reachability probe judges against.
+func originIPs() map[string]bool { return OriginSet().IPs() }
 
-// cloudflareNets are Cloudflare's published IPv4 ranges. Membership decides the
-// "Cloudflare" classification; the cutover A records (104.21.69.82 /
-// 172.67.206.132) fall inside 104.16.0.0/13 and 172.64.0.0/13.
-var cloudflareNets = func() []*net.IPNet {
-	cidrs := []string{
-		"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
-		"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
-		"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
-		"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
-	}
-	var out []*net.IPNet
-	for _, c := range cidrs {
-		if _, n, err := net.ParseCIDR(c); err == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}()
-
-func isCloudflareIP(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	for _, n := range cloudflareNets {
-		if n.Contains(parsed) {
-			return true
-		}
-	}
-	return false
-}
+func isCloudflareIP(ip string) bool { return origin.IsCloudflareIP(ip) }
 
 // EdgeInfo is one hostname's resolved edge state.
 type EdgeInfo struct {
@@ -81,20 +42,20 @@ type EdgeInfo struct {
 	IPs  []string `json:"ips,omitempty"`
 }
 
-type edgeCacheEntry struct {
-	info EdgeInfo
-	at   time.Time
-}
-
-// DNSProbeService resolves tenant hostnames and caches the answers. The cache is
-// what keeps 103 hosts from re-resolving on every page view.
+// DNSProbeService resolves tenant hostnames and caches the DNS answers. The cache
+// is what keeps 103 hosts from re-resolving on every page view. It caches the raw
+// answers, not the classification, so a host is always labelled against the current
+// origin set (see origin.EdgeCache).
 type DNSProbeService struct {
-	mu    sync.Mutex
-	cache map[string]edgeCacheEntry
+	edges *origin.EdgeCache
 }
 
 func NewDNSProbeService() *DNSProbeService {
-	return &DNSProbeService{cache: map[string]edgeCacheEntry{}}
+	return &DNSProbeService{edges: &origin.EdgeCache{
+		Lookup: net.DefaultResolver.LookupHost,
+		Ours:   originIPs,
+		TTL:    edgeCacheTTL,
+	}}
 }
 
 // edgeCacheTTL — DNS doesn't move fast; override with CUTOVER_DNS_CACHE_HOURS.
@@ -108,50 +69,14 @@ func edgeCacheTTL() time.Duration {
 	return 6 * time.Hour
 }
 
-// Edges resolves the edge classification for many hosts at once, serving cached
-// answers and looking up only what's stale — concurrently, with a small pool.
+// Edges resolves the edge classification for many hosts at once. Cached DNS answers
+// are reused and only stale ones are looked up, concurrently with a small pool; every
+// answer is classified against the current origin set on each call.
 func (s *DNSProbeService) Edges(ctx context.Context, hosts []string) map[string]EdgeInfo {
 	out := map[string]EdgeInfo{}
-	var pending []string
-
-	ttl := edgeCacheTTL()
-	s.mu.Lock()
-	for _, h := range hosts {
-		key := strings.ToLower(strings.TrimSpace(h))
-		if key == "" {
-			continue
-		}
-		if e, ok := s.cache[key]; ok && time.Since(e.at) < ttl {
-			out[key] = e.info
-			continue
-		}
-		pending = append(pending, key)
+	for host, c := range s.edges.Edges(ctx, hosts) {
+		out[host] = EdgeInfo{Edge: c.Edge, IPs: c.IPs}
 	}
-	s.mu.Unlock()
-
-	if len(pending) == 0 {
-		return out
-	}
-
-	var wg sync.WaitGroup
-	limit := make(chan struct{}, 16)
-	var mu sync.Mutex
-	for _, h := range pending {
-		wg.Add(1)
-		go func(host string) {
-			defer wg.Done()
-			limit <- struct{}{}
-			info := resolveEdge(ctx, host)
-			<-limit
-			mu.Lock()
-			out[host] = info
-			mu.Unlock()
-			s.mu.Lock()
-			s.cache[host] = edgeCacheEntry{info: info, at: time.Now()}
-			s.mu.Unlock()
-		}(h)
-	}
-	wg.Wait()
 	return out
 }
 
@@ -159,31 +84,8 @@ func resolveEdge(ctx context.Context, host string) EdgeInfo {
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	addrs, err := net.DefaultResolver.LookupHost(lookupCtx, host)
-	if err != nil || len(addrs) == 0 {
-		return EdgeInfo{Edge: EdgeNXDomain}
-	}
-	var v4 []string
-	for _, a := range addrs {
-		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil {
-			v4 = append(v4, a)
-		}
-	}
-	sort.Strings(v4)
-	if len(v4) == 0 {
-		return EdgeInfo{Edge: EdgeElsewhere, IPs: addrs}
-	}
-	ours := originIPs()
-	for _, a := range v4 {
-		if isCloudflareIP(a) {
-			return EdgeInfo{Edge: EdgeCloudflare, IPs: v4}
-		}
-	}
-	for _, a := range v4 {
-		if ours[a] {
-			return EdgeInfo{Edge: EdgeOrigin, IPs: v4}
-		}
-	}
-	return EdgeInfo{Edge: EdgeElsewhere, IPs: v4}
+	edge, ips := origin.ClassifyEdge(addrs, err, originIPs())
+	return EdgeInfo{Edge: edge, IPs: ips}
 }
 
 // ---- Cutover pre-flight (Tab A, Stage 1) ----

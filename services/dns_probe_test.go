@@ -11,7 +11,7 @@ func TestIsCloudflareIP(t *testing.T) {
 		}
 	}
 	// Our AWS origins must NOT be mistaken for Cloudflare.
-	for _, ip := range []string{"52.76.29.0", "52.76.123.15", "3.1.252.222", "8.8.8.8"} {
+	for _, ip := range []string{"52.76.29.0", "52.76.123.15", "3.1.252.222", "52.77.202.62", "8.8.8.8"} {
 		if isCloudflareIP(ip) {
 			t.Errorf("%s must not be classified Cloudflare", ip)
 		}
@@ -21,9 +21,12 @@ func TestIsCloudflareIP(t *testing.T) {
 	}
 }
 
+// All four origins, including ppt2 (52.77.202.62), which the old default missed.
+// Assumes none of PANEL_ORIGIN_IPS / CADDY_HEALTH_SERVER_IPS / CUTOVER_ORIGIN_IPS
+// is set in the test environment.
 func TestOriginIPsDefault(t *testing.T) {
 	ours := originIPs()
-	for _, ip := range []string{"52.76.29.0", "52.76.123.15", "3.1.252.222"} {
+	for _, ip := range []string{"52.76.29.0", "52.76.123.15", "3.1.252.222", "52.77.202.62"} {
 		if !ours[ip] {
 			t.Errorf("%s should be a known origin IP", ip)
 		}
