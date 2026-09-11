@@ -4,6 +4,31 @@
 hub's host findings plus upstream source read at tag **`v2.11.4`** (published 2026-06-03). Related:
 `docs/incident-2026-09-10-caddy-outage.md`, `docs/tls-scaling.md`.
 
+> **Executed 2026-09-11, in one stopped window rather than in this document's order.** The Owner
+> accepted up to 3 days of downtime, so the 2.6.2 intermediate cold restart (B5) was skipped. What ran:
+> 1. While 2.6.2 still served: `interval`/`burst` removed; `admin localhost:2019` set; the Caddyfile
+>    adapted with the downloaded 2.11.4 binary into a scratch file (native `permission` shape); `.admin`,
+>    `on_demand` and a host count of 108 checked; the scratch file validated with that binary. Storage
+>    checks (A4–A7) and backups (B1–B4) as written.
+> 2. Live reconcile off, `systemctl stop caddy`, the scratch file copied over `/etc/caddy/caddy.json`,
+>    D1–D5, then D6.
+> 3. **D6 started Caddy by itself** (see the "When does the swap happen?" row), so the planned "validate
+>    with the installed binary before the first start" couldn't happen. It was safe only because the
+>    pre-install validate used a release binary whose module hash matched the `.deb`'s exactly
+>    (`h1:XKxkMTgN…Wi0=`). After the install, a fresh `caddy adapt` diffed empty against `caddy.json`.
+> 4. Verified: v2.11.4; admin on `127.0.0.1:2019`; the same certificate serial served (no re-issue);
+>    four tenants return 200 from outside; host count 108; 127 certs on
+>    disk (= baseline); 0 `obtaining certificate` in 15 min; live reconcile back ON and a panel Force
+>    reload returned `reloaded: true`.
+>
+> **For the next upgrade:** the pre-install validate **is** the gate. Validate with the exact binary from
+> the `.deb` (`apt-get download caddy=<ver>`, then `dpkg-deb -x` it into a scratch directory), or with a
+> release binary whose `caddy version` hash matches it. Expect Caddy to be running as soon as `apt-get
+> install` returns. To validate the installed binary before it starts, the Debian way is a temporary
+> `/usr/sbin/policy-rc.d` that exits 101 for the duration of the install, removed afterwards.
+> `deb-systemd-invoke` consults it, so the postinst's `start` becomes a no-op. That hasn't been tested
+> on this host.
+
 ## Why this is a migration, not an update
 
 The host runs **Ubuntu's `universe` package `caddy 2.6.2-14`** (dpkg owns `/usr/bin/caddy`,
@@ -23,7 +48,7 @@ is to switch to Caddy's official apt repository. Same package name, same `/usr/b
 | Will certificates carry over? | Expected, **must be confirmed (A4–A7)**. Storage defaults to `file_system` at `$XDG_DATA_HOME/caddy`, else `$HOME/.local/share/caddy`. The official package creates user `caddy` with home `/var/lib/caddy`, and its unit sets no `Environment`, which gives **`/var/lib/caddy/.local/share/caddy`**. If the current install resolves elsewhere, the new one would re-issue ~100 certs at once. | caddyserver.com/docs/conventions, `dist/scripts/postinstall.sh` |
 | Restart policy after the swap? | **The official unit has no `Restart=` either.** This corrects the incident doc: current upstream `dist/init/caddy.service` doesn't ship `on-abnormal`. `restart.conf` is the **only** restart policy under either package. It lives in `/etc` and survives. | `dist/init/caddy.service` |
 | `ExecReload` after the swap? | The official baseline is `caddy reload --config /etc/caddy/Caddyfile --force`, **the same trap as before**. `reload.conf` must keep overriding it. Checked in E3. | `dist/init/caddy.service` |
-| When does the swap happen? | **Inside `apt install`.** On upgrade the postinst runs `daemon-reload` + `deb-systemd-invoke try-restart caddy.service`. That's why Phase C is mandatory. | `dist/scripts/postinstall.sh` |
+| When does the swap happen? | **Inside `apt install`, and it starts Caddy even if it's stopped.** On every `configure` (install *and* upgrade) the postinst runs `if deb-systemd-helper --quiet was-enabled caddy.service; then … deb-systemd-invoke start caddy.service`, so an enabled unit gets started. The separate `try-restart` block only matters if it's already running. *(Corrected 2026-09-11: this row used to say only `try-restart`, from a summarised read of the script. The live upgrade showed Caddy starting during the install, and the verbatim script confirms why.)* That's why Phase C, **before** the install, is the gate. | `dist/scripts/postinstall.sh` |
 | Hand-managed `/etc/caddy/Caddyfile`? | It's a dpkg **conffile**. Without `--force-confold` dpkg prompts, and taking the maintainer's version would **replace it with the default**. Always pass `--force-confold`. | dpkg |
 | Is the 2.6.2 panic class gone? | The assertion that panicked (`acmez` `client.go:137` in the 2.6.2 build) is a **checked** assertion (`authz, haveAuthz := …`) in acmez **v3.1.6**, which 2.11.4 pins together with certmagic **v0.25.3**. That's this one site only, not proof that no other panic exists. `restart.conf` stays as the backstop. | `acmez@v3.1.6/client.go`, `caddy@v2.11.4/go.mod` |
 
@@ -292,7 +317,7 @@ Expect `Installed: 2.6.2-14` and **`Candidate: 2.11.4`** from `dl.cloudsmith.io`
 candidate is any other version.** Redo Phase C for that version first, because a validated binary
 must be the installed binary.
 
-**D6 ⚠ WRITES 🔴 THE SWAP.** Installs 2.11.4 and restarts Caddy. Use the exact version string D5 printed.
+**D6 ⚠ WRITES 🔴 THE SWAP.** Installs 2.11.4 and starts or restarts Caddy. The postinst starts an enabled unit even if it was stopped. Use the exact version string D5 printed.
 ```bash
 apt-get install -y -o Dpkg::Options::=--force-confold caddy=2.11.4
 ```

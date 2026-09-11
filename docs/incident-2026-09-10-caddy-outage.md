@@ -200,10 +200,27 @@ Journal: `http: panic serving 127.0.0.1:57036: invalid configuration: maxEvents 
 - **Correction to the 2026-09-07 work log and to this doc's earlier reasoning:** "85 of 96 hosts don't
   resolve to this server" and "apss.com.sg doesn't resolve here" both came from this probe, so they
   were the bug, not DNS reality. `apss.com.sg` resolves to origin `52.76.123.15`.
-- Host-side mitigation: pin `CADDY_HEALTH_SERVER_IPS=52.76.123.15,52.77.202.62` (this server's two Elastic IPs, ppt1 and ppt2). **The Edge column has the same blind spot:** `originIPs()` (`CUTOVER_ORIGIN_IPS`, default `52.76.29.0,52.76.123.15,3.1.252.222`) doesn't include ppt2 `52.77.202.62`, so ppt2 tenants such as `space-nova.com` and `spacenova.org` show as Elsewhere (both EIPs serve the same Caddy and the same certificate, confirmed from outside AWS) for the panel service. Code fix:
+- Host-side mitigation: pin `CADDY_HEALTH_SERVER_IPS=52.76.29.0,52.76.123.15,3.1.252.222,52.77.202.62` (all four origin addresses; each serves this Caddy's certificate, serial `05A8B5D6…0EEC`, tested from outside AWS). **The Edge column has the same blind spot:** `originIPs()` (`CUTOVER_ORIGIN_IPS`, default `52.76.29.0,52.76.123.15,3.1.252.222`) doesn't include ppt2 `52.77.202.62`, so ppt2 tenants such as `space-nova.com` and `spacenova.org` show as Elsewhere (its three are correct; it only misses ppt2, so the fix is to append `52.77.202.62`, not replace the list. An identical serial proves shared certificate storage and config, not strictly one instance) for the panel service. Code fix:
   one shared, correct definition of this server's IPs for both the probe and the Edge column, and alert only on hosts pointing here that fail TLS.
 
 ## Open follow-ups, in priority order
+
+> **Status 2026-09-11: follow-up 1 is DONE.** Caddy **v2.11.4** from the official Cloudsmith repository
+> replaced Ubuntu's `2.6.2-14` in one stopped window. The Owner accepted up to 3 days of downtime; the
+> actual window was minutes. Results:
+> - The admin API is **loopback-only** (`127.0.0.1:2019`), closing the Docker-bridge path.
+> - Certificates were loaded from storage with no re-issue: `rudyproperty.com` serves the same serial
+>   `05A8B5D6…0EEC`, notAfter 2026-12-02.
+> - Four sampled tenants return 200 from outside, matching the pre-upgrade baseline.
+> - The post-install diff of a fresh adapt against `caddy.json` was empty.
+>
+> **All post-upgrade checks passed** (reported by the hub): host count 108 via the admin API; 127 certs
+> on disk (= the pre-window baseline); 0 `obtaining certificate` lines in 15 min. Live reconcile is back ON,
+> and a panel Force reload returned `reloaded: true` with admin on `127.0.0.1:2019`, proving the localhost
+> binding and the panel's reload path agree in practice.
+>
+> On 2.11.4 a failed ACME renewal is a log line, not a dead ingress, so the 3 October cohort is no
+> longer critical. The certs still expire and need fixing per domain.
 
 1. **Upgrade Caddy from 2.6.2** *(Nov 2022 — three years old)*. This is the highest-value fix: on a
    current Caddy the nil-authorization assertion is fixed, so a failed ACME path becomes a log line
