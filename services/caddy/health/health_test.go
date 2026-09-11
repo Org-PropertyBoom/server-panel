@@ -27,6 +27,7 @@ func originSet() map[string]bool {
 type fakeNet struct {
 	mu      sync.Mutex
 	dns     map[string][]string // host → answers; missing → NXDOMAIN
+	dnsErr  map[string]error    // host → lookup error returned instead (e.g. a timeout)
 	tlsErr  map[string]error    // ip → TLS failure; missing → valid cert
 	looked  []string
 	dialled []string
@@ -36,6 +37,9 @@ func (f *fakeNet) lookup(_ context.Context, host string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.looked = append(f.looked, host)
+	if err := f.dnsErr[host]; err != nil {
+		return nil, err
+	}
 	ips, ok := f.dns[host]
 	if !ok {
 		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
@@ -308,5 +312,103 @@ func TestRealCheckTLS_AgainstLoopbackServer(t *testing.T) {
 	p.now = time.Now
 	if _, err := p.checkTLS(context.Background(), "example.com", "127.0.0.1"); err == nil {
 		t.Error("closed port: want a connect error")
+	}
+}
+
+func setDNSErr(f *fakeNet, host string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dnsErr == nil {
+		f.dnsErr = map[string]error{}
+	}
+	if err == nil {
+		delete(f.dnsErr, host)
+		return
+	}
+	f.dnsErr[host] = err
+}
+
+// A transient lookup failure between two TLS failures must not reset the count:
+// fail → DNS timeout → fail has to reach threshold 2 and alert. (Before the fix a
+// DNS error zeroed the counter, so alternating hiccups meant it never alerted.)
+func TestDNSTimeoutDoesNotResetDebounce(t *testing.T) {
+	f := &fakeNet{
+		dns:    map[string][]string{"down.com": {"52.76.29.0"}},
+		tlsErr: map[string]error{"52.76.29.0": errors.New("connection refused")},
+	}
+	p := newProber(2, []string{"down.com"}, f)
+
+	p.probeAll(context.Background())
+	if s := p.Snapshot()["down.com"]; s.Failures != 1 {
+		t.Fatalf("after TLS failure: failures=%d, want 1", s.Failures)
+	}
+
+	setDNSErr(f, "down.com", &net.DNSError{Err: "i/o timeout", Name: "down.com", IsTimeout: true})
+	p.probeAll(context.Background())
+	s := p.Snapshot()["down.com"]
+	if s.Failures != 1 || s.Alert || !strings.Contains(s.LastError, "TLS") {
+		t.Fatalf("a DNS timeout must leave the status untouched, got %+v", s)
+	}
+
+	setDNSErr(f, "down.com", nil)
+	p.probeAll(context.Background())
+	if s := p.Snapshot()["down.com"]; s.Failures != 2 || !s.Alert {
+		t.Fatalf("fail, timeout, fail must reach the threshold and alert, got %+v", s)
+	}
+}
+
+// An active alert survives every kind of indeterminate lookup failure, with its
+// counter, last error and check time unchanged.
+func TestIndeterminateLookupKeepsActiveAlert(t *testing.T) {
+	cases := map[string]error{
+		"timeout":           &net.DNSError{Err: "i/o timeout", Name: "down.com", IsTimeout: true},
+		"servfail":          &net.DNSError{Err: "server misbehaving", Name: "down.com", IsTemporary: true},
+		"context deadline":  context.DeadlineExceeded,
+		"wrapped not-found": errors.New("lookup down.com: no such host"), // not a *net.DNSError, so not definitive
+	}
+	for name, lookupErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeNet{
+				dns:    map[string][]string{"down.com": {"52.76.29.0"}},
+				tlsErr: map[string]error{"52.76.29.0": errors.New("connection refused")},
+			}
+			p := newProber(2, []string{"down.com"}, f)
+			p.probeAll(context.Background())
+			p.probeAll(context.Background())
+			before := p.Snapshot()["down.com"]
+			if !before.Alert {
+				t.Fatalf("precondition: expected an alert after two TLS failures, got %+v", before)
+			}
+
+			setDNSErr(f, "down.com", lookupErr)
+			p.probeAll(context.Background())
+			after := p.Snapshot()["down.com"]
+			if !after.Alert || after.Failures != before.Failures || after.LastError != before.LastError || after.CheckedAtMs != before.CheckedAtMs {
+				t.Fatalf("lookup error %v must leave the status untouched:\n before %+v\n after  %+v", lookupErr, before, after)
+			}
+		})
+	}
+}
+
+// A definitive "no such host" still means the host no longer points at us, so an
+// active alert clears (a lapsed domain must not carry a stale alert forever).
+func TestNotFoundStillClearsAlert(t *testing.T) {
+	f := &fakeNet{
+		dns:    map[string][]string{"lapsed.com": {"52.76.29.0"}},
+		tlsErr: map[string]error{"52.76.29.0": errors.New("connection refused")},
+	}
+	p := newProber(2, []string{"lapsed.com"}, f)
+	p.probeAll(context.Background())
+	p.probeAll(context.Background())
+	if s := p.Snapshot()["lapsed.com"]; !s.Alert {
+		t.Fatalf("precondition: expected an alert, got %+v", s)
+	}
+
+	f.mu.Lock()
+	delete(f.dns, "lapsed.com") // fakeNet answers a missing host with IsNotFound
+	f.mu.Unlock()
+	p.probeAll(context.Background())
+	if s := p.Snapshot()["lapsed.com"]; s.Alert || s.Failures != 0 {
+		t.Fatalf("NXDOMAIN must clear the alert, got %+v", s)
 	}
 }

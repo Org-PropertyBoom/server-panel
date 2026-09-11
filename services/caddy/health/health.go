@@ -47,6 +47,11 @@ type probeResult struct {
 	tlsOk       bool
 	certExpiry  time.Time
 	err         string
+
+	// indeterminate: the DNS lookup failed for a reason other than "no such host"
+	// (timeout, SERVFAIL, cancelled). Nothing was observed, so applyResult leaves
+	// the debounced status exactly as it was.
+	indeterminate bool
 }
 
 // Config tunes the prober. Zero values fall back to safe defaults in New.
@@ -193,12 +198,18 @@ func (p *Prober) probeAll(ctx context.Context) {
 
 // applyResult folds one raw probe into the debounced status. Caller holds p.mu.
 // Only an on-origin host with a failed TLS check counts as a failure; a host that
-// doesn't point at us is not judged, so its counter and alert reset.
+// doesn't point at us is not judged, so its counter and alert reset. A lookup that
+// observed nothing (pr.indeterminate) leaves the status untouched.
 func (p *Prober) applyResult(host string, pr probeResult) {
 	st := p.statuses[host]
 	if st == nil {
 		st = &Status{Host: host}
 		p.statuses[host] = st
+	}
+	if pr.indeterminate {
+		// A resolver hiccup is not a verdict: it must neither raise nor clear an
+		// alert, so failures, alert, last error and the check time all stand.
+		return
 	}
 	st.DNSOk = pr.dnsOk
 	st.OnOrigin = pr.onOrigin
@@ -242,7 +253,14 @@ func (p *Prober) realProbe(ctx context.Context, host string, ours map[string]boo
 	cancel()
 	if err != nil {
 		pr.err = "DNS: " + err.Error()
-		return pr // not resolving is the Edge column's NXDOMAIN, not "unreachable"
+		// A definitive "no such host" means the host doesn't point at us (the Edge
+		// column's NXDOMAIN): not ours to judge, so the debounce resets. Any other
+		// lookup failure (timeout, SERVFAIL, cancelled) observed nothing.
+		var dnsErr *net.DNSError
+		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+			pr.indeterminate = true
+		}
+		return pr
 	}
 	sort.Strings(ips)
 	pr.resolvedIPs = ips
