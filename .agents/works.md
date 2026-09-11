@@ -23,6 +23,15 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-11 - SECURITY RESOLVED: /post/* auth hole closed in prod (f2b08f1, dist 20260911040721)
+
+- **Closed and live-verified.** The remote-unauthenticated hole on the `/post/user/*` and `POST /post/update` routes (see the `security: require a root session` entry) is fixed in production. Published dist is now `20260911040721`, built from `f2b08f1`, and the panel is running it.
+- **Verified from outside AWS (hub, from the Owner's PC), no cookie:** `GET /post/user/list` → **401** through Cloudflare AND direct to each of the four origin IPs (52.76.29.0, 52.76.123.15, 3.1.252.222, 52.77.202.62); `GET /post/user/apps` → 401; with a same-origin header set → still 401. `POST /post/user/password` and `POST /post/update` were deliberately NOT sent, but sit behind the same `rootSession` wrapper.
+- **Exposure was bounded, not just by the fix:** port 2205 (the panel's `0.0.0.0` listener) is filtered by the security group — by-IP `:2205` times out from outside. No Caddy default/fallback site proxies to the panel (`https://<ip>/...` without SNI fails TLS 000; `http://<ip>/` 308s to HTTPS). Only host blocks whose Host routes to `127.0.0.1:2205` reached it — in practice just `cp.propertyweb.co` (the panel renders vhosts only to stack backends 8002/8004/8005/8000, never to itself; its own domain is a hand-managed pinned block). Enumerate authoritatively with: `curl -s localhost:2019/config/ | jq -r '.apps.http.servers[].routes[] | select([.. | .dial? // empty] | any(test(":2205$"))) | (.match[]?.host[]? // "(catch-all)")'`.
+- **Caddy stopgap note for the record:** a Caddyfile edit + `systemctl reload caddy` does NOT take effect — Caddy runs `/etc/caddy/caddy.json` and `ExecReload` targets it, so a hand edit needs a panel Force reload to re-adapt. The code fix made the edge stopgap moot.
+- ⚠ **OPEN, host-side (Owner):** (1) check `auth.log`/journal for unexpected `chpasswd`/`useradd`/logins during the pre-deploy window and **rotate the root password** — `POST /post/user/password` was reachable unauthenticated before the deploy and its use can't be ruled out; (2) confirm the logged-in Users page still works.
+- ⚠ **OPEN, deeper, Owner to scope (code, not yet done):** (a) ANY Linux account that logs into the root panel gets a `"root"` session (`routes/post/login/main.go:31`, no username/UID/group check); (b) the terminal and file routes run as the root process, not the session's user; (c) `isAllowedPostSource` still treats loopback as authorization (harmless now that the sensitive routes require a session, but should change — carefully, since the internal `/api/login` -> `/post/user/login` broker relies on it).
+
 ### 2026-09-11 - Rule: announce before installing a panel build onto prod (INSTALL-ANNOUNCE-1)
 
 - Hub request (Server Architect), relaying an Owner ruling ("rule A"), in response to my note that two sessions installed `20260911034423` and `20260911035628` onto prod minutes apart with no warning. Each install restarts the panel and logs every operator out.
