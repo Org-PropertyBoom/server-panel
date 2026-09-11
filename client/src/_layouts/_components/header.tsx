@@ -4,6 +4,7 @@ import ColorModeSwitch from "_components/color-mode-switch";
 import { AlertTriangle, Boxes, User, Menu, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../../_contexts/app";
+import Api from "_utils/api";
 
 type HeaderProps = {
     title: string;
@@ -36,11 +37,10 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
     const updateWorkflowActive = useRef(false);
 
     const checkUpdate = useCallback(async () => {
-        if (!isRoot) return null;
         setChecking(true);
         setUpdateError("");
         try {
-            const response = await fetch("/post/update", { cache: "no-store" });
+            const response = await fetch(Api.current.update, { cache: "no-store" });
             if (!response.ok) {
                 if (isRestartResponse(response.status)) return null;
                 throw new Error(await responseError(response, "Failed to check for updates"));
@@ -62,15 +62,16 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
         }
 
         return null;
-    }, [isRoot]);
+    }, []);
 
+    // Every session checks; only root can install. The server caches the remote
+    // check for a couple of minutes and shares it across sessions, so once a minute
+    // is plenty for a notice (it used to poll every 5 seconds).
     useEffect(() => {
-        if (isRoot) {
-            checkUpdate();
-            const interval = setInterval(checkUpdate, 5000);
-            return () => clearInterval(interval);
-        }
-    }, [checkUpdate, isRoot]);
+        checkUpdate();
+        const interval = setInterval(checkUpdate, 60000);
+        return () => clearInterval(interval);
+    }, [checkUpdate]);
 
     useEffect(() => {
         if (!updating && !restarting) return;
@@ -206,23 +207,21 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
             </div>
 
             <div className="flex shrink-0 items-center gap-4">
-                {isRoot && (
-                    <button
-                        onClick={handleUpdate}
-                        disabled={checking || updating || restarting}
-                        className={`relative flex h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-all ${updateBtnClass}`}
-                        title={updateBtnTitle}
-                    >
-                        <RefreshCw className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`} />
-                        <span>{updateLabel}</span>
-                        {updateAvailable && (
-                            <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                            </span>
-                        )}
-                    </button>
-                )}
+                <button
+                    onClick={handleUpdate}
+                    disabled={checking || updating || restarting}
+                    className={`relative flex h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-medium transition-all ${updateBtnClass}`}
+                    title={updateBtnTitle}
+                >
+                    <RefreshCw className={`h-3.5 w-3.5 ${spinning ? "animate-spin" : ""}`} />
+                    <span>{updateLabel}</span>
+                    {updateAvailable && (
+                        <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                        </span>
+                    )}
+                </button>
 
                 <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground">
                     <User className="h-3 w-3" />
@@ -233,6 +232,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
 
             {updateModalOpen && (
                 <UpdateModal
+                    canInstall={isRoot}
                     checking={checking}
                     error={updateError}
                     info={updateInfo}
@@ -255,6 +255,7 @@ export default function Header({ title, onMenuClick }: HeaderProps) {
 }
 
 function UpdateModal({
+    canInstall,
     checking,
     error,
     info,
@@ -267,6 +268,7 @@ function UpdateModal({
     onClose,
     onConfirm,
 }: {
+    canInstall: boolean;
     checking: boolean;
     error: string;
     info: UpdateInfo | null;
@@ -301,7 +303,9 @@ function UpdateModal({
                                 Update server
                             </h2>
                             <p className="text-xs text-muted-foreground">
-                                Review the build before restarting the service.
+                                {canInstall
+                                    ? "Review the build before restarting the service."
+                                    : "Installing is done from the Root Session."}
                             </p>
                         </div>
                     </div>
@@ -331,8 +335,9 @@ function UpdateModal({
                     </div>
 
                     <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                        The server will download the new binary, replace the
-                        current executable, and restart.
+                        {canInstall
+                            ? "The server will download the new binary, replace the current executable, and restart."
+                            : "Installing requires root. Switch to the Root Session to install this update."}
                     </div>
 
                     {(updating || restarting) && reloadCountdown === 0 && (
@@ -388,25 +393,27 @@ function UpdateModal({
                     >
                         Cancel
                     </button>
-                    <button
-                        className="h-9 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                        disabled={
-                            checking ||
-                            updating ||
-                            restarting ||
-                            !info?.updateAvailable
-                        }
-                        onClick={onConfirm}
-                        type="button"
-                    >
-                        {reloadCountdown > 0
-                            ? `Reloading in ${reloadCountdown}s`
-                            : restarting
-                              ? "Restarting..."
-                              : updating
-                                ? "Updating..."
-                                : "Update and restart"}
-                    </button>
+                    {canInstall && (
+                        <button
+                            className="h-9 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                            disabled={
+                                checking ||
+                                updating ||
+                                restarting ||
+                                !info?.updateAvailable
+                            }
+                            onClick={onConfirm}
+                            type="button"
+                        >
+                            {reloadCountdown > 0
+                                ? `Reloading in ${reloadCountdown}s`
+                                : restarting
+                                  ? "Restarting..."
+                                  : updating
+                                    ? "Updating..."
+                                    : "Update and restart"}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

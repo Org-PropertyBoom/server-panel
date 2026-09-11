@@ -23,6 +23,16 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-11 - Update notice for every session; installing stays root-only; the remote check is cached and shared
+
+- **Owner request (via the design-templates hub):** non-root sessions never checked for updates, so an update only showed up after entering the Root Session.
+- **Server:** new `GET /api/update` (session required) forwards to the root process at `GET /post/update` through `postClient.UpdateStatus` (20 s timeout; no Origin or Referer, so `postOnly` accepts it from localhost, the same way login reaches root). Non-root processes find root through `POST_BASE_URL`, as login does. So the notice reflects what the Root Session would install, and GitHub is only ever called from root. Installing is unchanged: `POST /post/update`, root-only.
+- **`services/update.go`:** `CheckUpdate` is now safe for concurrent callers (one remote check at a time; waiters reuse its result). A result is cached for 2 min (it was 15 s, with no lock) and a failure for 30 s, unless the failure came from the caller cancelling. That keeps GitHub API calls to about 30 an hour, under the 60-an-hour unauthenticated limit. The fetch moved into `fetchRemote`.
+- **Client:** `update` added to `ApiRoute` and both maps (`/post/update` for root, `/api/update` otherwise). `header.tsx`: every session checks through `Api.current.update` and polls every 60 s (it was every 5 s, root only). The button shows for all sessions; for non-root the modal hides "Update and restart" and says to switch to the Root Session.
+- **Tests:** `services/update_test.go` (cache TTL; one fetch shared by 10 concurrent callers; failure back-off; a cancelled caller is not cached). `routes/api/update_test.go` (401 without a session, and root is never reached; forwarded as a plain GET with no Origin or Referer, and root's answer is returned; a root failure becomes 502).
+- **Validation:** all Go is COMPILED ONLY here (`GOOS=linux CGO_ENABLED=0 go vet ./services/... ./routes/...`, gofmt clean). Packages `services` and `routes/api` do not build on Windows, so these tests run only on Linux (`make test`). Client: `tsc --noEmit` clean and `npm run build` succeeds; the client has no Jest tests.
+- **Deploy note:** a non-root panel process keeps running its old code until it restarts, so the notice appears there once that process restarts on the new build.
+
 ### 2026-09-11 - Caddy 2.11.4 upgrade DONE; my postinst reading was wrong (install starts an enabled unit)
 
 - **Done and serving** (reported by the hub, which ran it with the Owner). Caddy **v2.11.4** from the official Cloudsmith repo, pid 601720. `ss`: `127.0.0.1:2019`, `*:80`, `*:443`, so the admin API is loopback-only and the Docker-bridge path is closed. From outside: rudyproperty.com, space-nova.com, singaporecondoreview.com and launches.sg return 200, matching the baseline. `rudyproperty.com` serves the identical cert (serial `05A8B5D6…0EEC`, notAfter 2026-12-02): loaded from storage, no re-issue. The post-install `diff` of a fresh adapt against `caddy.json` was empty. All post-upgrade checks then passed: host count 108 via the admin API, 127 certs (= baseline), 0 `obtaining certificate` in 15 min, and live reconcile ON + panel Force reload `reloaded: true` with admin on `127.0.0.1:2019`.

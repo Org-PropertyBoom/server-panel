@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,15 @@ const (
 	// stale — acceptable only as a degraded fallback.
 	defaultVersionURL = "https://github.com/" + distRepo + "/raw/" + distBranch + "/" + distVersionPath
 	defaultBinaryURL  = "https://github.com/" + distRepo + "/raw/" + distBranch + "/" + distBinaryPath
+)
+
+// The remote-version check is cached and shared by every caller: root sessions via
+// GET /post/update, and every other session via GET /api/update, which asks this
+// root process. Each miss makes an unauthenticated GitHub API call (limited to 60
+// an hour per IP), so a 2-minute cache keeps it to about 30 an hour.
+const (
+	updateCheckTTL      = 2 * time.Minute
+	updateCheckErrorTTL = 30 * time.Second
 )
 
 var ErrUpdateRequiresRoot = errors.New("self update requires root")
@@ -58,6 +68,12 @@ type UpdateService struct {
 	localBuildTime  string
 	cacheResult     *UpdateCheckResult
 	cacheExpires    time.Time
+
+	// checkMu lets one remote check run at a time; callers that arrive meanwhile
+	// wait and reuse its cached result instead of each calling GitHub.
+	checkMu  sync.Mutex
+	cacheErr error
+	now      func() time.Time // test seam; nil means time.Now
 }
 
 func NewUpdateService(localVersion, localBuildTime string) *UpdateService {
@@ -71,11 +87,48 @@ func NewUpdateService(localVersion, localBuildTime string) *UpdateService {
 	}
 }
 
+// CheckUpdate reports whether a newer build is published. A result is cached for
+// updateCheckTTL and a failure for updateCheckErrorTTL, shared by every caller. Only
+// one remote check runs at a time; concurrent callers wait and reuse its result.
 func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, error) {
-	if s.cacheResult != nil && time.Now().Before(s.cacheExpires) {
-		return *s.cacheResult, nil
+	s.checkMu.Lock()
+	defer s.checkMu.Unlock()
+
+	if s.clock().Before(s.cacheExpires) {
+		if s.cacheErr != nil {
+			return UpdateCheckResult{}, s.cacheErr
+		}
+		if s.cacheResult != nil {
+			return *s.cacheResult, nil
+		}
 	}
 
+	res, err := s.fetchRemote(ctx)
+	if err != nil {
+		// A failure caused by the caller going away says nothing about GitHub, so
+		// it isn't cached; the next caller tries again.
+		if ctx.Err() == nil {
+			s.cacheResult = nil
+			s.cacheErr = err
+			s.cacheExpires = s.clock().Add(updateCheckErrorTTL)
+		}
+		return UpdateCheckResult{}, err
+	}
+	s.cacheResult = &res
+	s.cacheErr = nil
+	s.cacheExpires = s.clock().Add(updateCheckTTL)
+	return res, nil
+}
+
+func (s *UpdateService) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// fetchRemote reads the published version.json and compares it with this build.
+func (s *UpdateService) fetchRemote(ctx context.Context) (UpdateCheckResult, error) {
 	versionURL, _ := s.resolveURLs(ctx)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, cacheBust(versionURL), nil)
 	if err != nil {
@@ -122,9 +175,6 @@ func (s *UpdateService) CheckUpdate(ctx context.Context) (UpdateCheckResult, err
 		LocalBuildTime:  s.localBuildTime,
 		RemoteBuildTime: remote.BuildTime,
 	}
-
-	s.cacheResult = &res
-	s.cacheExpires = time.Now().Add(15 * time.Second)
 
 	return res, nil
 }

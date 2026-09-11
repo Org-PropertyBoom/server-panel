@@ -67,6 +67,12 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 		writeJSON(w, http.StatusOK, status)
 	})))
 
+	// Read-only update status for any logged-in session. It asks the root process
+	// (the one that can install) rather than GitHub, so every session shares root's
+	// cached check and the notice reflects what the Root Session would install.
+	// Installing stays POST /post/update, root-only.
+	mux.Handle("GET /api/update", public(updateStatusHandler(deps.Sessions, postClient)))
+
 	mux.Handle("GET /api/apps", public(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requestSession(r, deps.Sessions); !ok {
 			http.Error(w, "session invalid", http.StatusUnauthorized)
@@ -142,6 +148,9 @@ type loginResponse struct {
 type postClient struct {
 	baseURL    string
 	httpClient *http.Client
+	// updateClient allows longer than login: on a cache miss the root process waits
+	// on GitHub before it answers.
+	updateClient *http.Client
 }
 
 func newPostClient(baseURL string) postClient {
@@ -149,6 +158,9 @@ func newPostClient(baseURL string) postClient {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
+		},
+		updateClient: &http.Client{
+			Timeout: 20 * time.Second,
 		},
 	}
 }
@@ -187,6 +199,49 @@ func (c postClient) LoginUser(ctx context.Context, credentials services.LoginCre
 	}
 
 	return login.User, nil
+}
+
+// updateStatusHandler serves GET /api/update: a logged-in session gets the root
+// process's cached update check. There is no install path here.
+func updateStatusHandler(sessions *services.SessionService, client postClient) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requestSession(r, sessions); !ok {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		status, err := client.UpdateStatus(r.Context())
+		if err != nil {
+			http.Error(w, "update status unavailable", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	})
+}
+
+// UpdateStatus asks the root process for its cached update check. Like LoginUser it
+// sends no Origin or Referer: postOnly accepts a source-less request only from
+// localhost, which is how the panel's processes reach each other.
+func (c postClient) UpdateStatus(ctx context.Context) (services.UpdateCheckResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/post/update", nil)
+	if err != nil {
+		return services.UpdateCheckResult{}, err
+	}
+
+	response, err := c.updateClient.Do(request)
+	if err != nil {
+		return services.UpdateCheckResult{}, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return services.UpdateCheckResult{}, errors.New("root update check failed: " + response.Status)
+	}
+
+	var result services.UpdateCheckResult
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return services.UpdateCheckResult{}, err
+	}
+	return result, nil
 }
 
 func writeLoginError(w http.ResponseWriter, err error) {
