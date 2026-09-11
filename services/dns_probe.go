@@ -42,20 +42,20 @@ type EdgeInfo struct {
 	IPs  []string `json:"ips,omitempty"`
 }
 
-type edgeCacheEntry struct {
-	info EdgeInfo
-	at   time.Time
-}
-
-// DNSProbeService resolves tenant hostnames and caches the answers. The cache is
-// what keeps 103 hosts from re-resolving on every page view.
+// DNSProbeService resolves tenant hostnames and caches the DNS answers. The cache
+// is what keeps 103 hosts from re-resolving on every page view. It caches the raw
+// answers, not the classification, so a host is always labelled against the current
+// origin set (see origin.EdgeCache).
 type DNSProbeService struct {
-	mu    sync.Mutex
-	cache map[string]edgeCacheEntry
+	edges *origin.EdgeCache
 }
 
 func NewDNSProbeService() *DNSProbeService {
-	return &DNSProbeService{cache: map[string]edgeCacheEntry{}}
+	return &DNSProbeService{edges: &origin.EdgeCache{
+		Lookup: net.DefaultResolver.LookupHost,
+		Ours:   originIPs,
+		TTL:    edgeCacheTTL,
+	}}
 }
 
 // edgeCacheTTL — DNS doesn't move fast; override with CUTOVER_DNS_CACHE_HOURS.
@@ -69,50 +69,14 @@ func edgeCacheTTL() time.Duration {
 	return 6 * time.Hour
 }
 
-// Edges resolves the edge classification for many hosts at once, serving cached
-// answers and looking up only what's stale — concurrently, with a small pool.
+// Edges resolves the edge classification for many hosts at once. Cached DNS answers
+// are reused and only stale ones are looked up, concurrently with a small pool; every
+// answer is classified against the current origin set on each call.
 func (s *DNSProbeService) Edges(ctx context.Context, hosts []string) map[string]EdgeInfo {
 	out := map[string]EdgeInfo{}
-	var pending []string
-
-	ttl := edgeCacheTTL()
-	s.mu.Lock()
-	for _, h := range hosts {
-		key := strings.ToLower(strings.TrimSpace(h))
-		if key == "" {
-			continue
-		}
-		if e, ok := s.cache[key]; ok && time.Since(e.at) < ttl {
-			out[key] = e.info
-			continue
-		}
-		pending = append(pending, key)
+	for host, c := range s.edges.Edges(ctx, hosts) {
+		out[host] = EdgeInfo{Edge: c.Edge, IPs: c.IPs}
 	}
-	s.mu.Unlock()
-
-	if len(pending) == 0 {
-		return out
-	}
-
-	var wg sync.WaitGroup
-	limit := make(chan struct{}, 16)
-	var mu sync.Mutex
-	for _, h := range pending {
-		wg.Add(1)
-		go func(host string) {
-			defer wg.Done()
-			limit <- struct{}{}
-			info := resolveEdge(ctx, host)
-			<-limit
-			mu.Lock()
-			out[host] = info
-			mu.Unlock()
-			s.mu.Lock()
-			s.cache[host] = edgeCacheEntry{info: info, at: time.Now()}
-			s.mu.Unlock()
-		}(h)
-	}
-	wg.Wait()
 	return out
 }
 
