@@ -23,6 +23,15 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-11 - SECURITY: require a root session on sensitive /post/* routes (was remote-unauth)
+
+- **Confirmed live on cp.propertyweb.co (root instance), from outside AWS by the hub:** `GET /post/user/list` returned real JSON with no authentication, and the same gap exposed `POST /post/user/password` (chpasswd for ANY Linux user, incl. root), `/post/user/add`, `/post/user/delete`, `/post/user/apps`, and `POST /post/update` (self-update install; its only guard, `euid==0`, is satisfied on the root process). Remote unauthenticated root.
+- **Root cause:** registered with only `postOnly` = `sameDomainOrLocalhostOnly(rootOnly(...))`. `rootOnly` checks the PROCESS euid, not the caller. `sameDomainOrLocalhostOnly` treats a request with no Origin/Referer as authorized when `RemoteAddr` is loopback, but behind Caddy EVERY public request's `RemoteAddr` is the proxy on loopback, so the Origin check protects nothing at the edge. None of these handlers checked a session.
+- **Fix (`routes/post/main.go`):** new `rootSession(sessions, next)` wrapper requiring a valid `"root"`-mode session cookie, applied to `/post/user/add`, `/delete`, `/list`, `/apps` (GET+POST), `/password`, and `POST /post/update`. NOT applied to `POST /post/login` (issues the session) or `POST /post/user/login` (internal login broker, called over loopback without a cookie). Root UI unaffected (browser already sends the cookie). `GET /post/update` stays open (read-only check, used by the /api/update forward).
+- **Host stopgap the Owner applied first:** deny `/post/user/*` at the cp.propertyweb.co Caddy edge (breaks the root UI Users page until removed), then this ships and the rule comes off.
+- **Validation:** `GOOS=linux CGO_ENABLED=0 go vet ./routes/...` clean, gofmt clean. Not runtime-tested on Windows (package doesn't build here). After deploy, verify the root UI Users page still works and an unauthenticated `curl` to `/post/user/list` now returns 401.
+- **NOT fixed here, deeper, Owner's call:** (1) ANY Linux account that logs into the root panel gets a `"root"` session (`login/main.go:31`, no username/UID/group check); (2) terminal and file routes run as the root process, not the session's user; (3) `isAllowedPostSource` still trusts loopback, meaningless behind the proxy, but changing it risks the internal login broker so it needs its own change.
+
 ### 2026-09-11 - Manual "Check Update" refreshes past the 2-min cache
 
 - Follows `b0c6d7c` (another session: shared root-side cache, single-flight, 2-min TTL, 60s client poll — which fixed the 240 GitHub calls/hour vs the 60/hour unauthenticated limit). Reviewed it, kept it, and ran its 4 service tests, which had only been compiled: all pass.

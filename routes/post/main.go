@@ -48,17 +48,17 @@ func Register(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("OPTIONS /post/", postOnly(deps.Startup, http.HandlerFunc(noContent)))
 	mux.Handle("POST /post/login", postOnly(deps.Startup, postlogin.Handler(deps.Auth, deps.Sessions)))
 	mux.Handle("POST /post/user/login", postOnly(deps.Startup, userlogin.Handler(deps.Auth)))
-	mux.Handle("POST /post/user/add", postOnly(deps.Startup, useradd.Handler(deps.Settings)))
-	mux.Handle("GET /post/user/apps", postOnly(deps.Startup, userapps.Handler()))
-	mux.Handle("POST /post/user/apps", postOnly(deps.Startup, userapps.Handler()))
-	mux.Handle("POST /post/user/delete", postOnly(deps.Startup, userdelete.Handler()))
+	mux.Handle("POST /post/user/add", postOnly(deps.Startup, rootSession(deps.Sessions, useradd.Handler(deps.Settings))))
+	mux.Handle("GET /post/user/apps", postOnly(deps.Startup, rootSession(deps.Sessions, userapps.Handler())))
+	mux.Handle("POST /post/user/apps", postOnly(deps.Startup, rootSession(deps.Sessions, userapps.Handler())))
+	mux.Handle("POST /post/user/delete", postOnly(deps.Startup, rootSession(deps.Sessions, userdelete.Handler())))
 	mux.Handle("GET /post/session", postOnly(deps.Startup, session.Handler(deps.Sessions)))
 	mux.Handle("GET /post/system", postOnly(deps.Startup, authenticatedSystemHandler(deps.Sessions, deps.System)))
 	mux.Handle("GET /post/update", postOnly(deps.Startup, update.CheckHandler(deps.Update)))
-	mux.Handle("POST /post/update", postOnly(deps.Startup, update.SelfUpdateHandler(deps.Update)))
+	mux.Handle("POST /post/update", postOnly(deps.Startup, rootSession(deps.Sessions, update.SelfUpdateHandler(deps.Update))))
 	mux.Handle("POST /post/ping", postOnly(deps.Startup, ping.Handler()))
-	mux.Handle("GET /post/user/list", postOnly(deps.Startup, userlist.Handler()))
-	mux.Handle("POST /post/user/password", postOnly(deps.Startup, userpassword.Handler()))
+	mux.Handle("GET /post/user/list", postOnly(deps.Startup, rootSession(deps.Sessions, userlist.Handler())))
+	mux.Handle("POST /post/user/password", postOnly(deps.Startup, rootSession(deps.Sessions, userpassword.Handler())))
 	mux.Handle("GET /post/files", postOnly(deps.Startup, postfiles.Handler(deps.Sessions)))
 	mux.Handle("PUT /post/files", postOnly(deps.Startup, postfiles.Handler(deps.Sessions)))
 	mux.Handle("POST /post/files", postOnly(deps.Startup, postfiles.Handler(deps.Sessions)))
@@ -167,6 +167,29 @@ func authenticatedSystemHandler(sessions *services.SessionService, system *servi
 
 func postOnly(startup services.StartupConfig, next http.Handler) http.Handler {
 	return sameDomainOrLocalhostOnly(rootOnly(startup, next))
+}
+
+// rootSession requires a valid "root"-mode session cookie, on top of postOnly.
+// postOnly only proves the PROCESS is root and the request looks same-origin; behind
+// a reverse proxy every public request also looks like loopback, so postOnly alone
+// leaves these handlers unauthenticated from the edge. Sensitive /post/* routes that
+// act on the host (user add/delete/password/list/apps, self-update install) require a
+// session here. NOT applied to /post/login (it issues the session) or
+// /post/user/login (the internal login broker, called over loopback without a cookie).
+func rootSession(sessions *services.SessionService, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(services.SessionCookieName)
+		if err != nil {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		session, ok := sessions.Get(cookie.Value)
+		if !ok || session.Mode != "root" {
+			http.Error(w, "session invalid", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func rootOnly(startup services.StartupConfig, next http.Handler) http.Handler {
