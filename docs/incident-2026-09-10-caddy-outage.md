@@ -69,8 +69,10 @@ StartLimitBurst=5
 ```
 
 The packaged unit at `/usr/lib/systemd/system/caddy.service` has **no `Restart=` line at all**
-(verified: only `Type=notify`, `User=caddy`, `ExecStart=`). Upstream Caddy's official unit ships
-`Restart=on-abnormal`; this packaging omits it.
+(verified: only `Type=notify`, `User=caddy`, `ExecStart=`). *(Corrected 2026-09-11: an earlier
+draft said upstream's official unit ships `Restart=on-abnormal`. It does not: current
+`caddyserver/dist` `init/caddy.service` has no `Restart=` either. The `restart.conf` drop-in below is
+the only restart policy under either package.)*
 
 **Nobody disabled restarts — Caddy never had a restart policy on this host.** The drop-in
 `override.conf` only repoints `ExecStart` at `caddy.json`; it does not touch `Restart`.
@@ -143,6 +145,64 @@ all failing, exhausting the rate limit.
 continents and validates; the host queries a local caching resolver. Use **letsdebug.net** for an
 outside-in read — it reproduces LE's checks. It may not be a fault you control.
 
+**Update 2026-09-11: the DNS fault is in Let's Encrypt's multi-perspective validation, so it can't be
+reproduced from here.** The host journal shows, for `launches.sg`:
+`HTTP 403 urn:ietf:params:acme:error:caa - Error finalizing order :: rechecking caa: During secondary
+validation: While processing CAA for launches.sg: DNS problem: networking error looking up CAA`.
+"Secondary validation" is LE checking from several remote network perspectives. The primary
+perspective succeeds; the remote ones can't reach the domain's nameservers (`ns1/ns2/ns3.webserver.sg`).
+The host and 8.8.8.8 both resolve them, which is why every `dig` we ran came back clean. Scope is
+**2 of the 8**: `launches.sg` and `kevinfeng.sg` are the two on `webserver.sg`. **The other 6 are on
+GoDaddy nameservers (5 different pairs), and this does not explain them.** Their failure reason still
+has to be read from the journal per domain. The fix for the two is at the DNS host (reachability of
+`webserver.sg` from outside Singapore, or moving the domains' DNS), not on this server.
+
+## Follow-on findings, 2026-09-11 (during the upgrade preparation)
+
+**🔴 The Caddy admin API is open on every interface.** The host journal shows `"admin endpoint
+started" "address":":2019" "enforce_origin":false` and `WARN "admin endpoint on open interface; host
+checking disabled"`. Anyone who can reach port 2019 can `POST /load` with no authentication and replace
+the config for ~100 domains. The AWS security group only covers the internet side. **`:2019` also
+listens on the Docker bridge**, so any compromised tenant container can reach it no matter what the
+security group says. **Fix: `admin localhost:2019`** in the hand-managed Caddyfile's global options,
+with no `origins` and `enforce_origin` left off. This was checked against Caddy v2.6.2 source and the
+panel's code before anyone edited anything:
+- The panel's `caddy reload --config` takes the admin address from the file's `admin.listen` and sends
+  `Host`/`Origin` for it.
+- On a loopback listen, 2.6.2 turns host checking on and allows `localhost`, `127.0.0.1` and `[::1]` on
+  port 2019.
+- The panel's own `GET /config/` (default `CADDY_ADMIN_URL=http://localhost:2019`) sends no `Origin`
+  header, so enabling `enforce_origin` would 403 it.
+
+On 2.6.2 the change must go through a **cold restart**, never a panel reload (see the next item).
+
+**A hot reload that removes the on-demand limiter fails on 2.6.2 and leaves disk and memory out of step.**
+Journal: `http: panic serving 127.0.0.1:57036: invalid configuration: maxEvents = 0 and window != 0` via
+`certmagic.(*RingBufferRateLimiter).SetMaxEvents` ← `caddytls.(*TLS).Provision tls.go:184` ←
+`adminLoad.handleLoad`.
+- The limiter is a package-level global that survives hot reloads. Go's `net/http` recovered the panic
+  inside the `/load` handler, so the caller got `EOF` and the process (PID 479641, `NRestarts=0`) kept
+  serving the **old** config.
+- The panel had already written the **new** `caddy.json`, so disk and memory diverged. Every later hot
+  reload fails the same way until a cold restart.
+- Same class of bug as 2026-09-10, opposite outcome: yesterday's panic ran in a certmagic background
+  goroutine where nothing recovers it, so it killed the process.
+- The aborted provision leaked a certificate-maintenance goroutine on its own, empty, per-app cache. The
+  running app's cache was untouched.
+
+**The "Not reaching us" health probe is inverted and has no monitoring value.**
+- It takes "this server" from the panel domain's DNS unless `CADDY_HEALTH_SERVER_IPS` is set.
+  `cp.propertyweb.co` is behind Cloudflare (`104.21.69.82`, `172.67.206.132`).
+- So **every Origin tenant fails "resolves to this server"** while serving normally. The only passes are
+  Cloudflare-proxied tenants on the panel zone's IP pair, and their TLS completes at Cloudflare's edge,
+  so they would stay green through an origin outage.
+- On 2026-09-11: 96 hosts, 11 passing, 85 flagged, including all 31 Origin hosts.
+- **Correction to the 2026-09-07 work log and to this doc's earlier reasoning:** "85 of 96 hosts don't
+  resolve to this server" and "apss.com.sg doesn't resolve here" both came from this probe, so they
+  were the bug, not DNS reality. `apss.com.sg` resolves to origin `52.76.123.15`.
+- Host-side mitigation: pin `CADDY_HEALTH_SERVER_IPS=52.76.123.15,52.77.202.62` (this server's two Elastic IPs, ppt1 and ppt2). **The Edge column has the same blind spot:** `originIPs()` (`CUTOVER_ORIGIN_IPS`, default `52.76.29.0,52.76.123.15,3.1.252.222`) doesn't include ppt2 `52.77.202.62`, so ppt2 tenants such as `space-nova.com` and `spacenova.org` show as Elsewhere (both EIPs serve the same Caddy and the same certificate, confirmed from outside AWS) for the panel service. Code fix:
+  one shared, correct definition of this server's IPs for both the probe and the Edge column, and alert only on hosts pointing here that fail TLS.
+
 ## Open follow-ups, in priority order
 
 1. **Upgrade Caddy from 2.6.2** *(Nov 2022 — three years old)*. This is the highest-value fix: on a
@@ -204,6 +264,22 @@ missing writer — there is no gap; the writer is this process.
   endpoint and took `cp.propertyweb.co`, go3 and laravel3 to curl `000` **simultaneously**. So
   "the panel is served by the ingress it manages" is a **recurring, already-documented class** here,
   not a one-off observation from this incident.
+
+## Answered 2026-09-11: renewal and the panic, on the upgrade target
+
+Read from upstream source at the versions Caddy **v2.11.4** pins (certmagic **v0.25.3**, acmez
+**v3.1.6**). This is **not** the 2.6.2 distro binary. That one is stripped, so its certmagic version
+is unrecoverable, and a distro build may link a different certmagic than upstream 2.6.2 did.
+
+- **Renewal re-consults the ask/permission endpoint.** `renewDynamicCertificate` calls
+  `checkIfCertShouldBeObtained` before renewing, and on a deny removes the cert from the cache. So on
+  the target, evicting a host from the ask allowlist (server-panel `2590ba9`) does stop renewal
+  attempts; no separate purge of stored certs is needed.
+- **The assertion that panicked is now checked.** The acmez v3.1.6 `ObtainCertificate` uses
+  `authz, haveAuthz := problem.Resource.(acme.Authorization)`. That covers this one site only, not
+  proof that no other panic path exists, so `restart.conf` stays.
+- New exposure that comes with it: a **panel outage** now also fails renewal-window handshakes, not
+  only uncached hosts. Details and the upgrade plan: `docs/caddy-upgrade-2.11.md`.
 
 ## Appendix — commands that produced this
 
