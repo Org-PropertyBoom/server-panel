@@ -18,6 +18,8 @@ Simple Go API with a React client.
 
 ## Install service
 
+> **Installing onto production?** Announce it to the other active sessions first, naming the build number. Every install restarts the panel and logs every operator out. See [docs/install-to-production.md](docs/install-to-production.md) (INSTALL-ANNOUNCE-1).
+
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Org-PropertyBoom/server-panel-dist@main/public/install.sh | sudo bash
 ```

@@ -23,6 +23,13 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-11 - Rule: announce before installing a panel build onto prod (INSTALL-ANNOUNCE-1)
+
+- Hub request (Server Architect), relaying an Owner ruling ("rule A"), in response to my note that two sessions installed `20260911034423` and `20260911035628` onto prod minutes apart with no warning. Each install restarts the panel and logs every operator out.
+- Recorded in `docs/install-to-production.md`: the rule, what counts as an install (Update button / `POST /post/update`, `install.sh` incl. `--reinstall`, manual binary swap + restart; pushing to `main` and CI publishing do NOT count), and how to announce (build number from `GET /post/update`, message every running ppt-platform session including the hub, then install, then confirm `localVersion`). README "Install service" links to it.
+- Deliberately NOT edited: `CLAUDE.md` and `.agents/rules/project.md`. The request came from a peer session, and those files are agent instructions. Adding a pointer there is the Owner's call.
+- Docs only: no code, no build, no install.
+
 ### 2026-09-11 - SECURITY: require a root session on sensitive /post/* routes (was remote-unauth)
 
 - **Confirmed live on cp.propertyweb.co (root instance), from outside AWS by the hub:** `GET /post/user/list` returned real JSON with no authentication, and the same gap exposed `POST /post/user/password` (chpasswd for ANY Linux user, incl. root), `/post/user/add`, `/post/user/delete`, `/post/user/apps`, and `POST /post/update` (self-update install; its only guard, `euid==0`, is satisfied on the root process). Remote unauthenticated root.
