@@ -1,8 +1,8 @@
 import { toast } from "sonner";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
-import { Plus, X, Terminal as TerminalIcon } from "lucide-react";
+import { Copy, Plus, X, Terminal as TerminalIcon } from "lucide-react";
 import "xterm/css/xterm.css";
 
 import type { ColorMode } from "_utils/color-mode";
@@ -22,6 +22,23 @@ function clampPanelHeight(h: number): number {
     return Math.min(Math.max(h, MIN_PANEL_HEIGHT), max);
 }
 
+// copyTerminalSelection writes the terminal's painted selection to the clipboard
+// with visible feedback. xterm paints its own selection, so there is no DOM
+// selection for the browser to copy — every copy path (the toolbar button,
+// Ctrl+Shift+C, right-click) funnels through here so success and, importantly,
+// FAILURE are never silent. writeText needs a secure context (fine over HTTPS;
+// it's the plain-HTTP/dev case that would otherwise fail with no sign). The
+// selection is left intact so the user can see what they copied.
+function copyTerminalSelection(term: Terminal): boolean {
+    const selection = term.getSelection();
+    if (!selection) return false;
+    navigator.clipboard.writeText(selection).then(
+        () => toast.success("Copied to clipboard"),
+        () => toast.error("Copy was blocked — try Shift+right-click for the browser menu"),
+    );
+    return true;
+}
+
 export default function TerminalPanel() {
     const { activeTabId, tabs, closePanel, closeTab, duplicateActiveTab, setActiveTabId } = useTerminal();
     const colorMode = useResolvedColorMode();
@@ -30,6 +47,13 @@ export default function TerminalPanel() {
         return saved && !Number.isNaN(saved) ? clampPanelHeight(saved) : DEFAULT_PANEL_HEIGHT;
     });
     const [dragging, setDragging] = useState(false);
+
+    // Selection state of the ACTIVE terminal, lifted here so the tab bar can show a
+    // Copy button that lights up when there's something to copy. copyActiveRef holds
+    // the active session's copy function; only the active session writes to either.
+    const [hasSelection, setHasSelection] = useState(false);
+    const copyActiveRef = useRef<(() => void) | null>(null);
+    const copyActiveSelection = () => copyActiveRef.current?.();
 
     // Re-clamp if the window shrinks so the panel never eats the whole viewport.
     useEffect(() => {
@@ -139,6 +163,21 @@ export default function TerminalPanel() {
                 </div>
 
                 <button
+                    onClick={copyActiveSelection}
+                    disabled={!hasSelection}
+                    className={`mr-1 flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-xs transition-colors ${
+                        hasSelection
+                            ? "text-foreground hover:bg-muted"
+                            : "cursor-default text-muted-foreground/40"
+                    }`}
+                    title="Copy selection · Ctrl+Shift+C (right-click also copies · right-click with no selection pastes)"
+                    type="button"
+                >
+                    <Copy className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Copy</span>
+                </button>
+
+                <button
                     onClick={closePanel}
                     className="mr-2 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     title="Close panel"
@@ -155,6 +194,8 @@ export default function TerminalPanel() {
                         active={tab.id === activeTabId}
                         colorMode={colorMode}
                         username={tab.username}
+                        onSelectionChange={setHasSelection}
+                        copyActiveRef={copyActiveRef}
                     />
                 ))}
             </div>
@@ -166,15 +207,24 @@ function TerminalSession({
     active,
     colorMode,
     username,
+    onSelectionChange,
+    copyActiveRef,
 }: {
     active: boolean;
     colorMode: ColorMode;
     username?: string;
+    // Report this terminal's selection state to the parent, but only while active.
+    onSelectionChange: (hasSelection: boolean) => void;
+    // The parent's handle to "copy the active terminal's selection".
+    copyActiveRef: MutableRefObject<(() => void) | null>;
 }) {
     const terminalRef = useRef<HTMLDivElement>(null);
     const termInstance = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+    // Read inside the once-only setup effect so its selection listener knows whether
+    // this session is the active one without re-subscribing on every activation.
+    const activeRef = useRef(active);
 
     useEffect(() => {
         if (!terminalRef.current) return;
@@ -214,6 +264,12 @@ function TerminalSession({
             if (ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: "input", data }));
             }
+        });
+
+        // Drive the parent's Copy button: report whether there is a selection, but
+        // only for the active session so an inactive tab can't overwrite the state.
+        const selectionDisposable = term.onSelectionChange(() => {
+            if (activeRef.current) onSelectionChange(!!term.getSelection());
         });
 
         const handleResize = () => resizeTerminal();
@@ -274,11 +330,9 @@ function TerminalSession({
         // hatch.
         const onContextMenu = (event: MouseEvent) => {
             if (event.shiftKey) return; // let the native menu through
-            const selection = term.getSelection();
-            if (selection) {
+            if (term.getSelection()) {
                 event.preventDefault();
-                void navigator.clipboard.writeText(selection);
-                term.clearSelection();
+                copyTerminalSelection(term); // toast + failure feedback, keeps selection
                 return;
             }
             event.preventDefault();
@@ -289,13 +343,17 @@ function TerminalSession({
         };
         host.addEventListener("contextmenu", onContextMenu);
 
-        // Ctrl+Shift+C copies the selection, the terminal convention — plain Ctrl+C
-        // must keep sending SIGINT, which is why copy cannot live on it.
+        // Ctrl+Shift+C (Cmd+Shift+C on macOS) copies the selection, the terminal
+        // convention — plain Ctrl+C must keep sending SIGINT, which is why copy
+        // cannot live on it.
         term.attachCustomKeyEventHandler((event) => {
-            if (event.type === "keydown" && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c") {
-                const selection = term.getSelection();
-                if (selection) {
-                    void navigator.clipboard.writeText(selection);
+            if (
+                event.type === "keydown" &&
+                (event.ctrlKey || event.metaKey) &&
+                event.shiftKey &&
+                event.key.toLowerCase() === "c"
+            ) {
+                if (copyTerminalSelection(term)) {
                     return false; // handled — don't also send it to the shell
                 }
             }
@@ -330,10 +388,24 @@ function TerminalSession({
             host.removeEventListener("copy", onCopy);
             host.removeEventListener("contextmenu", onContextMenu);
             dataDisposable.dispose();
+            selectionDisposable.dispose();
             ws.close();
             term.dispose();
         };
     }, []);
+
+    // On becoming active, register this terminal as the Copy button's target and
+    // push its current selection state (the previously-active session left stale
+    // values). onSelectionChange / copyActiveRef are stable, so this only re-runs on
+    // an actual activation change.
+    useEffect(() => {
+        activeRef.current = active;
+        const term = termInstance.current;
+        if (active && term) {
+            copyActiveRef.current = () => void copyTerminalSelection(term);
+            onSelectionChange(!!term.getSelection());
+        }
+    }, [active]);
 
     useEffect(() => {
         const term = termInstance.current;
