@@ -3,6 +3,7 @@ import {
     ChevronRight,
     ChevronDown,
     FileText,
+    Folder,
     Loader2,
     AlertCircle,
     RefreshCw,
@@ -239,13 +240,52 @@ export default function FilesRoute() {
     };
     const navigateToFolder = (dirPath: string) => expandPath(dirPath, dirPath);
 
-    // Delete a file: remove it, clear the editor if it was open, and refresh its
-    // folder in the tree so the node disappears.
+    // Right-click context menu + delete confirmation, VS Code for the Web style:
+    // right-click a tree row → Delete → a confirm dialog (stronger for a non-empty
+    // folder). Works for files and folders alike.
+    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; item: FileItem } | null>(null);
+    const [pendingDelete, setPendingDelete] = useState<FileItem | null>(null);
+    const openContextMenu = (e: React.MouseEvent, item: FileItem) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setCtxMenu({ x: e.clientX, y: e.clientY, item });
+    };
+    // Dismiss the menu on any left-click elsewhere, a scroll, or Escape.
+    useEffect(() => {
+        if (!ctxMenu) return;
+        const close = () => setCtxMenu(null);
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setCtxMenu(null);
+        };
+        window.addEventListener("click", close);
+        window.addEventListener("scroll", close, true);
+        window.addEventListener("keydown", onKey);
+        return () => {
+            window.removeEventListener("click", close);
+            window.removeEventListener("scroll", close, true);
+            window.removeEventListener("keydown", onKey);
+        };
+    }, [ctxMenu]);
+
+    // Delete a file OR a folder. A folder delete is recursive server-side, so here we
+    // clear anything at or UNDER the deleted path — the open editor, its tabs, and any
+    // cached/expanded subtree — then refresh the parent so the node disappears.
     const deleteFile = async (path: string) => {
         const res = await fetch(`${apiEndpoint}?path=${encodeURIComponent(path)}`, { method: "DELETE" });
-        if (!res.ok) throw new Error((await res.text()).trim() || "Failed to delete file");
-        if (selectedFile?.path === path) setSelectedFile(null);
-        setOpenTabs((prev) => prev.filter((t) => t.path !== path)); // a deleted file can't stay open
+        if (!res.ok) throw new Error((await res.text()).trim() || "Failed to delete");
+        const under = (p: string) => p === path || p.startsWith(path + "/");
+        if (selectedFile && under(selectedFile.path)) setSelectedFile(null);
+        setOpenTabs((prev) => prev.filter((t) => !under(t.path))); // deleted entries can't stay open
+        setExpanded((prev) => {
+            const next: Record<string, FileItem[]> = {};
+            for (const k of Object.keys(prev)) if (!under(k)) next[k] = prev[k];
+            return next;
+        });
+        setOpenPaths((prev) => {
+            const next: Record<string, boolean> = {};
+            for (const k of Object.keys(prev)) if (!under(k)) next[k] = prev[k];
+            return next;
+        });
         const parent = path.slice(0, path.lastIndexOf("/")) || "/";
         const items = await fetchFolderContents(parent);
         setExpanded((prev) => ({ ...prev, [parent]: items }));
@@ -382,6 +422,7 @@ export default function FilesRoute() {
                                 expanded={expanded}
                                 openPaths={openPaths}
                                 onToggle={handleToggleExpand}
+                                onContextMenu={openContextMenu}
                                 revealPath={revealTarget}
                             />
                         ) : null}
@@ -427,6 +468,39 @@ export default function FilesRoute() {
                     onDirChange={setCreateDir}
                     onClose={() => setCreateOpen(false)}
                     onCreate={createEntry}
+                />
+            ) : null}
+
+            {ctxMenu ? (
+                <div
+                    className="fixed z-[70] min-w-[168px] overflow-hidden rounded-md border border-border bg-card py-1 text-xs shadow-lg"
+                    style={{ left: Math.min(ctxMenu.x, window.innerWidth - 184), top: Math.min(ctxMenu.y, window.innerHeight - 72) }}
+                    onClick={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => e.preventDefault()}
+                >
+                    <div className="truncate px-3 pb-1 pt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{ctxMenu.item.name}</div>
+                    <button
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                            setPendingDelete(ctxMenu.item);
+                            setCtxMenu(null);
+                        }}
+                    >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete{ctxMenu.item.isDir ? " folder" : ""}
+                    </button>
+                </div>
+            ) : null}
+
+            {pendingDelete ? (
+                <DeleteConfirmModal
+                    item={pendingDelete}
+                    listDir={fetchFolderContents}
+                    onCancel={() => setPendingDelete(null)}
+                    onConfirm={async () => {
+                        await deleteFile(pendingDelete.path);
+                        toast.success(`${pendingDelete.name} deleted`);
+                        setPendingDelete(null);
+                    }}
                 />
             ) : null}
         </DashboardLayout>
@@ -687,6 +761,104 @@ function relativeTime(iso?: string): string | undefined {
     return new Date(iso).toLocaleDateString();
 }
 
+// DeleteConfirmModal confirms deleting a file or a folder. For a folder it looks up
+// the item count first, so the dialog states plainly whether it is empty or how many
+// items go with it — a non-empty folder gets an explicit, stronger warning and a
+// "Delete N items" button. There is no trash on a server, so every delete is
+// permanent; the copy says so.
+function DeleteConfirmModal({
+    item,
+    listDir,
+    onCancel,
+    onConfirm,
+}: {
+    item: FileItem;
+    listDir: (path: string) => Promise<FileItem[]>;
+    onCancel: () => void;
+    onConfirm: () => Promise<void>;
+}) {
+    const [count, setCount] = useState<number | null>(item.isDir ? null : 0);
+    const [busy, setBusy] = useState(false);
+    const running = useRef(false);
+
+    useEffect(() => {
+        if (!item.isDir) return;
+        let cancelled = false;
+        listDir(item.path).then(
+            (items) => !cancelled && setCount(items.length),
+            () => !cancelled && setCount(0),
+        );
+        return () => {
+            cancelled = true;
+        };
+    }, [item, listDir]);
+
+    const confirm = async () => {
+        if (running.current) return;
+        running.current = true;
+        setBusy(true);
+        try {
+            await onConfirm();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Delete failed");
+        } finally {
+            running.current = false;
+            setBusy(false);
+        }
+    };
+
+    const checking = item.isDir && count === null;
+    const nonEmpty = item.isDir && (count ?? 0) > 0;
+
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" onClick={() => (busy ? null : onCancel())}>
+            <div className="w-full max-w-md rounded-md border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start gap-3">
+                    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${nonEmpty ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground"}`}>
+                        {item.isDir ? <Folder className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+                    </span>
+                    <div className="min-w-0">
+                        <h2 className="text-sm font-semibold text-foreground">{item.isDir ? "Delete this folder?" : "Delete this file?"}</h2>
+                        <p className="mt-1.5 text-xs text-muted-foreground">
+                            {!item.isDir ? (
+                                <>
+                                    Permanently deletes <b className="text-foreground">{item.name}</b>. This can't be undone.
+                                </>
+                            ) : checking ? (
+                                <>
+                                    Checking what's inside <b className="text-foreground">{item.name}</b>…
+                                </>
+                            ) : nonEmpty ? (
+                                <>
+                                    Permanently deletes <b className="text-foreground">{item.name}</b> and everything inside it — <b className="text-foreground">{count} item{count === 1 ? "" : "s"}</b>. This can't be undone.
+                                </>
+                            ) : (
+                                <>
+                                    Deletes the empty folder <b className="text-foreground">{item.name}</b>. This can't be undone.
+                                </>
+                            )}
+                        </p>
+                        <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">{item.path}</p>
+                    </div>
+                </div>
+                <div className="mt-5 flex justify-end gap-2">
+                    <button onClick={onCancel} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={confirm}
+                        disabled={busy || checking}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                    >
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        {nonEmpty ? `Delete ${count} item${count === 1 ? "" : "s"}` : "Delete"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // FileDetailsPanel is the right-hand metadata pane (VS Code-style): type, size,
 // timestamps, permissions, owner, line count, and the full path.
 function FileDetailsPanel({ file, size, isBinary, meta, onClose, onDelete, onRename }: { file: FileItem; size: number; isBinary: boolean; meta: FileMeta | null; onClose: () => void; onDelete: (path: string) => Promise<void>; onRename: (path: string, newName: string) => Promise<void> }) {
@@ -867,6 +1039,7 @@ interface DirectoryTreeNodeProps {
     expanded: Record<string, FileItem[]>;
     openPaths: Record<string, boolean>;
     onToggle: (path: string) => Promise<void>;
+    onContextMenu: (e: React.MouseEvent, item: FileItem) => void;
     revealPath: string;
 }
 
@@ -880,6 +1053,7 @@ function DirectoryTreeNode({
     expanded,
     openPaths,
     onToggle,
+    onContextMenu,
     revealPath,
 }: DirectoryTreeNodeProps) {
     const isExpanded = openPaths[path] || false;
@@ -918,6 +1092,7 @@ function DirectoryTreeNode({
                 // so consecutive levels barely separated and the tree read as flat.
                 style={{ paddingLeft: `${depth * INDENT_STEP + ROW_INSET}px` }}
                 onClick={handleClick}
+                onContextMenu={(e) => onContextMenu(e, { name, isDir, path, size: 0, modTime: "" })}
             >
                 {/*
                   * Indent guides — one hairline per ancestor level, VS Code style.
@@ -993,6 +1168,7 @@ function DirectoryTreeNode({
                             expanded={expanded}
                             openPaths={openPaths}
                             onToggle={onToggle}
+                            onContextMenu={onContextMenu}
                             revealPath={revealPath}
                         />
                     ))}

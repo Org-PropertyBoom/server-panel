@@ -113,9 +113,46 @@ func DeleteFile(filePath, homeDir string, isRoot bool) error {
 		return err
 	}
 	if info.IsDir() {
-		return errors.New("refusing to delete a directory")
+		// A directory delete is RECURSIVE (os.RemoveAll), so the guard is stricter
+		// than for a single file: refuse the critical OS trees and any directory at
+		// or above the session's home, so a recursive delete can never take out the
+		// system or a whole home. Regular files are unaffected by this rule.
+		if isCriticalDir(filePath, homeDir) {
+			return ErrProtectedPath
+		}
+		return os.RemoveAll(filePath)
 	}
 	return os.Remove(filePath)
+}
+
+// criticalDirs are directories that must never be recursively deleted, whatever
+// the mode — the filesystem root and the standard OS layout.
+var criticalDirs = map[string]bool{
+	"/": true, "/bin": true, "/boot": true, "/dev": true, "/etc": true,
+	"/home": true, "/lib": true, "/lib32": true, "/lib64": true, "/libx32": true,
+	"/media": true, "/mnt": true, "/opt": true, "/proc": true, "/root": true,
+	"/run": true, "/sbin": true, "/srv": true, "/sys": true, "/tmp": true,
+	"/usr": true, "/var": true,
+}
+
+// isCriticalDir reports whether p is a directory too dangerous to delete
+// recursively: a root/system directory, the session's home itself, or any
+// ANCESTOR of that home (deleting which would take the home with it).
+func isCriticalDir(p, homeDir string) bool {
+	p = filepath.Clean(p)
+	if criticalDirs[p] {
+		return true
+	}
+	if strings.TrimSpace(homeDir) != "" {
+		home := filepath.Clean(homeDir)
+		if p == home {
+			return true
+		}
+		if strings.HasPrefix(home, p+string(filepath.Separator)) {
+			return true // p is an ancestor of home
+		}
+	}
+	return false
 }
 
 // CreatePath creates a new empty file (or directory) named name inside dirPath.
