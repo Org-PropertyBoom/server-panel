@@ -23,6 +23,15 @@ This file is for handoff between agents. Keep entries concise, factual, and newe
 
 ## Work Entries
 
+### 2026-09-22 - Terminal copy: silent failure off HTTPS + stale Copy-button handle
+
+- Review of `c14b569` (terminal Copy button) at the Owner's request. Two findings, both fixed here.
+- 🔴 `copyTerminalSelection` called `navigator.clipboard.writeText(...)` unguarded. Outside a secure context (plain HTTP — LAN IP, or `make dev` on :8000) `navigator.clipboard` is **undefined**, so reading `.writeText` throws SYNCHRONOUSLY and the `.then(onRejected)` failure toast never ran. The copy failed with no feedback at all — the exact case the helper's own comment said it prevented. Now checks `clipboard?.writeText` first and toasts; returns handled so the keystroke isn't also sent to the shell. Invisible over HTTPS at cp.propertyweb.co, which is why it shipped.
+- `copyActiveRef.current` was set when a session became active but never cleared. A successor normally overwrote it, so it was invisible — except when closing the LAST tab, which left the ref pointing at a disposed `Terminal` while the button still looked enabled. Cleared on deactivate/unmount, identity-checked so a successor that already claimed the ref isn't clobbered.
+- Tests: FIRST client tests in the repo. vitest + jsdom were already installed and `vite.config.ts` already had a `test` block — just unused. `src/_components/terminal-panel.test.ts` covers no-selection, success, rejected write, and the regression (clipboard absent must toast, not throw). 4/4 pass. Helper exported for the test. jsdom logs a harmless canvas warning because importing the module pulls in xterm.
+- Note: `CLAUDE.md` says the client tests run on "Jest + React Testing Library"; the runner is actually **vitest** (`npm test` → `vitest`). Not corrected here — CLAUDE.md edits are the Owner's call.
+- Validation: `tsc --noEmit` 0, `npm run build` OK, `npx vitest run` 4/4. No Go changes. Not installed onto prod (INSTALL-ANNOUNCE-1).
+
 ### 2026-09-11 - SECURITY RESOLVED: /post/* auth hole closed in prod (f2b08f1, dist 20260911040721)
 
 - **Closed and live-verified.** The remote-unauthenticated hole on the `/post/user/*` and `POST /post/update` routes (see the `security: require a root session` entry) is fixed in production. Published dist is now `20260911040721`, built from `f2b08f1`, and the panel is running it.

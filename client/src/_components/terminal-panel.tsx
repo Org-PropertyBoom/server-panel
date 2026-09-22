@@ -29,10 +29,20 @@ function clampPanelHeight(h: number): number {
 // FAILURE are never silent. writeText needs a secure context (fine over HTTPS;
 // it's the plain-HTTP/dev case that would otherwise fail with no sign). The
 // selection is left intact so the user can see what they copied.
-function copyTerminalSelection(term: Terminal): boolean {
+export function copyTerminalSelection(term: Terminal): boolean {
     const selection = term.getSelection();
     if (!selection) return false;
-    navigator.clipboard.writeText(selection).then(
+    // navigator.clipboard is UNDEFINED outside a secure context — plain HTTP, i.e.
+    // reaching the panel by LAN IP or running `make dev` on :8000. Calling
+    // .writeText on it throws SYNCHRONOUSLY, which the .then(onRejected) below
+    // cannot catch, so the failure toast never fired and the copy was silent: the
+    // exact case this helper exists to make visible. Check before calling.
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) {
+        toast.error("Copy needs a secure page (HTTPS) — use Shift+right-click for the browser menu");
+        return true; // handled: swallow the keystroke rather than send it to the shell
+    }
+    clipboard.writeText(selection).then(
         () => toast.success("Copied to clipboard"),
         () => toast.error("Copy was blocked — try Shift+right-click for the browser menu"),
     );
@@ -401,10 +411,21 @@ function TerminalSession({
     useEffect(() => {
         activeRef.current = active;
         const term = termInstance.current;
-        if (active && term) {
-            copyActiveRef.current = () => void copyTerminalSelection(term);
-            onSelectionChange(!!term.getSelection());
-        }
+        if (!active || !term) return;
+        const handle = () => void copyTerminalSelection(term);
+        copyActiveRef.current = handle;
+        onSelectionChange(!!term.getSelection());
+        return () => {
+            // Hand the Copy button back when this session deactivates or unmounts.
+            // Without this the ref outlived the terminal: closing the LAST tab left
+            // it pointing at a disposed Terminal (with no successor to overwrite it)
+            // while the button still looked enabled. Identity-checked so that if a
+            // successor has already claimed the ref, we don't clear ITS handle or
+            // reset the selection state it just pushed.
+            if (copyActiveRef.current !== handle) return;
+            copyActiveRef.current = null;
+            onSelectionChange(false);
+        };
     }, [active]);
 
     useEffect(() => {
